@@ -14,6 +14,7 @@ import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 import {
+  formatDay,
   formatInstant,
   perDayText,
   periodLabel,
@@ -84,6 +85,35 @@ test("Site insights names the Site, its manager and its activity, in the mock's 
       order[i - 1].compareDocumentPosition(order[i]) &
         window.Node.DOCUMENT_POSITION_FOLLOWING,
     );
+});
+
+test("a new Site period drops the old interval while it loads", async () => {
+  const held = gate();
+  await mountAdmin("/insights/sites/s1?period=2026-10", {
+    insights: true,
+    setup: (api) =>
+      api.on("GET", /^reporting\/sites\/s1\?/, async (/** @type {any} */ r) => {
+        if (new URLSearchParams(r.search).get("month") === "2026-09")
+          await held.promise;
+        return api.reply(r);
+      }),
+  });
+  assert.ok(!missing("[data-insights-interval]"));
+  await click('[data-period-step="-1"]');
+  assert.ok(missing("[data-insights-interval]"));
+  held.release();
+  await settle();
+});
+
+test("Site insights ends with the exact interval it counts", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
+  assert.equal(
+    text("[data-insights-interval]"),
+    t("admin.insights.interval", {
+      from: formatDay("2026-10-01"),
+      to: formatDay("2026-11-01"),
+    }),
+  );
 });
 
 test("a Site with concerns says why, each with its count and where to look", async () => {

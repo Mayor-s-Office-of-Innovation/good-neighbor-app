@@ -17,6 +17,7 @@ import {
   failedView,
   failureText,
   freshnessView,
+  intervalFooterView,
   loadingView,
   periodClicked,
   periodInterval,
@@ -88,7 +89,8 @@ class InsightsSite extends HTMLElement {
       <div data-region="head">${this.headView()}</div>
       <div data-region="freshness">${freshnessView(null)}</div>
       <div data-region="period">${sitePeriodView({ label: periodName(interval), range: interval ? rangeLabel(interval) : "" })}</div>
-      <div data-region="body"></div>`;
+      <div data-region="body"></div>
+      <footer data-region="footer"></footer>`;
     this.addEventListener("click", this.clicked);
     this.drawPeriod();
     void this.loadNames();
@@ -192,6 +194,8 @@ class InsightsSite extends HTMLElement {
     const { signal } = this.controller;
     const params = periodApiParams(this.period);
     this.region("body").innerHTML = loadingView();
+    // The old interval is for the period no longer shown.
+    this.region("footer").innerHTML = "";
     this.setAttribute("aria-busy", "true");
     /** @type {Record<string, any>} */
     let reply;
@@ -223,6 +227,7 @@ class InsightsSite extends HTMLElement {
     this.tile = firstTile(reply);
     this.drawHead();
     this.region("freshness").innerHTML = freshnessView(reply.meta);
+    this.region("footer").innerHTML = intervalFooterView(reply.meta.interval);
     this.drawPeriod();
     this.region("body").innerHTML = siteBodyView({
       reply,

@@ -305,7 +305,8 @@ body {
   text-decoration: none;
 }
 
-.entity-tabs a[aria-current="page"] {
+.entity-tabs a[aria-current="page"],
+.entity-tabs a[aria-current="true"] {
   border-block-end-color: var(--ink);
   color: var(--text);
 }

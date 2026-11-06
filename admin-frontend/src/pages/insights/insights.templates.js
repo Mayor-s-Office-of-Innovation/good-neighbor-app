@@ -77,6 +77,29 @@ export function rangeLabel(interval) {
   });
 }
 
+/** @param {{ startDay: string, endDay: string }} interval endDay is the day after the last */
+export const intervalText = (interval) =>
+  t("admin.insights.interval", {
+    from: formatDay(interval.startDay),
+    to: formatDay(interval.endDay),
+  });
+
+/** A running period's counts stop at the data time, so the footer ends there too. @param {Interval} interval */
+export const footerText = (interval) =>
+  interval.incomplete && interval.observedTo
+    ? t("admin.insights.intervalSoFar", {
+        from: formatDay(interval.startDay),
+        to: formatInstant(interval.observedTo),
+      })
+    : intervalText(interval);
+
+/** The exact days behind every count, with no rule or contract version. @param {Interval | null} interval */
+export function intervalFooterView(interval) {
+  return interval
+    ? `<p class="muted insights__foot" data-insights-interval>${escapeHtml(footerText(interval))}</p>`
+    : "";
+}
+
 /** One decimal, as the mock shows it; the server rounds to one before it flags. @param {number} perDay */
 export const oneDecimal = (perDay) => perDay.toFixed(1);
 

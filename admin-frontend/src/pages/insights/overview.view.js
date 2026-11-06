@@ -24,6 +24,7 @@ import {
   failureText,
   formatInstant,
   freshnessView,
+  intervalFooterView,
   loadingView,
   periodClicked,
   periodLabel,
@@ -70,13 +71,19 @@ class InsightsOverview extends HTMLElement {
     this.generation = 0;
     /** @type {import("./insights-session.js").Names} */
     this.names = { managerId: new Map(), providerId: new Map() };
+    // <admin-app> gives <admin-insights-page> the signed-in admin's session.
+    const admin = /** @type {any} */ (this.closest("admin-insights-page"))
+      ?.session;
+    // Only a manager linked to the directory can be a Site's manager.
+    this.me = admin?.profile?.directoryUserId ?? "";
     // The mock's order: data time, controls, results, then the report hint.
     this.innerHTML = `
       <div data-region="freshness">${freshnessView(null)}</div>
-      <div data-region="filters">${filtersView(this.state, NO_OPTIONS)}</div>
+      <div data-region="filters">${filtersView(this.state, NO_OPTIONS, this.me)}</div>
       <div data-region="bar">${resultBarView(this.state)}</div>
       <div data-region="results"></div>
-      <div data-region="report">${reportBarView()}</div>`;
+      <div data-region="report">${reportBarView()}</div>
+      <footer data-region="footer"></footer>`;
     this.search = debounce(() => this.searchChanged(), 300);
     this.addEventListener("click", this.clicked);
     this.addEventListener("input", this.typed);
@@ -162,8 +169,9 @@ class InsightsOverview extends HTMLElement {
     const mine = ++this.generation;
     this.controller?.abort();
     this.controller = new AbortController();
-    // An old table would claim to match the new filters, so it goes now.
+    // An old table and interval would claim to match the new filters, so they go now.
     this.region("results").innerHTML = loadingView();
+    this.region("footer").innerHTML = "";
     this.setAttribute("aria-busy", "true");
     // Select all and Generate report would act on the old reply's Sites.
     this.drawBar();
@@ -201,6 +209,7 @@ class InsightsOverview extends HTMLElement {
     this.state.selected = keptSelection(this.state.selected, this.listedIds());
     this.keepSelection();
     this.region("freshness").innerHTML = freshnessView(reply.meta);
+    this.region("footer").innerHTML = intervalFooterView(reply.meta.interval);
     this.drawPeriod();
     this.drawResults();
     this.drawReport();
@@ -344,6 +353,8 @@ class InsightsOverview extends HTMLElement {
       );
       if (select) select.value = this.state[name];
     }
+    const mine = /** @type {any} */ (this.querySelector("#insights-mine"));
+    if (mine) mine.checked = this.state.managerId === this.me;
   }
 
   searchChanged() {
@@ -363,6 +374,9 @@ class InsightsOverview extends HTMLElement {
     const target = /** @type {any} */ (event.target);
     // wa-input's clear button fires change without input.
     if (target.id === "insights-search") return this.search.schedule();
+    // The Manager filter set to the user, so a shared link shows the same Sites.
+    if (target.id === "insights-mine")
+      return this.refine({ managerId: target.checked ? this.me : "" });
     const filter = target.dataset?.filter;
     if (filter) {
       const value = String(target.value ?? "");

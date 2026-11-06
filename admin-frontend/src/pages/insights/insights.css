@@ -24,6 +24,13 @@
   font-size: 0.875rem;
 }
 
+.insights__foot {
+  margin: 32px 0 0;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  font-size: 0.8125rem;
+}
+
 .insights__quality {
   margin: 0 0 8px;
   max-width: 920px;

@@ -190,6 +190,71 @@ test("a filter narrows the table, goes in the URL and clears the selection", asy
   assert.equal($("#insights-report").disabled, true);
 });
 
+test("Assigned to me shows the signed-in manager's own Sites and keeps the choice in the URL", async () => {
+  const { api } = await mountAdmin("/insights?period=2026-10&show=all", {
+    insights: true,
+    role: "compliance-manager",
+  });
+  await fill("#insights-mine", true);
+  // The mock's profile is linked to manager pm1.
+  assert.equal(url(), "/insights?period=2026-10&show=all&managerId=pm1");
+  assert.equal(lastOverviewCall(api).managerId, "pm1");
+  // s4 is pm2's.
+  assert.deepEqual(rows(), ["s1", "s3", "s2"]);
+  assert.equal($('wa-select[data-filter="managerId"]').value, "pm1");
+  // Another manager unticks it; unticking shows every manager again.
+  await fill('wa-select[data-filter="managerId"]', "pm2");
+  assert.equal($("#insights-mine").checked, false);
+  await fill('wa-select[data-filter="managerId"]', "pm1");
+  assert.equal($("#insights-mine").checked, true);
+  await fill("#insights-mine", false);
+  assert.equal(url(), "/insights?period=2026-10&show=all");
+  assert.equal(lastOverviewCall(api).managerId, undefined);
+});
+
+test("a supervisor, who manages no Sites, gets no Assigned to me", async () => {
+  await mountAdmin("/insights?period=2026-10", { insights: true });
+  assert.ok(missing("#insights-mine"));
+});
+
+test("Overview ends with the exact interval it counts, and no version", async () => {
+  await mountAdmin("/insights?period=2026-10", { insights: true });
+  assert.equal(
+    text("[data-insights-interval]"),
+    "Interval Oct 1, 2026 12:00 am to Nov 1, 2026 12:00 am PT (end exclusive)",
+  );
+  assert.doesNotMatch(text("insights-overview"), /version|rulebook/i);
+});
+
+test("a running period's footer ends at the data time, as its period pill does", async () => {
+  await mountAdmin("/insights?period=2026-11", { insights: true });
+  assert.equal(
+    text("[data-insights-interval]"),
+    t("admin.insights.intervalSoFar", {
+      from: formatDay("2026-11-01"),
+      to: formatInstant("2026-11-04T19:00:00.000Z"),
+    }),
+  );
+});
+
+test("a new period drops the old interval while it loads", async () => {
+  const held = gate();
+  await mountAdmin("/insights?period=2026-10", {
+    insights: true,
+    setup: (api) =>
+      api.on("GET", /^reporting\/overview/, async (/** @type {any} */ r) => {
+        if (new URLSearchParams(r.search).get("month") === "2026-09")
+          await held.promise;
+        return api.reply(r);
+      }),
+  });
+  assert.ok(!missing("[data-insights-interval]"));
+  await click('[data-period-step="-1"]');
+  assert.ok(missing("[data-insights-interval]"));
+  held.release();
+  await settle();
+});
+
 test("a new sort keeps the picks, since every Site is still listed", async () => {
   const { api } = await mountAdmin("/insights?period=2026-10&show=all", {
     insights: true,

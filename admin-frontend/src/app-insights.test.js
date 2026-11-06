@@ -1,5 +1,7 @@
 import { test, vi } from "vitest";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   $,
   click,
@@ -112,6 +114,18 @@ test("Insights pages keep the period when moving between them", async () => {
   await click('#insights-nav a[data-insights-nav="trends"]');
   assert.equal(url(), "/insights/trends?period=2026-09");
   assert.equal(heading(), t("admin.insights.trends"));
+});
+
+test("a tab that holds the page, not only one that is it, looks selected", async () => {
+  // A path, not a URL: happy-dom's URL class isn't one node:fs accepts.
+  const css = readFileSync(join(import.meta.dirname, "styles.css"), "utf8");
+  const selected = /** @type {RegExpMatchArray} */ (
+    css.match(/\.entity-tabs a\[aria-current="page"\][^{]*\{/)
+  )[0];
+  assert.match(selected, /\.entity-tabs a\[aria-current="true"\]/);
+  await mountAdmin("/insights/raw/issues?period=2026-10", { insights: true });
+  assert.equal(current('#insights-nav a[data-insights-nav="raw"]'), "true");
+  assert.equal(current('#admin-modes a[data-mode="insights"]'), "true");
 });
 
 test("record pages name their record", async () => {

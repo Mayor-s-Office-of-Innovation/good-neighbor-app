@@ -54,8 +54,13 @@ function select(name, allLabel, options, selected) {
 const controlRow = (key, body) =>
   `<div class="insights__crow"><span class="insights__clabel" id="insights-label-${key}" data-control-label="${key}">${escapeHtml(t(`admin.insights.label.${key}`))}</span><div class="insights__cbody">${body}</div></div>`;
 
-/** Drawn once; later changes update it in place, so search keeps focus. @param {OverviewState} state @param {FilterOptions} options */
-export function filtersView(state, options) {
+/**
+ * Drawn once; later changes update it in place, so search keeps focus.
+ * @param {OverviewState} state
+ * @param {FilterOptions} options
+ * @param {string} [me] the signed-in manager's ID; "" for anyone who manages no Sites
+ */
+export function filtersView(state, options, me = "") {
   return `<div class="insights__controls">
     ${controlRow("search", `<wa-input id="insights-search" type="search" value="${escapeHtml(state.q)}" placeholder="${escapeHtml(t("admin.insights.search"))}" aria-label="${escapeHtml(t("admin.insights.search"))}" maxlength="${MAX_SEARCH}" size="s" pill with-clear><wa-icon name="magnifying-glass" slot="start" aria-hidden="true"></wa-icon></wa-input>`)}
     ${controlRow("period", '<div data-region="period"></div>')}
@@ -76,7 +81,12 @@ export function filtersView(state, options) {
     )}
     ${controlRow(
       "filter",
-      `${select("managerId", t("admin.insights.filter.managerId"), options.managerId, state.managerId)}
+      `${
+        me
+          ? `<wa-checkbox id="insights-mine" size="s" ${state.managerId === me ? "checked" : ""}>${escapeHtml(t("admin.insights.filter.mine"))}</wa-checkbox>`
+          : ""
+      }
+      ${select("managerId", t("admin.insights.filter.managerId"), options.managerId, state.managerId)}
       ${select("providerId", t("admin.insights.filter.providerId"), options.providerId, state.providerId)}
       ${select("department", t("admin.insights.filter.department"), options.department, state.department)}
       ${helpTip("insights-tip-filter", t("admin.insights.label.filter"), t("admin.insights.filter.help"))}`,
