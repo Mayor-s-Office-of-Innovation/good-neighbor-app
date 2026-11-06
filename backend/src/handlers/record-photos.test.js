@@ -1,3 +1,4 @@
+import { URLSearchParams } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
@@ -9,6 +10,7 @@ vi.mock("../s3.js", () => ({
   presignGet: vi.fn(async ({ key }) => `https://example.test/${key}`),
 }));
 import { getRecordPhotos } from "./record-photos.js";
+import { recordPhotosReply } from "../../../e2e/admin-tests/insights-mock.js";
 
 /**
  * @param {Record<string, string>} query
@@ -296,5 +298,38 @@ describe("getRecordPhotos", () => {
     expect(
       (await call(event({ issueId: "t1" }, { siteId: "s2" }))).status,
     ).toBe(404);
+  });
+
+  it("matches the admin E2E fake's replies", async () => {
+    /** @param {unknown} v @returns {unknown} */
+    const shape = (v) =>
+      Array.isArray(v)
+        ? [shape(v[0])]
+        : v && typeof v === "object"
+          ? Object.fromEntries(
+              Object.entries(v)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([k, x]) => [k, shape(x)]),
+            )
+          : typeof v;
+    const params = (/** @type {Record<string, string>} */ q) =>
+      new URLSearchParams(q);
+    /** @type {Record<string, string>[]} */
+    const found = [{ checkId: "c1" }, { issueId: "t1" }];
+    for (const query of found) {
+      const real = await call(event(query));
+      const fake = recordPhotosReply("s1", params(query));
+      expect(shape(fake.json)).toEqual(shape(real.body));
+      expect(fake.status ?? 200).toBe(real.status);
+    }
+    /** @type {Record<string, string>[]} */
+    const refused = [{}, { checkId: "nope" }, { issueId: "nope" }];
+    for (const query of refused) {
+      const real = await call(event(query));
+      expect(recordPhotosReply("s1", params(query))).toEqual({
+        status: real.status,
+        json: real.body,
+      });
+    }
   });
 });

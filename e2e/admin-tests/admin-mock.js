@@ -3,7 +3,7 @@
 import { test as base, expect } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
-import { insightsReply } from "./insights-mock.js";
+import { insightsReply, recordPhotosReply } from "./insights-mock.js";
 
 /**
  * @typedef {{ method: string, path: string, search: string, body: any, headers: Record<string, string> }} AdminRequest
@@ -295,8 +295,12 @@ function defaultReply(data, role, request) {
   const insights = insightsReply(request);
   if (insights) return insights;
   if (method !== "GET") return writeReply(data, request, exec);
-  if (/^sites\/[^/]+\/record-photos$/.test(p))
-    return { json: recordPhotosReply(new URLSearchParams(search || "")) };
+  const photos = /^sites\/([^/]+)\/record-photos$/.exec(p);
+  if (photos)
+    return recordPhotosReply(
+      decodeURIComponent(photos[1]),
+      new URLSearchParams(search || ""),
+    );
   if (p === "session")
     return {
       json: {
@@ -472,51 +476,9 @@ const supervisorRoutes = [
   /^[A-Z]+ admin-users(\/|$)/,
   // admin-site-imports.js: every route.
   /^[A-Z]+ site-imports(\/|$)/,
-  // record-photos.js
+  // record-photos.js: supervisors only, like the System Status photos.
   /^GET sites\/[^/]+\/record-photos$/,
 ];
-
-// A 1×1 image, so no spec waits on a file the mock doesn't serve.
-const PIXEL =
-  "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
-
-/** record-photos.js's reply shape. @param {URLSearchParams} params */
-function recordPhotosReply(params) {
-  /** @param {string} artifactId @param {"check" | "update"} source @param {string} takenAt */
-  const photo = (artifactId, source, takenAt) => ({
-    artifactId,
-    source,
-    takenAt,
-    thumbnailUrl: PIXEL,
-    url: PIXEL,
-    urlExpiresAt: "2026-11-04T19:05:00.000Z",
-  });
-  const fromCheck = photo("art-1", "check", "2026-10-02T17:01:00.000Z");
-  return params.get("issueId")
-    ? {
-        photos: [
-          fromCheck,
-          photo("t1-u2-p1", "update", "2026-10-03T17:00:00.000Z"),
-        ],
-        notes: [
-          {
-            source: "update",
-            at: "2026-10-03T17:00:00.000Z",
-            text: "Synthetic note",
-          },
-        ],
-      }
-    : {
-        photos: [fromCheck],
-        notes: [
-          {
-            source: "check",
-            at: "2026-10-02T17:02:00.000Z",
-            text: "Synthetic description",
-          },
-        ],
-      };
-}
 
 /** @param {string} value */
 const slug = (value) =>
