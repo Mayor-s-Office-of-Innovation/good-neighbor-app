@@ -142,13 +142,12 @@ export function registerMediaPaths(checkId, artifactId, paths) {
         : undefined,
     expiresAt: Infinity,
   };
-  const current = MEDIA_URL_CACHE.get(key);
-  if (current?.fromPath && current.promise) return urls;
   MEDIA_URL_CACHE.set(key, {
     controller: new AbortController(),
     consumers: 0,
     pending: false,
     fromPath: true,
+    paths: { mediaPath, thumbnailPath: urls.thumbnailUrl },
     expiresAt: Infinity,
     promise: Promise.resolve(urls),
   });
@@ -454,8 +453,17 @@ export function needsTaskEvidenceHydration(task) {
   )
     return false;
   if (task.mediaRetryAt > Date.now()) return false;
-  if (task.evidence?.mediaPath && task.evidence.artifactId)
+  if (task.evidence?.mediaPath && task.evidence.artifactId) {
+    const cached = MEDIA_URL_CACHE.get(
+      `${task.checkId}:${task.evidence.artifactId}`,
+    );
+    if (cached?.fromPath)
+      return (
+        cached.paths?.mediaPath !== task.evidence.mediaPath ||
+        cached.paths?.thumbnailPath !== task.evidence.thumbnailPath
+      );
     return !hasRegisteredMediaPath(task.checkId, task.evidence.artifactId);
+  }
   if (task.mediaUrl || task.thumbnailUrl)
     return (
       Number.isFinite(task.mediaExpiresAt) && task.mediaExpiresAt <= Date.now()

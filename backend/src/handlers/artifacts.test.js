@@ -24,9 +24,7 @@ const {
   presignGet: vi.fn(),
   headObject: vi.fn(),
   setObjectTags: vi.fn(),
-  deleteObject: vi.fn(
-    async (/** @type {{ bucket: string, key: string }} */ _params) => ({}),
-  ),
+  deleteObject: vi.fn(async () => ({})),
 }));
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../s3.js", () => ({

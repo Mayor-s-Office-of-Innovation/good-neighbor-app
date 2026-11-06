@@ -979,10 +979,10 @@ export const deleteArtifact = async (event) => {
       ],
     }),
   );
-  // With media behind a site-scoped cookie (lib/media-cookie.js) the object
-  // itself must go, not only the row: a path stays readable until the bucket's
-  // lifecycle rule runs otherwise. Best effort, tenant-checked, logged on
-  // failure; the 30-day expiry remains the backstop.
+  // Removing the photo from the check is authoritative; S3 cleanup is best
+  // effort, tenant-checked, and logged on failure. After row removal a retry
+  // cannot recover these keys. A retained object remains readable with its
+  // URL and a valid site cookie until lifecycle deletion (30-day expiry).
   await removeArtifactObjects({ siteId, checkId, artifact });
   // Retried even when the artifact is already absent: an interrupted cleanup
   // must not strand generated tasks forever.

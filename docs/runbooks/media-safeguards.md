@@ -221,10 +221,19 @@ a presigned URL has today.
 
 ### What the cookie does not change
 
-Deleting a photo must remove the S3 object (and its `.thumb.webp` / `.display.jpg`
-derivatives), not only the DynamoDB row, because a site cookie reads by path. The edge cache
-holds an object for at most one hour after that. Care-work deletion already removes objects;
-check-artifact deletion is updated with the backend part of this work.
+Deleting a check photo removes it from the check and its generated tasks. The API also
+attempts to delete its original and thumbnail from S3, but this is best effort, not a
+guarantee of immediate erasure. Failed cleanup logs `MediaObjectDeleteFailed`; there is no
+durable cleanup retry, and retrying the request after row removal cannot recover the keys.
+
+If cleanup fails or is interrupted, someone with the object URL and a valid cookie for
+that site can still read it until lifecycle deletion. The 30-day expiry is measured from
+each object's creation, not removal from the check, and lifecycle deletion is asynchronous.
+An authorized user can renew their one-hour cookie, so cookie expiry does not shorten this
+retention window. Successful S3 cleanup stops origin reads, but existing edge and browser
+cache entries can remain for their one-hour cache lifetime; downloaded copies cannot be
+recalled. This is an accepted limit of check-photo removal, not a sensitive-media erasure
+workflow. Care-work deletion has its own object cleanup.
 
 ## 311 attachment leases
 

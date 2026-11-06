@@ -499,6 +499,28 @@ describe("server media paths (signed cookies)", () => {
     expect(again.mediaUrl).toBe("/checks/site-1/chk-path/a1");
   });
 
+  it("adopts a thumbnail generated after the original path was cached", async () => {
+    const task = {
+      ...pathTask,
+      checkId: "late-thumbnail",
+      evidence: { ...pathTask.evidence, thumbnailPath: undefined },
+    };
+    await hydrateTaskEvidence([task]);
+    expect(
+      (await cachedMediaUrls(task.checkId, "a1")).thumbnailUrl,
+    ).toBeUndefined();
+
+    const updated = { ...task, evidence: { ...pathTask.evidence } };
+    expect(needsTaskEvidenceHydration(updated)).toBe(true);
+    await hydrateTaskEvidence([updated]);
+    expect((await cachedMediaUrls(task.checkId, "a1")).thumbnailUrl).toBe(
+      updated.evidence.thumbnailPath,
+    );
+    expect(needsTaskEvidenceHydration(updated)).toBe(false);
+    expect(getMediaUrl).not.toHaveBeenCalled();
+    expect(getCheck).not.toHaveBeenCalled();
+  });
+
   it("registers paths carried by check artifacts so the photo strip signs nothing", async () => {
     const detailWithPaths = {
       checkId: "chk-detail",

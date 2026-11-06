@@ -69,11 +69,8 @@ registerIconLibrary("default", {
 // unused utility classes and exceeds the main CSS budget.
 import "@awesome.me/webawesome/dist/styles/layers.css";
 import "@awesome.me/webawesome/dist/styles/native.css";
-import "@awesome.me/webawesome/dist/styles/utilities/fouce.css";
 import "@awesome.me/webawesome/dist/styles/utilities/visually-hidden.css";
 import "@awesome.me/webawesome/dist/styles/utilities/scroll-lock.css";
-import "@awesome.me/webawesome/dist/styles/utilities/placeholder.css";
-import "@awesome.me/webawesome/dist/styles/utilities/size.css";
 import "@awesome.me/webawesome/dist/styles/utilities/variants.css";
 // Match the official Figma kit: Default theme + Default palette. The theme
 // stylesheet imports the palette and uses only local/system font stacks.
