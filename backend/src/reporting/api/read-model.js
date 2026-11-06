@@ -697,17 +697,15 @@ function siteOr404(snap, siteId) {
 }
 
 /**
+ * A Site's page without the day rows; reports skip them, since a year of
+ * days for every Site is about 365 objects each.
  * @param {Snapshot} snap
  * @param {string} siteId
  * @param {{ interval: Interval, now: number }} req
  */
-export function siteDetail(snap, siteId, { interval, now }) {
+function siteSummary(snap, siteId, { interval, now }) {
   const site = siteOr404(snap, siteId);
   const ids = new Set([siteId]);
-  const byDay = new Map(
-    (snap.daysBySite.get(siteId) ?? []).map((row) => [row.day, row]),
-  );
-  const zero = Object.fromEntries(SITE_DAY_METRICS.map((m) => [m, 0]));
   const facts = siteFacts(snap, site, interval);
   const indicators = contacts(snap, siteId);
   return {
@@ -727,6 +725,22 @@ export function siteDetail(snap, siteId, { interval, now }) {
     longUnresolved: facts.longUnresolved,
     concerns: facts.concerns,
     comparison: comparison(snap, interval, ids),
+  };
+}
+
+/**
+ * @param {Snapshot} snap
+ * @param {string} siteId
+ * @param {{ interval: Interval, now: number }} req
+ */
+export function siteDetail(snap, siteId, { interval, now }) {
+  const summary = siteSummary(snap, siteId, { interval, now });
+  const byDay = new Map(
+    (snap.daysBySite.get(siteId) ?? []).map((row) => [row.day, row]),
+  );
+  const zero = Object.fromEntries(SITE_DAY_METRICS.map((m) => [m, 0]));
+  return {
+    ...summary,
     days: coveredDays(snap, interval).map((day) => {
       const row = byDay.get(day) ?? zero;
       return {
@@ -1220,7 +1234,7 @@ export function reportDataset(snap, { siteIds, interval, now }) {
   return {
     meta: meta(snap, interval, now),
     sites: siteIds.map((siteId) => {
-      const detail = siteDetail(snap, siteId, { interval, now });
+      const detail = siteSummary(snap, siteId, { interval, now });
       return {
         site: detail.site,
         publicContact: detail.publicContact,
