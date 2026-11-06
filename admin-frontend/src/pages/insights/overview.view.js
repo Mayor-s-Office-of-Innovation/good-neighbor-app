@@ -17,27 +17,24 @@ import {
 } from "./insights-query.js";
 import { carriedQuery } from "./insights-routes.js";
 import { sessionOf } from "./insights-session.js";
-import { linkLeft } from "./report-job.js";
+import { JobAction } from "./job-action.js";
 import {
   drawPeriodControl,
   failedView,
   failureText,
-  formatInstant,
   freshnessView,
-  intervalFooterView,
-  loadingView,
+  drawInterval,
+  showLoaded,
+  showLoading,
   periodClicked,
-  periodLabel,
 } from "./insights.templates.js";
 import {
   countText,
   filtersView,
-  jobView,
   optionsView,
-  reportBarText,
-  reportBarView,
+  overviewBarView,
+  reportButtonText,
   reportDialogView,
-  resultBarView,
   resultsView,
   selectAllState,
 } from "./overview.templates.js";
@@ -56,8 +53,8 @@ class InsightsOverview extends HTMLElement {
     this.reply = null;
     /** @type {{ siteIds: string[], period: Period } | null} */
     this.reportAsk = null;
-    // A reattached element starts with an empty status region.
-    this.statusMarkup = "";
+    /** @type {number | null} every Site, for "22 Sites (out of 500)" */
+    this.allSites = null;
     this.periodKind = this.period?.kind ?? "month";
     this.periodError = "";
     // Picks come back with the view they were made on; a new period has other rows.
@@ -76,14 +73,22 @@ class InsightsOverview extends HTMLElement {
       ?.session;
     // Only a manager linked to the directory can be a Site's manager.
     this.me = admin?.profile?.directoryUserId ?? "";
-    // The mock's order: data time, controls, results, then the report hint.
     this.innerHTML = `
       <div data-region="freshness">${freshnessView(null)}</div>
       <div data-region="filters">${filtersView(this.state, NO_OPTIONS, this.me)}</div>
-      <div data-region="bar">${resultBarView(this.state)}</div>
+      <div data-region="bar">${overviewBarView(this.state)}</div>
       <div data-region="results"></div>
-      <div data-region="report">${reportBarView()}</div>
-      <footer data-region="footer"></footer>`;
+`;
+    this.report = new JobAction(this, {
+      id: "insights-report",
+      jobs: this.session.reportJobs,
+      words: {
+        busy: "admin.insights.report.generating",
+        done: "admin.insights.report.done",
+        errors: "admin.insights.report.error",
+        refreshFailed: "admin.insights.report.refreshFailed",
+      },
+    });
     this.search = debounce(() => this.searchChanged(), 300);
     this.addEventListener("click", this.clicked);
     this.addEventListener("input", this.typed);
@@ -95,6 +100,7 @@ class InsightsOverview extends HTMLElement {
     this.drawPeriod();
     this.drawReport();
     void this.loadOptions();
+    void this.loadSiteTotal();
     void this.load();
   }
 
@@ -102,7 +108,7 @@ class InsightsOverview extends HTMLElement {
     this.controller?.abort();
     this.search?.cancel();
     this.unsubscribe?.();
-    clearTimeout(this.linkTimer);
+    this.report?.destroy();
     this.removeEventListener("click", this.clicked);
     this.removeEventListener("input", this.typed);
     this.removeEventListener("change", this.changed);
@@ -144,6 +150,16 @@ class InsightsOverview extends HTMLElement {
     }
   }
 
+  async loadSiteTotal() {
+    try {
+      this.allSites = (await this.session.siteOptions()).length;
+    } catch {
+      // The count then reads "22 Sites", without the total.
+      return;
+    }
+    if (this.isConnected) this.drawBar();
+  }
+
   /** Names arrived while the user was in the table; show them on the way out. */
   drawWhenFocusLeaves() {
     const results = this.region("results");
@@ -170,8 +186,8 @@ class InsightsOverview extends HTMLElement {
     this.controller?.abort();
     this.controller = new AbortController();
     // An old table and interval would claim to match the new filters, so they go now.
-    this.region("results").innerHTML = loadingView();
-    this.region("footer").innerHTML = "";
+    showLoading(this.region("results"));
+    drawInterval(this, null);
     this.setAttribute("aria-busy", "true");
     // Select all and Generate report would act on the old reply's Sites.
     this.drawBar();
@@ -193,8 +209,9 @@ class InsightsOverview extends HTMLElement {
       this.reply = null;
       // The old data time and notes describe a period no longer shown.
       this.region("freshness").innerHTML = freshnessView(null);
-      this.region("results").innerHTML = failedView(
-        failureText(err, t("admin.insights.loadFailed")),
+      showLoaded(
+        this.region("results"),
+        failedView(failureText(err, t("admin.insights.loadFailed"))),
       );
       this.drawBar();
       this.drawReport();
@@ -209,7 +226,7 @@ class InsightsOverview extends HTMLElement {
     this.state.selected = keptSelection(this.state.selected, this.listedIds());
     this.keepSelection();
     this.region("freshness").innerHTML = freshnessView(reply.meta);
-    this.region("footer").innerHTML = intervalFooterView(reply.meta.interval);
+    drawInterval(this, reply.meta.interval);
     this.drawPeriod();
     this.drawResults();
     this.drawReport();
@@ -220,18 +237,24 @@ class InsightsOverview extends HTMLElement {
   drawResults() {
     this.stopWaitingForFocus();
     if (!this.reply) return;
-    this.region("results").innerHTML = resultsView({
-      reply: this.reply,
-      state: this.state,
-      siteHref: (id) => this.siteHref(id),
-      names: this.names,
-    });
+    showLoaded(
+      this.region("results"),
+      resultsView({
+        reply: this.reply,
+        state: this.state,
+        siteHref: (id) => this.siteHref(id),
+        names: this.names,
+      }),
+    );
     this.drawBar();
   }
 
   drawBar() {
     const count = this.querySelector("#insights-count");
-    if (count) count.textContent = this.reply ? countText(this.reply) : "";
+    if (count)
+      count.textContent = this.reply
+        ? countText(this.reply, this.state, this.allSites)
+        : "";
     const all = /** @type {any} */ (this.querySelector("#insights-select-all"));
     if (!all) return;
     const ids = this.listedIds();
@@ -256,40 +279,14 @@ class InsightsOverview extends HTMLElement {
   }
 
   drawReport() {
-    if (!this.state || !this.session) return;
-    const job = this.session.reportJobs.current;
-    const { busy, button, hint } = reportBarText({
-      selected: this.state.selected.length,
-      job,
+    if (!this.state || !this.report) return;
+    const { label, why } = reportButtonText(this.state.selected.length);
+    // The dialog sends the period on screen, which needs a reply.
+    this.report.draw({
+      label,
+      why,
+      off: !this.state.selected.length || !this.reply || this.loading(),
     });
-    const generate = /** @type {HTMLButtonElement | null} */ (
-      this.querySelector("#insights-report")
-    );
-    if (generate) {
-      generate.textContent = button;
-      // The dialog names the period and data time, which need a reply.
-      generate.disabled =
-        !this.state.selected.length || busy || !this.reply || this.loading();
-    }
-    const help = this.querySelector("#insights-report-hint");
-    if (help) help.textContent = hint;
-    const status = /** @type {HTMLElement | null} */ (
-      this.querySelector("#insights-report-status")
-    );
-    const left = linkLeft(job, Date.now());
-    const stale = job?.phase === "succeeded" && !left;
-    const markup = job ? jobView(job, stale) : "";
-    // Same words, same nodes, so a screen reader isn't told twice.
-    if (status && this.statusMarkup !== markup) {
-      const had = status.contains(document.activeElement);
-      this.statusMarkup = markup;
-      status.innerHTML = markup;
-      // Cancel or the fresh-link button went with the redraw.
-      if (had) status.focus();
-    }
-    clearTimeout(this.linkTimer);
-    // Swap Download for a fresh-link button when the signed link runs out.
-    if (left) this.linkTimer = setTimeout(() => this.drawReport(), left);
   }
 
   /** Site insights links back to this exact view. @param {string} siteId */
@@ -450,8 +447,6 @@ class InsightsOverview extends HTMLElement {
         Object.fromEntries(["q", ...OVERVIEW_FILTERS].map((key) => [key, ""])),
       );
     if (button.id === "insights-report") return this.openReportDialog();
-    if (button.id === "insights-report-refresh")
-      return void this.session.reportJobs.refresh();
     const site = button.getAttribute("data-site-link");
     if (site)
       this.session.overview = {
@@ -504,7 +499,7 @@ class InsightsOverview extends HTMLElement {
   }
 
   openReportDialog() {
-    if (!this.reply || !this.state.selected.length || this.loading()) return;
+    if (!this.reply || this.report.off()) return;
     this.querySelector("#insights-report-dialog")?.remove();
     // Confirm sends what the dialog counted, even if a load lands meanwhile.
     this.reportAsk = {
@@ -513,11 +508,7 @@ class InsightsOverview extends HTMLElement {
     };
     this.insertAdjacentHTML(
       "beforeend",
-      reportDialogView({
-        count: this.reportAsk.siteIds.length,
-        period: periodLabel(this.reply.meta.interval),
-        time: formatInstant(this.reply.meta.asOf),
-      }),
+      reportDialogView({ count: this.reportAsk.siteIds.length }),
     );
     /** @type {HTMLDialogElement} */ (
       this.querySelector("#insights-report-dialog")
@@ -532,19 +523,14 @@ class InsightsOverview extends HTMLElement {
     const ask = this.reportAsk;
     this.reportAsk = null;
     dialog.remove();
-    if (!confirmed || !ask) {
-      /** @type {HTMLElement | null} */ (
-        this.querySelector("#insights-report")
-      )?.focus();
-      return;
-    }
-    void this.session.reportJobs.start(
-      ask.siteIds,
-      periodApiParams(ask.period),
-    );
-    // The button is disabled while the report runs; its progress is here.
+    if (confirmed && ask)
+      void this.session.reportJobs.start(
+        ask.siteIds,
+        periodApiParams(ask.period),
+      );
+    // The button shows the report's progress, so focus stays on it.
     /** @type {HTMLElement | null} */ (
-      this.querySelector("#insights-report-status")
+      this.querySelector("#insights-report")
     )?.focus();
   };
 }

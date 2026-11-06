@@ -1,4 +1,4 @@
-// <insights-site>: one Site's concerns, contacts, activity and Issue responses for the period.
+// <insights-site>: one Site's concerns, contacts, activity, severe Issues and Issue responses for the period.
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
 import { adminApi } from "../../services/admin-api.js";
@@ -17,8 +17,9 @@ import {
   failedView,
   failureText,
   freshnessView,
-  intervalFooterView,
   loadingView,
+  showLoaded,
+  showLoading,
   periodClicked,
   periodInterval,
   periodName,
@@ -26,14 +27,19 @@ import {
 } from "./insights.templates.js";
 import {
   contactsView,
-  firstTile,
+  SITE_LISTS,
   siteBodyView,
+  siteTopView,
   siteHeadView,
   siteIssuesView,
   sitePeriodView,
 } from "./site.templates.js";
 
 /** @typedef {import("./insights-query.js").Period} Period */
+/** @typedef {import("./site.templates.js").SiteList} SiteList */
+/** @typedef {{ tile: string, issues: Record<string, any> | null, failed: string, generation: number }} ListState */
+
+const LISTS = /** @type {SiteList[]} */ (Object.keys(SITE_LISTS));
 
 /** @param {string} path */
 const isOverview = (path) =>
@@ -59,14 +65,21 @@ class InsightsSite extends HTMLElement {
     this.reply = null;
     /** @type {import("./site.templates.js").ContactDetails} */
     this.details = null;
-    /** @type {Record<string, any> | null} */
-    this.issues = null;
-    this.issuesFailed = "";
-    this.tile = "";
+    // Each section's own picks and list, so changing one doesn't reload the other.
+    /** @type {Record<SiteList, ListState>} */
+    this.lists = /** @type {any} */ (
+      Object.fromEntries(
+        LISTS.map((list) => [
+          list,
+          { tile: "", issues: null, failed: "", generation: 0 },
+        ]),
+      )
+    );
+    /** @type {SiteList} the list the open panel's Issue came from */
+    this.panelList = "response";
     /** @type {Map<string, string>} */
     this.managerNames = new Map();
     this.generation = 0;
-    this.issuesGeneration = 0;
     // Opened from Overview, the next Overview link goes back to that view.
     const asked = safeReturnPath(
       new URLSearchParams(location.search).get("return"),
@@ -88,6 +101,7 @@ class InsightsSite extends HTMLElement {
     this.innerHTML = `
       <div data-region="head">${this.headView()}</div>
       <div data-region="freshness">${freshnessView(null)}</div>
+      <div data-region="top"></div>
       <div data-region="period">${sitePeriodView({ label: periodName(interval), range: interval ? rangeLabel(interval) : "" })}</div>
       <div data-region="body"></div>
       <footer data-region="footer"></footer>`;
@@ -188,14 +202,14 @@ class InsightsSite extends HTMLElement {
 
   async load() {
     const mine = ++this.generation;
-    this.issuesGeneration++;
+    for (const list of LISTS) this.lists[list].generation++;
     this.controller?.abort();
     this.controller = new AbortController();
     const { signal } = this.controller;
     const params = periodApiParams(this.period);
-    this.region("body").innerHTML = loadingView();
+    showLoading(this.region("body"));
     // The old interval is for the period no longer shown.
-    this.region("footer").innerHTML = "";
+
     this.setAttribute("aria-busy", "true");
     /** @type {Record<string, any>} */
     let reply;
@@ -212,11 +226,13 @@ class InsightsSite extends HTMLElement {
       // The old data time is for another period.
       this.region("freshness").innerHTML = freshnessView(null);
       this.drawHead();
-      this.region("body").innerHTML =
-        // Other 404s, such as a route the API lacks, are plain failures.
+      this.region("top").innerHTML = "";
+      showLoaded(
+        this.region("body"), // Other 404s, such as a route the API lacks, are plain failures.
         /** @type {any} */ (err)?.message === "site_not_found"
           ? `<p class="empty-state" data-insights-empty="site">${escapeHtml(t("admin.insights.siteNotFound"))}</p>`
-          : failedView(failureText(err, t("admin.insights.siteFailed")));
+          : failedView(failureText(err, t("admin.insights.siteFailed"))),
+      );
       // The period controls step from the period asked for instead.
       this.drawPeriod();
       return;
@@ -227,50 +243,74 @@ class InsightsSite extends HTMLElement {
     this.tile = firstTile(reply);
     this.drawHead();
     this.region("freshness").innerHTML = freshnessView(reply.meta);
-    this.region("footer").innerHTML = intervalFooterView(reply.meta.interval);
+
     this.drawPeriod();
-    this.region("body").innerHTML = siteBodyView({
+    this.region("top").innerHTML = siteTopView({
       reply,
       details: this.details,
-      tile: this.tile,
       hrefs: this.urls,
     });
-    void this.loadIssues();
+    showLoaded(
+      this.region("body"),
+      siteBodyView({
+        reply,
+        tiles: {
+          severity: this.lists.severity.tile,
+          response: this.lists.response.tile,
+        },
+        hrefs: this.urls,
+      }),
+    );
+    for (const list of LISTS)
+      void this.loadIssues(list, back?.list === list ? back.issueId : "");
   }
 
-  /** Lists the selected tile's Issues; a failure here keeps the counts above. */
-  async loadIssues() {
-    const mine = ++this.issuesGeneration;
-    this.issues = null;
-    this.issuesFailed = "";
-    this.drawIssues();
-    if (!this.tile || !this.region("issues")) return;
-    this.region("issues").insertAdjacentHTML("beforeend", loadingView());
+  /** @param {SiteList} list @returns {HTMLElement | null} */
+  issuesRegion(list) {
+    return this.querySelector(`[data-list="${list}"] [data-region="issues"]`);
+  }
+
+  /**
+   * Lists the selected tiles' Issues; a failure here keeps the counts above.
+   * @param {SiteList} list
+   * @param {string} [focusId] the Issue to land on, coming back
+   */
+  async loadIssues(list, focusId = "") {
+    const state = this.lists[list];
+    const mine = ++state.generation;
+    state.issues = null;
+    state.failed = "";
+    this.drawIssues(list);
+    const region = this.issuesRegion(list);
+    if (!state.tile || !region) return;
+    region.insertAdjacentHTML("beforeend", loadingView());
     try {
       const issues = await adminApi.reportingIssues(
         {
           ...periodApiParams(this.period),
           siteIds: this.siteId,
-          responseState: this.tile,
+          [SITE_LISTS[list].param]: state.tile,
         },
         /** @type {AbortController} */ (this.controller).signal,
       );
-      if (mine !== this.issuesGeneration) return;
-      this.issues = issues;
+      if (mine !== state.generation) return;
+      state.issues = issues;
     } catch (err) {
       if (
-        mine !== this.issuesGeneration ||
+        mine !== state.generation ||
         /** @type {any} */ (err)?.name === "AbortError"
       )
         return;
-      this.issuesFailed = failureText(err, t("admin.insights.issuesFailed"));
+      state.failed = failureText(err, t("admin.insights.issuesFailed"));
     }
     this.drawIssues();
   }
 
-  drawIssues() {
-    const region = this.region("issues");
+  /** @param {SiteList} list */
+  drawIssues(list) {
+    const region = this.issuesRegion(list);
     if (!region) return;
+    const state = this.lists[list];
     region.innerHTML = siteIssuesView({
       issues: this.issues,
       failed: this.issuesFailed,
@@ -285,16 +325,28 @@ class InsightsSite extends HTMLElement {
     });
   }
 
-  /** Pressing the selected tile again closes its list, as the mock does. @param {string} tile */
-  pickTile(tile) {
+  /** Each tile adds or removes its value from its own list. @param {SiteList} list @param {string} tile */
+  pickTile(list, tile) {
     if (!this.reply) return;
-    this.tile = tile === this.tile ? "" : tile;
-    for (const button of this.querySelectorAll("[data-tile]"))
+    const state = this.lists[list];
+    const on = new Set(state.tile.split(",").filter(Boolean));
+    if (!on.delete(tile)) on.add(tile);
+    // Tile order, so the same picks make the same URL and request.
+    state.tile = SITE_LISTS[list].tiles.filter((key) => on.has(key)).join(",");
+    for (const button of this.querySelectorAll(
+      `[data-list="${list}"] [data-tile]`,
+    ))
       button.setAttribute(
         "aria-pressed",
-        `${button.getAttribute("data-tile") === this.tile}`,
+        `${on.has(button.getAttribute("data-tile") ?? "")}`,
       );
-    void this.loadIssues();
+    void this.loadIssues(list);
+  }
+
+  /** @param {Element} element @returns {SiteList | undefined} */
+  listOf(element) {
+    const list = element.closest("[data-list]")?.getAttribute("data-list");
+    return LISTS.find((name) => name === list);
   }
 
   headView() {
@@ -350,17 +402,11 @@ class InsightsSite extends HTMLElement {
     const button = /** @type {Element} */ (event.target).closest("button");
     if (!button || !this.contains(button)) return;
     if (button.id === "insights-retry") return void this.load();
-    if (button.id === "insights-issues-retry") return void this.loadIssues();
+    const list = this.listOf(button);
+    if (list && button.id === SITE_LISTS[list].retry)
+      return void this.loadIssues(list);
     const tile = button.getAttribute("data-tile");
-    if (tile) return this.pickTile(tile);
-    const jump = button.getAttribute("data-jump-tile");
-    if (jump) {
-      if (jump !== this.tile) this.pickTile(jump);
-      /** @type {HTMLElement | null} */ (
-        this.querySelector(`[data-tile="${CSS.escape(jump)}"]`)
-      )?.focus();
-      return;
-    }
+    if (list && tile) return this.pickTile(list, tile);
     if (this.periodBody().contains(button))
       periodClicked(this, button, this.periodBody());
   };

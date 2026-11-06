@@ -8,19 +8,18 @@ import {
   SHOW,
   SITE_SORTS,
 } from "./insights-query.js";
+import { jobButtonView, resultBarView } from "./job-action.js";
 import {
-  codeKey,
-  formatInstant,
   helpTip,
   noDataFor,
+  oneDecimal,
   perDayText,
+  per30Days,
   periodLabel,
   severityKnown,
-  severityWord,
 } from "./insights.templates.js";
 
 /** @typedef {import("./insights-query.js").OverviewState} OverviewState */
-/** @typedef {import("./report-job.js").ReportState} ReportState */
 /** @typedef {import("./insights-session.js").Option} Option */
 /** @typedef {import("./insights-session.js").FilterOptions} FilterOptions */
 /** @typedef {Record<string, any>} SiteRow */
@@ -118,40 +117,70 @@ function responseSummary(row) {
   );
 }
 
-/** @param {string} key @param {string} fallback */
-const wordFor = (key, fallback) => t(hasKey(key) ? key : fallback);
+// The citywide daily number when a Site's terms set none, as check-compliance uses.
+const DEFAULT_CHECKS_PER_DAY = 3;
+
+/** Overdue and late both missed the response time, so they count together. @param {SiteRow} row */
+const late = (row) => row.response.overdue + row.response.late;
+
+/** The bar is full at the Site shown with the most, so rows compare at a glance. @param {SiteRow} row @param {number} most */
+function lateCount(row, most) {
+  const count = late(row);
+  const full = most > 0 ? count / most : 0;
+  return `<span class="insights__meter-n" data-late-count>${escapeHtml(count)}</span><span class="insights__meter" role="img" aria-label="${escapeHtml(t("admin.insights.lateMeter", { count, most }))}"><span style="inline-size:${Math.round(full * 100)}%"></span></span>`;
+}
+
+/**
+ * The average Few Checks judges, with a bar full at the Site's own daily number.
+ * @param {SiteRow} row
+ */
+function checksMeter(row) {
+  const perDay = row.checksPerOwedDay ?? row.checksPerDay;
+  if (perDay === null || perDay === undefined)
+    return muted("admin.insights.none");
+  const owed = row.checksOwedPerDay ?? DEFAULT_CHECKS_PER_DAY;
+  const full = owed > 0 ? Math.min(perDay / owed, 1) : 1;
+  const value = oneDecimal(perDay);
+  return `<span class="insights__meter-n" data-checks-per-day>${escapeHtml(value)}</span><span class="insights__meter" role="img" aria-label="${escapeHtml(t("admin.insights.checksMeter", { value, owed }))}"><span style="inline-size:${Math.round(full * 100)}%"></span></span>`;
+}
 
 /** @param {string} word @param {string} [kind] */
 const chip = (word, kind = "") =>
   `<span class="insights__chip${kind ? ` insights__chip--${kind}` : ""}">${escapeHtml(word)}</span>`;
 
-/** @param {SiteRow} row */
-function concernsCell(row) {
-  // A reason added on the server later reads as a plain concern, not a key.
-  const words = new Set(
-    row.concerns.map((/** @type {string} */ c) =>
-      wordFor(`admin.insights.concern.${c}`, "admin.insights.otherConcern"),
-    ),
-  );
-  return words.size
-    ? `<span class="insights__chips">${[...words].map((w) => chip(w)).join("")}</span>`
-    : muted("admin.insights.none");
+/** @param {SiteRow} row @param {{ startDay: string, endDay: string }} interval */
+const per30 = (row, interval) =>
+  per30Days(row.activity.issuesCreated, interval);
+
+/** The bar is full at the busiest Site shown, so rows compare at a glance. @param {number} value @param {number} most */
+function issuesPer30(value, most) {
+  const shown = oneDecimal(value);
+  const full = most > 0 ? value / most : 0;
+  return `<span class="insights__meter-n" data-issues-per-30d>${escapeHtml(shown)}</span><span class="insights__meter" role="img" aria-label="${escapeHtml(t("admin.insights.issuesMeter", { value: shown, most: oneDecimal(most) }))}"><span style="inline-size:${Math.round(full * 100)}%"></span></span>`;
+}
+
+/** @param {string} band minor, moderate, severe or unknown */
+export function bandView(band) {
+  return `<span class="insights__sev" data-severity="${band}"><span class="insights__dot" aria-hidden="true"></span>${escapeHtml(t(`admin.insights.severity.${band}`))}</span>`;
 }
 
 /** @param {number | null} severity */
-export function severityView(severity) {
-  const band = severityKnown(severity)
+export const severityBand = (severity) =>
+  severityKnown(severity)
     ? Number(severity) >= 4
       ? "severe"
       : Number(severity) === 3
         ? "moderate"
         : "minor"
     : "unknown";
-  return `<span class="insights__sev" data-severity="${band}"><span class="insights__dot" aria-hidden="true"></span>${escapeHtml(severityWord(severity))}</span>`;
+
+/** @param {number | null} severity */
+export function severityView(severity) {
+  return bandView(severityBand(severity));
 }
 
-/** @param {SiteRow} row @param {{ selected: Set<string>, noData: boolean, siteHref: (id: string) => string, names: Record<string, Map<string, string>> }} view */
-function siteRow(row, { selected, noData, siteHref, names }) {
+/** @param {SiteRow} row @param {{ selected: Set<string>, noData: boolean, siteHref: (id: string) => string, names: Record<string, Map<string, string>>, interval: { startDay: string, endDay: string }, most: { issues: number, late: number } }} view */
+function siteRow(row, { selected, noData, siteHref, names, interval, most }) {
   // Phones show each row as a labelled card (plan §7), so cells carry their column name.
   const label = (/** @type {string} */ key) =>
     `data-label="${escapeHtml(t(`admin.insights.col.${key}`))}"`;
@@ -170,15 +199,9 @@ function siteRow(row, { selected, noData, siteHref, names }) {
         : ""
     }</th>
     <td role="cell" class="insights__num" ${label("checks")} data-checks>${
-      noData
-        ? UNAVAILABLE
-        : `${escapeHtml(row.activity.completedPerimeterChecks)}${
-            row.checksPerDay === null || row.checksPerDay === undefined
-              ? ""
-              : `<div class="muted" data-checks-per-day>${escapeHtml(perDayText(row.checksPerDay))}</div>`
-          }`
+      noData ? UNAVAILABLE : checksMeter(row)
     }</td>
-    <td role="cell" ${label("response")} data-response-cell>${noData ? UNAVAILABLE : responseSummary(row)}</td>
+    <td role="cell" class="insights__num" ${label("response")} data-response-cell>${noData ? UNAVAILABLE : lateCount(row, most.late)}</td>
     <td role="cell" ${label("severity")} data-issues>${
       noData
         ? UNAVAILABLE
@@ -186,29 +209,37 @@ function siteRow(row, { selected, noData, siteHref, names }) {
           ? severityView(row.maxSeverity)
           : muted("admin.insights.none")
     }</td>
-    <td role="cell" ${label("concerns")} data-concerns>${concernsCell(row)}</td>
+    <td role="cell" class="insights__num" ${label("issuesPer30d")}>${noData ? UNAVAILABLE : issuesPer30(per30(row, interval), most.issues)}</td>
     <td role="cell" class="insights__chev" aria-hidden="true"><wa-icon name="chevron-right"></wa-icon></td>
   </tr>`;
 }
 
-/** Count, sort and the report button sit outside the table, so a load leaves them in place. @param {OverviewState} state */
-export function resultBarView(state) {
-  return `<div class="insights__resultbar">
-    <p role="status" id="insights-count" tabindex="-1"></p>
-    <div class="insights__actions">
-      <span class="insights__sortlabel" aria-hidden="true">${escapeHtml(t("admin.insights.sort.label"))}</span>
+/** Outside the table, so a load leaves them in place. @param {OverviewState} state */
+export function overviewBarView(state) {
+  return resultBarView({
+    start: `<span class="insights__sortlabel" aria-hidden="true">${escapeHtml(t("admin.insights.sort.label"))}</span>
       <wa-select data-filter="sort" aria-label="${escapeHtml(t("admin.insights.sort.label"))}" value="${escapeHtml(state.sort)}" size="s" pill>${SITE_SORTS.map(
         (s) =>
           `<wa-option value="${s}">${escapeHtml(t(`admin.insights.sort.${s}`))}</wa-option>`,
-      ).join("")}</wa-select>
-      <button type="button" class="btn-primary" id="insights-report" disabled></button>
-    </div>
-  </div>`;
+      ).join("")}</wa-select>`,
+    end: jobButtonView("insights-report", t("admin.insights.report.button")),
+  });
 }
 
-/** @param {Record<string, any>} reply @returns {string} */
-export function countText(reply) {
-  return t("admin.insights.siteCount", { count: reply.siteCount });
+/**
+ * @param {Record<string, any>} reply
+ * @param {OverviewState} state
+ * @param {number | null} total every Site, once known
+ * @returns {string} e.g. "22 Sites (out of 500)" when the view or filters narrow the list
+ */
+export function countText(reply, state, total) {
+  const count = reply.siteCount;
+  const narrowed =
+    state.show !== "all" ||
+    [state.q, ...OVERVIEW_FILTERS.map((k) => state[k])].some(Boolean);
+  return narrowed && total !== null && total > count
+    ? t("admin.insights.siteCountOf", { count, total })
+    : t("admin.insights.siteCount", { count });
 }
 
 /** The header box ticks when every listed Site is picked. @param {string[]} listedIds @param {string[]} selected */
@@ -227,7 +258,10 @@ function columnHead(key, num = false) {
         t(`admin.insights.colHelp.${key}`),
       )
     : "";
-  return `<th role="columnheader" scope="col" ${num ? 'class="insights__num"' : ""}>${escapeHtml(t(`admin.insights.col.${key}`))}${tip}</th>`;
+  const words = t(`admin.insights.col.${key}`).split(" ");
+  const last = words.pop();
+  // The "?" stays on the line with the last word instead of wrapping alone.
+  return `<th role="columnheader" scope="col" ${num ? 'class="insights__num"' : ""}>${escapeHtml(words.join(" "))} <span class="insights__nowrap">${escapeHtml(last ?? "")}${tip}</span></th>`;
 }
 
 /** @param {{ reply: Record<string, any>, state: OverviewState, siteHref: (id: string) => string, names: Record<string, Map<string, string>> }} view */
@@ -237,15 +271,19 @@ export function resultsView({ reply, state, siteHref, names }) {
   const selected = new Set(state.selected);
   const noData = noDataFor(reply.meta);
   if (!rows.length) return emptyView(reply, state);
+  const most = {
+    issues: Math.max(...rows.map((row) => per30(row, interval))),
+    late: Math.max(...rows.map(late)),
+  };
   return `<div class="table-wrap insights__table" data-insights-table>
     <table role="table">
       <caption class="visually-hidden">${escapeHtml(t("admin.insights.tableCaption", { period: periodLabel(interval) }))}</caption>
       <thead role="rowgroup"><tr role="row">
         <th role="columnheader" scope="col"><wa-checkbox id="insights-select-all" aria-label="${escapeHtml(t("admin.insights.selectAll"))}"></wa-checkbox></th>
-        ${columnHead("site")}${columnHead("checks", true)}${columnHead("response")}${columnHead("severity")}${columnHead("concerns")}
+        ${columnHead("site")}${columnHead("checks", true)}${columnHead("response", true)}${columnHead("severity")}${columnHead("issuesPer30d", true)}
         <th role="columnheader" scope="col"><span class="visually-hidden">${escapeHtml(t("admin.insights.col.open"))}</span></th>
       </tr></thead>
-      <tbody role="rowgroup">${rows.map((row) => siteRow(row, { selected, noData, siteHref, names })).join("")}</tbody>
+      <tbody role="rowgroup">${rows.map((row) => siteRow(row, { selected, noData, siteHref, names, interval, most })).join("")}</tbody>
     </table>
   </div>`;
 }
@@ -268,10 +306,17 @@ function emptyView(reply, state) {
   return `<div class="empty-state" data-insights-empty="filtered"><p>${escapeHtml(t("admin.insights.empty.filtered"))}</p><button type="button" class="btn-secondary" id="insights-clear-filters">${escapeHtml(t("admin.insights.clearFilters"))}</button>${state.show === "all" ? "" : showAll}</div>`;
 }
 
-/** Below the table, as the mock has it; updated in place, so screen readers hear one live region. */
-export function reportBarView() {
-  return `<p class="muted insights__hint" id="insights-report-hint"></p>
-  <div role="status" id="insights-report-status" tabindex="-1"></div>`;
+/** @param {number} selected @returns {{ label: string, why: string }} */
+export function reportButtonText(selected) {
+  return selected
+    ? {
+        label: t("admin.insights.report.buttonCount", { count: selected }),
+        why: "",
+      }
+    : {
+        label: t("admin.insights.report.button"),
+        why: t("admin.insights.report.needSites"),
+      };
 }
 
 /** @param {{ selected: number, job: ReportState | null }} view */
@@ -332,7 +377,6 @@ export function reportDialogView({ count, period, time }) {
     <form class="places-modal__card" method="dialog">
       <div class="places-modal__copy">
         <h2 class="places-modal__title" id="insights-report-title">${escapeHtml(t("admin.insights.report.title", { count }))}</h2>
-        <p class="places-modal__text" id="insights-report-copy">${escapeHtml(t("admin.insights.report.body", { period, time }))}</p>
       </div>
       <div class="places-modal__actions">
         <button class="btn-outline" value="cancel">${escapeHtml(t("common.cancel"))}</button>

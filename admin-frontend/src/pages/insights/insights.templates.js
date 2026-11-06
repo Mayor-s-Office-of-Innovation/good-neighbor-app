@@ -93,11 +93,10 @@ export const footerText = (interval) =>
       })
     : intervalText(interval);
 
-/** The exact days behind every count, with no rule or contract version. @param {Interval | null} interval */
-export function intervalFooterView(interval) {
-  return interval
-    ? `<p class="muted insights__foot" data-insights-interval>${escapeHtml(footerText(interval))}</p>`
-    : "";
+/** Under the count, so people see which days the numbers cover. @param {ParentNode} root @param {Interval | null} interval */
+export function drawInterval(root, interval) {
+  const line = root.querySelector("[data-insights-interval]");
+  if (line) line.textContent = interval ? footerText(interval) : "";
 }
 
 /** One decimal, as the mock shows it; the server rounds to one before it flags. @param {number} perDay */
@@ -106,6 +105,24 @@ export const oneDecimal = (perDay) => perDay.toFixed(1);
 /** @param {number} perDay */
 export const perDayText = (perDay) =>
   t("admin.insights.perDay", { value: oneDecimal(perDay) });
+
+/**
+ * Issues per 30 days, so periods of any length compare.
+ * @param {number} count
+ * @param {{ startDay: string, endDay: string }} interval end exclusive
+ */
+export function per30Days(count, interval) {
+  const days = periodDays(interval);
+  return days > 0 ? (count / days) * 30 : 0;
+}
+
+/** @param {{ startDay: string, endDay: string }} interval end exclusive */
+export const periodDays = (interval) =>
+  (Date.parse(interval.endDay) - Date.parse(interval.startDay)) / 86_400_000;
+
+/** @param {number} value */
+export const per30Text = (value) =>
+  t("admin.insights.per30d", { value: oneDecimal(value) });
 
 /** No records cover this period, so its zeros aren't real. @param {ReplyMeta} meta */
 export function noDataFor(meta) {
@@ -423,6 +440,27 @@ export function failureText(err, lead) {
 }
 
 /** @param {string} [label] */
+/**
+ * Keeps the old results, dimmed, while new ones load, so the page keeps its height and scroll.
+ * @param {Element} region
+ */
+export function showLoading(region) {
+  region.setAttribute("aria-busy", "true");
+  if (region.childElementCount) {
+    region.classList.add("insights__stale");
+    // Old rows can't be picked or opened while they're out of date.
+    region.toggleAttribute("inert", true);
+  } else region.innerHTML = loadingView();
+}
+
+/** @param {Element} region @param {string} markup */
+export function showLoaded(region, markup) {
+  region.removeAttribute("aria-busy");
+  region.classList.remove("insights__stale");
+  region.removeAttribute("inert");
+  region.innerHTML = markup;
+}
+
 export function loadingView(label = t("common.loading")) {
   return `<p role="status" class="insights__loading"><wa-spinner aria-hidden="true"></wa-spinner> ${escapeHtml(label)}</p>`;
 }

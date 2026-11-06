@@ -48,6 +48,9 @@ export function createReportJobs({
   const listeners = new Set();
   // Each start gets its own run, so an old poll can't overwrite a new report.
   let run = 0;
+  // Kept for Try again, which repeats the ask that failed.
+  /** @type {{ body: Record<string, unknown>, count: number } | null} */
+  let last = null;
 
   /** @param {ReportState} next @param {number} mine */
   const set = (next, mine) => {

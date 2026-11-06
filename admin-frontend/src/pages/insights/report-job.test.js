@@ -253,3 +253,40 @@ test("a fresh link from one try isn't undone by an older try failing", async () 
     ["", "https://example.org/fresh.json"],
   );
 });
+
+test("Try again sends the same ask as the job that failed, with a new key", async () => {
+  let fail = true;
+  const { api, calls } = fakeApi(["succeeded"]);
+  const jobs = createReportJobs({
+    api: {
+      ...api,
+      async createInsightsReport(body, key) {
+        if (fail) throw new Error("jobs_unavailable");
+        return api.createInsightsReport(body, key);
+      },
+    },
+    wait: noWait,
+  });
+  await jobs.start(["s1"], { period: "month", month: "2026-10" });
+  fail = false;
+  await jobs.retry();
+  assert.equal(jobs.current?.phase, "succeeded");
+  assert.deepEqual(calls[0].args[0], {
+    siteIds: ["s1"],
+    period: "month",
+    month: "2026-10",
+  });
+  assert.equal(jobs.current?.count, 1);
+});
+
+test("a dismissed job is gone, so its dialog isn't shown again", async () => {
+  const { api } = fakeApi(["succeeded"]);
+  const jobs = createReportJobs({ api, wait: noWait });
+  let told = 0;
+  jobs.subscribe(() => (told += 1));
+  await jobs.start(["s1"], {});
+  const before = told;
+  jobs.dismiss();
+  assert.equal(jobs.current, null);
+  assert.equal(told, before + 1);
+});

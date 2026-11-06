@@ -43,10 +43,13 @@ test("a manager selects every Site and gets a report link without leaving the pa
   );
   await page.locator("#insights-report").click();
   await page.locator("#insights-report-confirm").click();
-  await expect(page.locator("#insights-report-status")).toHaveText(
-    t("admin.insights.report.working", { count: 4 }),
+  await expect(page.locator("#insights-report")).toHaveText(
+    t("admin.insights.report.generating"),
   );
   await page.clock.runFor(2000);
+  await expect(page.getByRole("dialog")).toHaveAccessibleName(
+    t("admin.insights.report.done"),
+  );
   await expect(page.locator("#insights-report-download")).toBeVisible();
   expect(api.calls("POST", /^reports\/insights$/)[0].body.siteIds).toEqual([
     "s1",

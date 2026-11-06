@@ -119,7 +119,7 @@ function bars(span, points, unit, kind) {
   return `<div class="insights__bars" data-chart="${kind}">${list
     .map(
       (b) =>
-        `<div class="insights__bar${b.value === null ? " insights__bar--none" : ""}"><b>${b.value ? b.value : ""}</b><i style="height:${b.value === null ? 100 : Math.round(((b.value ?? 0) / max) * 100)}%"></i></div>`,
+        `<div class="insights__bar${b.value === null ? " insights__bar--none" : ""}"><b>${b.value ? b.value : ""}</b><span class="insights__bar-track"><i style="height:${b.value === null ? 100 : Math.round(((b.value ?? 0) / max) * 100)}%"></i></span></div>`,
     )
     .join("")}</div><div class="insights__bar-x">${list
     // Weekly bars name each month once, at its first week.

@@ -78,8 +78,7 @@
 .insights__period,
 .insights__stepper,
 .insights__custom,
-.insights__resultbar,
-.insights__actions,
+.insights__bar-start,
 .insights__psel {
   display: flex;
   flex-wrap: wrap;
@@ -194,29 +193,104 @@
   position-try-fallbacks: flip-block, flip-inline;
 }
 
+/* Equal outer columns keep the count centred as its words change. */
 .insights__resultbar {
-  justify-content: space-between;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px 12px;
 }
 
-.insights__resultbar p,
-.insights__hint,
-.insights [data-region="report"] p {
-  margin: 0;
+.insights__bar-end {
+  justify-self: end;
 }
 
 #insights-count {
+  margin: 0;
+  /* Kept while the count is blank during a load, so the bar doesn't jump. */
+  min-height: 1lh;
   color: var(--muted);
   font-size: 0.875rem;
+  text-align: center;
 }
 
+@media (max-width: 640px) {
+  .insights__resultbar {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .insights__bar-start:empty {
+    display: none;
+  }
+
+  #insights-count {
+    text-align: start;
+  }
+
+  .insights__bar-end {
+    justify-self: start;
+  }
+}
+
+/* aria-disabled buttons still get hover and focus, so they can say why they're off. */
+.insights__why-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.insights__why-wrap > [aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.insights__why-wrap > button wa-spinner {
+  vertical-align: -0.125em;
+}
+
+.insights__why {
+  position: absolute;
+  inset-block-start: calc(100% + 6px);
+  inset-inline-end: 0;
+  z-index: 10;
+  width: max-content;
+  max-width: 260px;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--ink);
+  color: var(--on-ink);
+  font: 400 0.8125rem/1.4 var(--font-sans);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+[aria-disabled="true"]:is(:hover, :focus) + .insights__why:not(:empty) {
+  visibility: visible;
+}
+
+@media (max-width: 640px) {
+  .insights__why {
+    inset-inline: 0 auto;
+  }
+}
+
+/* The ready dialog's Download is a link, sized like the dialog's buttons. */
+.insights__job-done .places-modal__actions > a {
+  display: grid;
+  place-items: center;
+  min-height: 46px;
+  box-sizing: border-box;
+  border-radius: var(--wa-border-radius-pill, 9999px);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+/* Same width as the filter labels, so Sort lines up with the filters above it. */
 .insights__sortlabel {
+  inline-size: 88px;
+  margin-inline-end: 6px;
   color: var(--muted);
-  font-size: 0.875rem;
-}
-
-.insights__hint {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
 .insights__num {
@@ -310,7 +384,7 @@
   border-bottom: 1px solid var(--line);
 }
 
-/* Every Site is on one page, so the header must stay in view while it scrolls. */
+/* The page scrolls, not a box inside it, so the header sticks to the window (Bryan, 11/05). */
 @media (min-width: 761px) {
   .insights .insights__table {
     max-height: calc(100dvh - 96px);
@@ -342,6 +416,31 @@
 .insights__chev {
   width: 28px;
   vertical-align: middle;
+}
+
+/* A tint under the pointer or keyboard focus shows the whole row opens. */
+.insights__table
+  tbody
+  tr:is([data-site-row], [data-issue-row], [data-check-row]):is(
+    :hover,
+    :focus-within
+  ) {
+  background: var(--surface-subtle, #f2f3f5);
+}
+
+/* The row's name cell paints its own white, so it takes the tint too. */
+.insights__table
+  tbody
+  tr:is([data-site-row], [data-issue-row], [data-check-row]):is(
+    :hover,
+    :focus-within
+  )
+  > * {
+  background: inherit;
+}
+
+.insights__chev wa-icon {
+  color: var(--muted);
 }
 
 /* Site insights */
@@ -410,6 +509,10 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.insights__tiles--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .insights__tiles--five {
@@ -501,16 +604,18 @@
 }
 
 .insights__cal th {
-  width: 34px;
+  width: 40px;
   font-weight: 500;
   color: var(--muted);
 }
 
 .insights__cal td {
   position: relative;
-  width: 34px;
-  height: 34px;
-  padding: 0;
+  width: 40px;
+  height: 40px;
+  /* Room for the date in the corner, so the count sits centred under it. */
+  padding: 8px 0 0;
+  vertical-align: middle;
   border: 2px solid var(--bg);
   text-align: center;
   font-size: 0.875rem;
@@ -590,6 +695,16 @@
   color: var(--muted);
 }
 
+/* The bar fills the space under its label, so the tallest label stays inside the chart. */
+.insights__bar-track {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: flex-end;
+  width: 100%;
+  min-height: 0;
+}
+
 .insights__bar i {
   display: block;
   width: 100%;
@@ -647,6 +762,10 @@
   .insights__crow {
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
+  }
+
+  .insights__sortlabel {
+    inline-size: auto;
   }
 
   /* Tighter padding fits the choices on one line at 375px. */
@@ -711,18 +830,13 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .insights__tiles--four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   /* The ? sits beside the short number, so labels can use the full width. */
   .insights__tile,
   .insights__tile > button[data-tile] {
     padding: 10px;
-  }
-
-  /* Phones keep severity, category and status; the dates and ID are on the Issue. */
-  .insights__issues a {
-    grid-template-columns: 84px minmax(0, 1fr) auto 16px;
-  }
-
-  .insights__issues a > :is(span:nth-of-type(2), span:nth-of-type(4)) {
-    display: none;
   }
 }
