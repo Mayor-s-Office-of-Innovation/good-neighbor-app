@@ -1,7 +1,7 @@
 // A seeded year of made-up records plus the totals each Site should reach, to
 // check the projection.
-// All synthetic: numbered Site names, made-up manager names, example.org
-// emails, 555-01xx phones.
+// All synthetic: Middle-earth Site names marked "(Synthetic)", made-up
+// manager names, example.org emails, 555-01xx phones.
 
 import {
   addDays,
@@ -19,6 +19,7 @@ import {
   taskWorklistDateGsi,
 } from "../../handlers/keys.js";
 import { SITE_DAY_METRICS } from "../activity.js";
+import { notePhotoLabel } from "../../domain/task-updates.js";
 
 const HOUR = 3_600_000;
 const MINUTE = 60_000;
@@ -218,6 +219,7 @@ const ESCALATION_RULES = [
 ];
 const NOT_TIMED_RULES = ["MED-1", "DISTRESS-3"];
 const DEPARTMENTS = ["DPH", "HSH"];
+/** @type {Record<string, string>} */
 const DEPARTMENT_NAMES = {
   DPH: "Department of Public Health (DPH)",
   HSH: "Department of Homelessness and Supportive Housing (HSH)",
@@ -229,6 +231,79 @@ const MANAGERS = [
   ["Priya", "Natarajan"],
   ["Tom", "Becker"],
 ];
+
+// Fictional places, so no name matches a real City Site.
+const PLACES = [
+  "Rivendell",
+  "Bree Street",
+  "Hobbiton",
+  "Bywater Road",
+  "Michel Delving",
+  "Tuckborough",
+  "Buckland",
+  "Crickhollow",
+  "Brandywine Bridge",
+  "Frogmorton",
+  "Edoras",
+  "Minas Tirith",
+  "Osgiliath",
+  "Dol Amroth",
+  "Pelargir",
+  "Lothlorien",
+  "Esgaroth",
+  "Dale",
+  "Erebor",
+  "Grey Havens",
+  "Ithilien",
+  "Dunharrow",
+  "Westfold",
+  "Greenway",
+  "Archet",
+  "Staddle",
+  "Combe",
+  "Woodhall",
+  "Harlond",
+  "Belfalas",
+];
+// Site kinds the City funds, each with the app's own site type.
+const SITE_KINDS = [
+  ["Navigation Center", "shelter"],
+  ["Supportive Housing", "permanent_supportive_housing"],
+  ["Drop-in Center", "drop_in"],
+  ["SIP Hotel", "other"],
+  ["Shelter", "shelter"],
+];
+
+/**
+ * A unique name for Site s, e.g. "Rivendell Navigation Center (Synthetic)".
+ * @param {number} s
+ * @returns {{ name: string, siteType: string }}
+ */
+export function syntheticSite(s) {
+  const round = Math.floor(s / (PLACES.length * SITE_KINDS.length));
+  // Steps the kind each lap of the places, so no place repeats a kind.
+  const [kind, siteType] =
+    SITE_KINDS[(s + Math.floor(s / PLACES.length)) % SITE_KINDS.length];
+  const place = PLACES[s % PLACES.length];
+  return {
+    name: `${place} ${kind}${round ? ` ${round + 1}` : ""} (Synthetic)`,
+    siteType,
+  };
+}
+
+// A few labelled images stand in for every photo, so local seeding stays small.
+export const PHOTO_POOL = 6;
+
+/**
+ * Where a synthetic photo sits in the uploads bucket.
+ * @param {"check" | "update"} kind
+ * @param {number} n 0-based; wraps around the pool
+ * @param {boolean} [thumb]
+ * @returns {string}
+ */
+export function syntheticPhotoKey(kind, n, thumb = false) {
+  return `synthetic/photos/${kind}-${(n % PHOTO_POOL) + 1}${thumb ? "-thumb" : ""}.jpg`;
+}
 
 // Seeded, since Math.random would make every run differ.
 /**
@@ -268,7 +343,7 @@ export function generateYear(opts = {}) {
   const siteCount = opts.sites ?? 24;
   const startDay = opts.startDay ?? "2025-11-01";
   const evaluatedAt = opts.evaluatedAt ?? "2026-11-04T19:00:00.000Z";
-  const [minPhotos, maxPhotos] = opts.photosPerCheck ?? [1, 2];
+  const [minPhotos, maxPhotos] = opts.photosPerCheck ?? [1, 3];
   const rand = seededRandom(seed);
   const pick = (/** @type {any[]} */ list) =>
     list[Math.floor(rand() * list.length)];
@@ -375,6 +450,7 @@ export function generateYear(opts = {}) {
   for (let s = 0; s < siteCount; s += 1) {
     const profile = PROFILES[s % PROFILES.length];
     const siteId = `syn-site-${pad(s + 1)}`;
+    const { name: siteName, siteType } = syntheticSite(s);
     const pk = `SITE#${siteId}`;
     const { programId, providerId } = programs[s % programs.length];
     const managerId = `syn-manager-${(s % 4) + 1}`;
@@ -391,27 +467,30 @@ export function generateYear(opts = {}) {
     const archived = last !== Infinity;
     // One Site keeps a stored contact the app's own check would reject.
     const invalidStored = s === lastWithPublicContact;
+    // Some posted contacts lack one part, so pages show which part is missing.
+    const lacks = invalidStored
+      ? ""
+      : ["", "", "phone", "", "", "", "email", ""][s % 8];
     const publicContact = !profile.publicContact
       ? undefined
-      : invalidStored
-        ? {
-            email: "front desk",
-            phone: `415-555-01${pad((s * 2) % 100)}`,
-            phoneExtension: "",
-          }
-        : {
-            email: `site${pad(s + 1)}@example.org`,
-            phone: `415-555-01${pad((s * 2) % 100)}`,
-            phoneExtension: "",
-          };
+      : {
+          email: invalidStored
+            ? "front desk"
+            : lacks === "email"
+              ? ""
+              : `site${pad(s + 1)}@example.org`,
+          phone: lacks === "phone" ? "" : `415-555-01${pad((s * 2) % 100)}`,
+          // Some posted lines go to a front desk extension.
+          phoneExtension: lacks !== "phone" && s % 3 === 0 ? `${100 + s}` : "",
+        };
     items.push({
       pk,
       sk: "#META",
       type: "site",
       entityType: "SITE",
       siteId,
-      name: `Synthetic Site ${pad(s + 1)}`,
-      siteType: pick(["shelter", "permanent_supportive_housing", "drop_in"]),
+      name: siteName,
+      siteType,
       status: archived ? "inactive" : "active",
       providerId,
       providerName: `Synthetic Provider ${"ABC"[providers.indexOf(providerId)]}`,
@@ -466,11 +545,12 @@ export function generateYear(opts = {}) {
     });
     answers.profiles[siteId] = profile.key;
     answers.contacts[siteId] = {
-      publicContact: !profile.publicContact
-        ? "missing"
-        : invalidStored
-          ? "unknown"
-          : "available",
+      publicContact:
+        !profile.publicContact || lacks
+          ? "missing"
+          : invalidStored
+            ? "unknown"
+            : "available",
       siteContact: profile.siteContact ? "available" : "missing",
     };
     items.push(
@@ -481,7 +561,7 @@ export function generateYear(opts = {}) {
         programId,
         programName: `Synthetic Program ${programId.slice(-1)}`,
         siteId,
-        siteName: `Synthetic Site ${pad(s + 1)}`,
+        siteName,
         status: "active",
         createdAt: at(createdDay, 0),
         updatedAt: at(createdDay, 0),
@@ -494,7 +574,7 @@ export function generateYear(opts = {}) {
         providerName: `Synthetic Provider ${"ABC"[providers.indexOf(providerId)]}`,
         providerSiteId: `provider-site-${siteId}`,
         siteId,
-        siteName: `Synthetic Site ${pad(s + 1)}`,
+        siteName,
         status: "active",
         createdAt: at(createdDay, 0),
         updatedAt: at(createdDay, 0),
@@ -516,7 +596,7 @@ export function generateYear(opts = {}) {
         type: "device",
         deviceId: `syn-device-${pad(s + 1)}`,
         siteId,
-        siteName: `Synthetic Site ${pad(s + 1)}`,
+        siteName,
         accessLevel: "site",
         registeredAt: at(createdDay, 0),
         label: `Front desk tablet ${pad(s + 1)}`,
@@ -585,6 +665,77 @@ export function generateYear(opts = {}) {
         supersededAt: iso(whenMs),
         updatedAt: iso(whenMs),
       });
+
+    let updatePhotoNo = 0;
+    /**
+     * A note or photo update with its media rows, as task-update-store.js writes them.
+     * @param {Record<string, any>} task
+     * @param {string} suffix
+     * @param {"note_photo_update" | "resolution_proof"} type
+     * @param {number} whenMs
+     * @param {{ notes: string[], photos: number }} content
+     */
+    const addUpdate = (task, suffix, type, whenMs, { notes, photos }) => {
+      const { taskId, checkId } = task;
+      const at = iso(whenMs);
+      const updateId = `${taskId}-${suffix}`;
+      const photoKeys = Array.from(
+        { length: photos },
+        (_, i) => `${taskId}-${suffix}-p${i + 1}`,
+      );
+      items.push(
+        {
+          pk,
+          sk: `TASK#${taskId}#UPDATE#${at}#${updateId}`,
+          entityType: "task_update",
+          taskId,
+          updateId,
+          type,
+          label: notePhotoLabel(notes, photoKeys),
+          actorId: "site-team",
+          ...(notes.length ? { notes } : {}),
+          ...(photoKeys.length ? { photoKeys } : {}),
+          occurredAt: at,
+          documentationState: "closed",
+        },
+        {
+          pk,
+          sk: `TASK#${taskId}#UPDATE_ID#${updateId}`,
+          entityType: "task_update_pointer",
+          taskId,
+          updateId,
+          updateSk: `TASK#${taskId}#UPDATE#${at}#${updateId}`,
+        },
+        ...photoKeys.flatMap((photoId) => {
+          updatePhotoNo += 1;
+          return [
+            {
+              pk,
+              sk: `TASK#${taskId}#MEDIA#${photoId}`,
+              entityType: "task_update_media",
+              taskId,
+              checkId,
+              artifactId: photoId,
+              purpose: "task_update",
+              s3Key: syntheticPhotoKey("update", updatePhotoNo + s),
+              thumbS3Key: syntheticPhotoKey("update", updatePhotoNo + s, true),
+              contentType: "image/jpeg",
+              contentLength: 120_000,
+              capturedAt: at,
+            },
+            {
+              pk,
+              sk: `CHECK#${checkId}#UPDATE_MEDIA#${photoId}`,
+              entityType: "task_update_media_pointer",
+              mediaSk: `TASK#${taskId}#MEDIA#${photoId}`,
+              checkId,
+              artifactId: photoId,
+              taskId,
+            },
+          ];
+        }),
+      );
+    };
 
     /**
      * @param {string} checkId
@@ -842,65 +993,42 @@ export function generateYear(opts = {}) {
             notifiedAt: respondedAt,
           });
         }
-        // A later note with a photo: rows that must never count as Issues.
+        // Later notes and photos in each shape the app takes; they never count as Issues.
         const noteMs = /** @type {number} */ (responseMs) + 6 * HOUR;
-        const noteAdded = rand() < 0.3 && noteMs <= cutoff;
-        if (noteAdded) {
-          const noteAt = iso(noteMs);
-          const photoId = `${taskId}-p1`;
-          items.push(
-            {
-              pk,
-              sk: `TASK#${taskId}#UPDATE#${noteAt}#${taskId}-u2`,
-              entityType: "task_update",
-              taskId,
-              updateId: `${taskId}-u2`,
-              type: "note_photo_update",
-              label: "Note and photo added",
-              actorId: "site-team",
-              notes: ["Synthetic note"],
-              photoKeys: [photoId],
-              occurredAt: noteAt,
-              documentationState: "closed",
-            },
-            {
-              pk,
-              sk: `TASK#${taskId}#UPDATE_ID#${taskId}-u2`,
-              entityType: "task_update_pointer",
-              taskId,
-              updateId: `${taskId}-u2`,
-              updateSk: `TASK#${taskId}#UPDATE#${noteAt}#${taskId}-u2`,
-            },
-            {
-              pk,
-              sk: `TASK#${taskId}#MEDIA#${photoId}`,
-              entityType: "task_update_media",
-              taskId,
-              checkId,
-              artifactId: photoId,
-              purpose: "task_update",
-              s3Key: `synthetic/${siteId}/${photoId}.jpg`,
-              contentType: "image/jpeg",
-              contentLength: 120_000,
-              capturedAt: noteAt,
-            },
-            {
-              pk,
-              sk: `CHECK#${checkId}#UPDATE_MEDIA#${photoId}`,
-              entityType: "task_update_media_pointer",
-              mediaSk: `TASK#${taskId}#MEDIA#${photoId}`,
-              checkId,
-              artifactId: photoId,
-              taskId,
-            },
-          );
-        }
+        const shape = rand();
+        const noteAdded = shape < 0.4 && noteMs <= cutoff;
+        if (noteAdded)
+          addUpdate(task, "u2", "note_photo_update", noteMs, {
+            notes:
+              shape < 0.1
+                ? []
+                : shape < 0.3
+                  ? ["Synthetic note: bags moved to the curb"]
+                  : [
+                      "Synthetic note: called the property manager",
+                      "Synthetic note: will check again tomorrow",
+                    ],
+            photos: shape < 0.1 ? 1 : shape < 0.2 ? 0 : shape < 0.3 ? 1 : 2,
+          });
+        // Proof of a fix, as staff add after resolving an on-site Issue.
+        const proofMs = noteMs + HOUR;
+        const proofAdded =
+          task.status === "completed" &&
+          !escalation &&
+          rand() < 0.4 &&
+          proofMs <= cutoff;
+        if (proofAdded)
+          addUpdate(task, "u3", "resolution_proof", proofMs, {
+            notes: [],
+            photos: 1,
+          });
         task.updatedAt = iso(
           Math.max(
             Date.parse(task.updatedAt),
             /** @type {number} */ (responseMs),
             Date.parse(task.completedAt ?? "") || 0,
             noteAdded ? noteMs : 0,
+            proofAdded ? proofMs : 0,
           ),
         );
       }
@@ -941,7 +1069,17 @@ export function generateYear(opts = {}) {
         );
         if (startMs > cutoff) continue;
         const unfinished = !single && rand() < 0.02;
-        const photos = single ? 1 : between(minPhotos, maxPhotos);
+        // What staff captured: photos, a typed description, or both.
+        const evidenceRoll = rand();
+        const kinds = single
+          ? ["photo"]
+          : evidenceRoll < 0.05
+            ? ["text"]
+            : [
+                ...Array(between(minPhotos, maxPhotos)).fill("photo"),
+                ...(evidenceRoll < 0.12 ? ["text"] : []),
+              ];
+        const photos = kinds.length;
         const doneMs = startMs + (photos + between(1, 2)) * MINUTE;
         if (doneMs > cutoff) continue;
         /** @type {Record<string, any>} */
@@ -953,7 +1091,6 @@ export function generateYear(opts = {}) {
           flowType: single ? "single-problem" : "perimeter",
           startedAt: iso(startMs),
           rubricVersion: "1.0.0",
-          textCount: 0,
           categories: [],
           issueCount: 0,
           maxSeverity: 0,
@@ -962,6 +1099,7 @@ export function generateYear(opts = {}) {
         let issueCount = 0;
         for (let p = 0; p < photos; p += 1) {
           const artifactId = `art-${p + 1}`;
+          const typed = kinds[p] === "text";
           const capturedAt = iso(startMs + (p + 1) * MINUTE);
           const assessmentId = `${checkId}-${artifactId}`;
           const grade = pick(["Excellent", "Good", "Fair", "Poor"]);
@@ -1016,9 +1154,15 @@ export function generateYear(opts = {}) {
               sk: `CHECK#${checkId}#ART#${artifactId}`,
               checkId,
               artifactId,
-              s3Key: `synthetic/${siteId}/${checkId}/${artifactId}.jpg`,
-              contentType: "image/jpeg",
-              contentLength: 240_000,
+              // A typed description has text and no file, as checks.js counts it.
+              ...(typed
+                ? { text: "Synthetic description: overflowing bin by the gate" }
+                : {
+                    s3Key: syntheticPhotoKey("check", checkNo + p),
+                    thumbS3Key: syntheticPhotoKey("check", checkNo + p, true),
+                    contentType: "image/jpeg",
+                    contentLength: 240_000,
+                  }),
               capturedAt,
               receivedAt: capturedAt,
               latitude: 37.77 + s * 0.001,
@@ -1246,8 +1390,7 @@ export function generateYear(opts = {}) {
             completedAt: iso(doneMs),
             synthesizedAt: iso(doneMs),
             grade: pick(["Excellent", "Good", "Fair", "Poor"]),
-            photoCount: photos,
-            evidenceKind: "photos",
+            ...evidenceSummary(kinds),
             issueCount,
             maxSeverity,
           });
@@ -1324,4 +1467,20 @@ function gsiKeys(item) {
   if (/^TASK#.+#UPDATE#/.test(item.sk))
     return taskUpdateTimelineGsi(siteId, item.occurredAt, item.updateId);
   return {};
+}
+
+/**
+ * The header's evidence counts, as checks.js evidenceSummary records them.
+ * @param {string[]} kinds "photo" or "text" per artifact
+ * @returns {{ photoCount: number, textCount: number, evidenceKind: string }}
+ */
+function evidenceSummary(kinds) {
+  const photoCount = kinds.filter((k) => k === "photo").length;
+  const textCount = kinds.length - photoCount;
+  return {
+    photoCount,
+    textCount,
+    evidenceKind:
+      photoCount && textCount ? "mixed" : textCount ? "description" : "photos",
+  };
 }

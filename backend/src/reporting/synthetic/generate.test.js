@@ -8,7 +8,12 @@ import { pacificDateKey } from "../../lib/pacific-dates.js";
 import { createLocalViews, writeLocalLake } from "../local-lake.js";
 import { buildProjection, readLakeInputs } from "../projection.js";
 import { RESPONSE_STATES } from "../contract.js";
-import { PROFILES, generateYear } from "./generate.js";
+import {
+  PROFILES,
+  generateYear,
+  syntheticPhotoKey,
+  syntheticSite,
+} from "./generate.js";
 import { compareWithAnswers } from "./verify.js";
 
 // Two months across the fall-back, one Site per pattern: small enough for
@@ -71,6 +76,62 @@ describe("generateYear", () => {
     const phones = text.match(/\d{3}-\d{3}-\d{4}/g) ?? [];
     expect(phones.length).toBeGreaterThan(0);
     expect(phones.every((p) => /^\d{3}-555-01\d\d$/.test(p))).toBe(true);
+  });
+
+  it("covers everything the field app can record", () => {
+    const headers = items.filter((i) => /^CHECK#[^#]+$/.test(i.sk));
+    const photoCounts = new Set(headers.map((h) => h.photoCount));
+    // Checks with no photo, one photo and several.
+    expect(photoCounts).toContain(0);
+    expect(photoCounts).toContain(1);
+    expect([...photoCounts].some((n) => n >= 3)).toBe(true);
+    expect(new Set(headers.map((h) => h.evidenceKind))).toEqual(
+      new Set([undefined, "photos", "description", "mixed"]),
+    );
+    const tasks = items.filter((i) => /^TASK#[^#]+$/.test(i.sk));
+    expect(new Set(tasks.map((t) => t.severity))).toEqual(
+      new Set([1, 2, 3, 4, 5]),
+    );
+    const updates = items.filter((i) => /^TASK#.+#UPDATE#/.test(i.sk));
+    const shapes = new Set(
+      updates.map((u) => `${u.notes?.length ?? 0}/${u.photoKeys?.length ?? 0}`),
+    );
+    for (const shape of ["0/0", "0/1", "1/0", "1/1", "2/2"])
+      expect(shapes).toContain(shape);
+    expect(updates.some((u) => u.type === "resolution_proof")).toBe(true);
+    // Every photo points at a pooled image local seeding uploads.
+    const pool = new Set(
+      ["check", "update"].flatMap((kind) =>
+        Array.from({ length: 6 }, (_, n) => [
+          syntheticPhotoKey(/** @type {any} */ (kind), n),
+          syntheticPhotoKey(/** @type {any} */ (kind), n, true),
+        ]).flat(),
+      ),
+    );
+    const keyed = items.filter((i) => i.s3Key);
+    expect(keyed.length).toBeGreaterThan(0);
+    expect(
+      keyed.every((i) => pool.has(i.s3Key) && pool.has(i.thumbS3Key)),
+    ).toBe(true);
+  });
+
+  it("names each Site once, as a fictional place marked Synthetic", () => {
+    const sites = Array.from({ length: 500 }, (_, s) => syntheticSite(s));
+    expect(new Set(sites.map((x) => x.name)).size).toBe(500);
+    expect(sites.every((x) => x.name.endsWith(" (Synthetic)"))).toBe(true);
+    expect(sites.slice(0, 3).map((x) => x.name)).toEqual([
+      "Rivendell Navigation Center (Synthetic)",
+      "Bree Street Supportive Housing (Synthetic)",
+      "Hobbiton Drop-in Center (Synthetic)",
+    ]);
+    // The app's own site types, so Manage's type filter reads them.
+    expect(new Set(sites.map((x) => x.siteType))).toEqual(
+      new Set(["shelter", "permanent_supportive_housing", "drop_in", "other"]),
+    );
+    const meta = items.filter((i) => i.sk === "#META" && i.type === "site");
+    expect(meta.map((i) => i.name)).toEqual(
+      meta.map((_, s) => syntheticSite(s).name),
+    );
   });
 
   it("always includes one Site whose stored contact can't be read", () => {

@@ -4,7 +4,7 @@
 // the Insights projection, and check its totals against the generator's
 // answers.
 //
-//   npm run insights:data -w backend -- [--sites 24] [--seed 410] [--keep]
+//   npm run insights:data -w backend -- [--sites 500] [--seed 410] [--keep]
 //
 // Starts its own in-memory DynamoDB Local and a throwaway MinIO on spare
 // ports, using the binaries `npm run local:services` already put in
@@ -49,7 +49,7 @@ import { TABLE_SCHEMA } from "./lib/ensure-infra.mjs";
 
 const { values: args } = parseArgs({
   options: {
-    sites: { type: "string", default: "24" },
+    sites: { type: "string", default: "500" },
     seed: { type: "string", default: "410" },
     out: { type: "string" },
     keep: { type: "boolean", default: false },
@@ -101,6 +101,7 @@ const { convertExport, sqlString } = await import(
   "../src/analytics/convert.js"
 );
 const { generateYear } = await import("../src/reporting/synthetic/generate.js");
+const { recordRows } = await import("./lib/insights-records-seed.mjs");
 const { compareWithAnswers } = await import(
   "../src/reporting/synthetic/verify.js"
 );
@@ -198,10 +199,13 @@ async function startEmulators() {
     spawn(
       "java",
       [
+        // Capped and on disk: an uncapped in-memory table for 500 Sites grew past 4 GB.
+        "-Xmx512m",
         `-Djava.library.path=${join(jarDir, "DynamoDBLocal_lib")}`,
         "-jar",
         join(jarDir, "DynamoDBLocal.jar"),
-        "-inMemory",
+        "-dbPath",
+        scratch,
         "-sharedDb",
         "-port",
         String(DDB_PORT),
@@ -461,6 +465,11 @@ try {
   await writeFile(
     join(outDir, "answers.json"),
     JSON.stringify(generated.answers, null, 2),
+  );
+  // The local API loads these, so record panels show photos and notes.
+  await writeFile(
+    join(outDir, "records.json"),
+    JSON.stringify(recordRows(generated.items)),
   );
   await writeFile(
     join(outDir, "check.json"),
