@@ -5,7 +5,7 @@
 //   ANALYZER_BASE_URL=https://<host>/  ANALYZER_API_KEY=<gnp-key>
 //   npm run analyze:smoke -w backend
 //
-// It (1) lists rubrics (no key — proves connectivity + confirms our pinned
+// It (1) fetches the exact rubric version (no key — confirms our pinned
 // rubric is published) and (2) sends one text-only analysis through the real
 // client, then prints the adapted scorecard. The API key is read from the
 // environment and never logged.
@@ -35,17 +35,24 @@ async function main() {
     `→ ${baseUrl}  (targeting rubric ${RUBRIC_ID}@${RUBRIC_VERSION})`,
   );
 
-  console.log("\n[1/2] GET /v1/rubrics (unauthenticated)…");
-  const rubrics = await client.listRubrics();
-  const published = Array.isArray(rubrics?.rubrics) ? rubrics.rubrics : [];
-  const match = published.find((r) => r.id === RUBRIC_ID);
-  console.log(
-    `  published rubrics: ${published.map((r) => `${r.id}@${r.version}`).join(", ") || "(none)"}`,
+  const rubricPath = `/v1/rubrics/${encodeURIComponent(RUBRIC_ID)}/versions/${encodeURIComponent(RUBRIC_VERSION)}`;
+  console.log(`\n[1/2] GET ${rubricPath} (unauthenticated)…`);
+  const rubricResponse = await fetch(
+    `${baseUrl.replace(/\/$/, "")}${rubricPath}`,
+    { signal: AbortSignal.timeout(30_000) },
   );
+  if (!rubricResponse.ok)
+    throw new Error(
+      `Pinned rubric endpoint returned HTTP ${rubricResponse.status}`,
+    );
+  const rubric = await rubricResponse.json();
+  if (rubric.id !== RUBRIC_ID || rubric.version !== RUBRIC_VERSION) {
+    throw new Error(
+      "Published rubric does not match the requested ID and version",
+    );
+  }
   console.log(
-    match
-      ? `  ✓ our pinned rubric is published (${match.id}@${match.version})`
-      : `  ⚠ pinned rubric ${RUBRIC_ID}@${RUBRIC_VERSION} not found in listing`,
+    `  ✓ pinned rubric is published (${rubric.id}@${rubric.version})`,
   );
 
   console.log("\n[2/2] POST /v1/analyses (x-api-key, text-only)…");
@@ -66,6 +73,14 @@ async function main() {
     appId: "good-neighbor-app",
   });
 
+  if (
+    response.rubric.id !== RUBRIC_ID ||
+    response.rubric.version !== RUBRIC_VERSION
+  ) {
+    throw new Error(
+      "Analysis response does not match the pinned rubric ID and version",
+    );
+  }
   const adapted = adaptAssessment(response);
   console.log(`  ✓ analysis_id: ${adapted.analysisId}`);
   console.log(`  ✓ grade: ${adapted.grade} — ${adapted.gradeDescription}`);

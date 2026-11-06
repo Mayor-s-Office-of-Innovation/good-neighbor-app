@@ -1,5 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
+  ensureCityNoteJob: vi.fn(),
   readTask: vi.fn(),
   readUpdatePointer: vi.fn(),
   writeTaskTransition: vi.fn(),
@@ -55,7 +56,7 @@ beforeEach(() => {
   mocks.deliver.mockResolvedValue(true);
 });
 it.each(["note_photo_update", "additional_action"])(
-  "saves %s and sends the note only for No",
+  "saves %s with a pending note for No without delivering it",
   async (type) => {
     const response = await createTaskUpdate(
       event({
@@ -84,9 +85,7 @@ it.each(["note_photo_update", "additional_action"])(
         }),
       }),
     );
-    expect(mocks.writeTaskTransition.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.deliver.mock.invocationCallOrder[0],
-    );
+    expect(mocks.deliver).not.toHaveBeenCalled();
   },
 );
 it("Yes persists the choice without preparing a City request", async () => {
@@ -101,6 +100,117 @@ it("Yes persists the choice without preparing a City request", async () => {
   expect(response.statusCode).toBe(201);
   expect(mocks.prepare).not.toHaveBeenCalled();
   expect(JSON.parse(response.body).update.cityHelpNeeded).toBe(true);
+});
+
+it.each(["issue_resolved", "presence_resolved", "additional_action_resolved"])(
+  "%s persists pending notes for each City ticket without delivering them",
+  async (type) => {
+    mocks.readTask.mockResolvedValue({
+      ...task,
+      inProgressAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          payload: {
+            executionTrigger: "user_confirmed",
+            tickets: [
+              { srNum: "123", responsibleAgency: "18" },
+              { srNum: "456", responsibleAgency: "18" },
+              { srNum: "123", responsibleAgency: "18" },
+            ],
+          },
+        },
+      ],
+    });
+    const response = await createTaskUpdate(
+      event({
+        type,
+        text: "Private staff note",
+        siteName: "Untrusted",
+        srNum: "untrusted",
+      }),
+    );
+    expect(response.statusCode, response.body).toBe(201);
+    expect(mocks.prepare).toHaveBeenCalledTimes(2);
+    for (const number of ["123", "456"])
+      expect(mocks.prepare).toHaveBeenCalledWith(
+        "table",
+        "site1",
+        number,
+        expect.any(String),
+        true,
+      );
+    const stored = mocks.writeTaskTransition.mock.calls[0][0];
+    expect(stored.task.status).toBe("completed");
+    expect(stored.update.cityNotes).toHaveLength(2);
+    expect(
+      stored.update.cityNotes.every(
+        (/** @type {any} */ note) => note.cityNoteStatus === "pending",
+      ),
+    ).toBe(true);
+    expect(mocks.deliver).not.toHaveBeenCalled();
+  },
+);
+
+it("completes resolution without City confirmation and reuses its saved notes", async () => {
+  mocks.deliver.mockResolvedValue(false);
+  const body = { type: "issue_resolved" };
+  expect((await createTaskUpdate(event(body))).statusCode).toBe(201);
+  const stored = mocks.writeTaskTransition.mock.calls[0][0].update;
+  expect(stored.cityNotes).toHaveLength(1);
+  mocks.readUpdatePointer.mockResolvedValue(stored);
+  mocks.deliver.mockResolvedValue(true);
+  expect((await createTaskUpdate(event(body))).statusCode).toBe(200);
+  expect(mocks.writeTaskTransition).toHaveBeenCalledTimes(1);
+  expect(mocks.prepare).toHaveBeenCalledTimes(1);
+  expect(mocks.ensureCityNoteJob).toHaveBeenCalledWith(
+    "table",
+    "site1",
+    stored,
+  );
+});
+
+it("keeps resolution unsaved when City updates cannot be prepared or are disabled", async () => {
+  mocks.prepare.mockRejectedValue(new Error("Site unavailable"));
+  expect(
+    (await createTaskUpdate(event({ type: "issue_resolved" }))).statusCode,
+  ).toBe(503);
+  expect(mocks.writeTaskTransition).not.toHaveBeenCalled();
+  vi.stubEnv("GNP_311_SUBMISSION_ENABLED", "false");
+  expect(
+    (await createTaskUpdate(event({ type: "issue_resolved" }))).statusCode,
+  ).toBe(503);
+  expect(mocks.writeTaskTransition).not.toHaveBeenCalled();
+});
+
+it("excludes silent, simulated, and already-closed tickets from resolution notes", async () => {
+  mocks.readTask.mockResolvedValue({
+    ...task,
+    appActionResults: [
+      {
+        code: "create_311_ticket",
+        payload: {
+          executionTrigger: "task_created",
+          tickets: [{ srNum: "silent", responsibleAgency: "76" }],
+        },
+      },
+      {
+        code: "create_311_ticket",
+        payload: {
+          executionTrigger: "user_confirmed",
+          tickets: [{ srNum: "SIM-example" }, { srNum: "closed" }],
+        },
+      },
+      {
+        code: "close_311_ticket",
+        payload: { closures: [{ srNum: "closed", status: "closed" }] },
+      },
+    ],
+  });
+  expect(
+    (await createTaskUpdate(event({ type: "issue_resolved" }))).statusCode,
+  ).toBe(201);
+  expect(mocks.prepare).not.toHaveBeenCalled();
 });
 it("requires a boolean choice for a 311 editor", async () => {
   for (const cityHelpNeeded of [undefined, null, "no"]) {
@@ -119,7 +229,7 @@ it("requires a boolean choice for a 311 editor", async () => {
   }
   expect(mocks.writeTaskTransition).not.toHaveBeenCalled();
 });
-it("returns failure while delivery is unconfirmed, then reuses the saved event on retry", async () => {
+it("returns success without delivery and reuses the saved event on retry", async () => {
   mocks.deliver.mockResolvedValue(false);
   const body = {
     type: "additional_action",
@@ -127,13 +237,13 @@ it("returns failure while delivery is unconfirmed, then reuses the saved event o
     photoKeys: [],
     cityHelpNeeded: false,
   };
-  expect((await createTaskUpdate(event(body))).statusCode).toBe(502);
+  expect((await createTaskUpdate(event(body))).statusCode).toBe(201);
   const stored = mocks.writeTaskTransition.mock.calls[0][0].update;
   mocks.readUpdatePointer.mockResolvedValue(stored);
   mocks.deliver.mockResolvedValue(true);
   expect((await createTaskUpdate(event(body))).statusCode).toBe(200);
   expect(mocks.writeTaskTransition).toHaveBeenCalledTimes(1);
-  expect(mocks.deliver).toHaveBeenLastCalledWith("table", "site1", stored);
+  expect(mocks.deliver).not.toHaveBeenCalled();
 });
 it("does not persist No while 311 submission is disabled", async () => {
   vi.stubEnv("GNP_311_SUBMISSION_ENABLED", "false");

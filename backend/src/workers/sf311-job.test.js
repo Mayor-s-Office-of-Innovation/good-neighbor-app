@@ -1068,6 +1068,73 @@ describe("queued City notes (trigger: city_note)", () => {
     });
     metrics.mockRestore();
   });
+
+  it("loads updateSk jobs and completes multi-ticket delivery regardless of task state", async () => {
+    job.updateSk = updateSk;
+    delete job.updateId;
+    delete job.updateOccurredAt;
+    note.cityNotes = [
+      { cityNoteStatus: "pending" },
+      { cityNoteStatus: "pending" },
+    ];
+    sendNote.mockImplementation(async (_t, _s, saved) => {
+      for (const entry of saved.cityNotes) entry.cityNoteStatus = "sent";
+      return true;
+    });
+    await runJob(noteMessage);
+    expect(jobStatus()).toEqual({ ":status": "complete" });
+    expect(execute).not.toHaveBeenCalled();
+    expect(lock.sf311Lease).toBeUndefined();
+  });
+
+  it("keeps retrying other tickets after a rejection", async () => {
+    note.cityNotes = [
+      { cityNoteStatus: "failed" },
+      { cityNoteStatus: "unknown" },
+    ];
+    sendNote.mockImplementation(async () => false);
+    await expect(runJob(noteMessage, { receiveCount: 4 })).rejects.toThrow(
+      "City note not confirmed",
+    );
+    expect(writesTo(noteMessage.jobSk)).toEqual([]);
+  });
+
+  it("fails only never-sent nested notes on the last delivery, preserving sent and uncertain checkpoints", async () => {
+    const metrics = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      note.cityNotes = [
+        { cityNoteStatus: "sent" },
+        { cityNoteStatus: "failed" },
+        { cityNoteStatus: "unknown" },
+        { cityNoteStatus: "pending" },
+      ];
+      sendNote.mockImplementation(async () => false);
+      await runJob(noteMessage, { receiveCount: 5 });
+      expect(jobStatus()).toEqual({
+        ":status": "failed",
+        ":reason": "note_delivery_unknown",
+      });
+      expect(writesTo(updateSk)).toHaveLength(1);
+      expect(writesTo(updateSk)[0]).toMatchObject({
+        UpdateExpression: "SET cityNotes[3].cityNoteStatus = :failed",
+        ConditionExpression:
+          "cityNotes[3].cityNoteStatus = :pending AND attribute_not_exists(cityNotes[3].cityNoteLeaseExpiresAt)",
+      });
+    } finally {
+      metrics.mockRestore();
+    }
+  });
+
+  it("finishes a partially rejected multi-ticket job once other tickets settle", async () => {
+    note.cityNotes = [{ cityNoteStatus: "failed" }, { cityNoteStatus: "sent" }];
+    sendNote.mockImplementation(async () => false);
+    await runJob(noteMessage);
+    expect(jobStatus()).toEqual({
+      ":status": "failed",
+      ":reason": "note_rejected",
+    });
+  });
+
   it("abandons a job whose update is gone", async () => {
     note = undefined;
     await runJob(noteMessage);
