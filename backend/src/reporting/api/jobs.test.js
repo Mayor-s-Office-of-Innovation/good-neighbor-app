@@ -121,6 +121,7 @@ describe("createJobs", () => {
       result: { filename: "insights.csv", rows: 1 },
     });
     expect(done.downloadUrl).toMatch(/^memory:\/\//);
+    expect(done.downloadSeconds).toBe(JOB_LIMITS.downloadSeconds);
   });
 
   it("marks a job failed with a reason, and offers no file", async () => {
@@ -138,6 +139,7 @@ describe("createJobs", () => {
       state: "failed",
       error: "export_too_large",
       downloadUrl: null,
+      downloadSeconds: null,
     });
   });
 

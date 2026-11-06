@@ -597,6 +597,7 @@ const job = (state) => ({
   dataQuality: null,
   downloadUrl:
     state === "succeeded" ? "/mock-downloads/insights-issues.csv" : null,
+  downloadSeconds: state === "succeeded" ? 300 : null,
 });
 
 /** @param {Record<string, number>} values */
