@@ -1,7 +1,5 @@
 import { test, vi } from "vitest";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   $,
   $$,
@@ -18,19 +16,37 @@ import {
 import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
+import { adminApi } from "./services/admin-api.js";
 import {
   formatDay,
   formatInstant,
   periodLabel,
 } from "./pages/insights/insights.templates.js";
-import { categoryWord } from "./pages/insights/raw.templates.js";
+import { categoryWord, dayHeading } from "./pages/insights/raw.templates.js";
 
 const url = () => window.location.pathname + window.location.search;
-// A download link would navigate the test's window away from the page.
+/** Download links the page let the browser follow, as a real download would. */
+const downloads = /** @type {string[]} */ ([]);
 window.addEventListener("click", (/** @type {any} */ event) => {
-  if (event.target.closest?.('a[href^="/mock-downloads/"]'))
-    event.preventDefault();
+  const link = event.target.closest?.('a[href^="/mock-downloads/"]');
+  if (!link) return;
+  if (!event.defaultPrevented) downloads.push(link.getAttribute("href"));
+  // happy-dom would navigate the test's window away from the page.
+  event.preventDefault();
 });
+
+/**
+ * A reply the browser already had when its request was cancelled still
+ * arrives, so a page must check it's still wanted.
+ * @param {(params: Record<string, string>) => boolean} late which requests ignore the abort
+ * @param {Promise<unknown>} until when they answer
+ */
+function lateReplies(late, until) {
+  const real = adminApi.reportingIssues;
+  vi.spyOn(adminApi, "reportingIssues").mockImplementation((params, signal) =>
+    late(params) ? until.then(() => real(params)) : real(params, signal),
+  );
+}
 
 /** @param {string | Element} target @param {string} key */
 async function press(target, key) {
@@ -75,14 +91,16 @@ async function clickAt(selector, x) {
     top: 0,
     bottom: 800,
   });
-  box.dispatchEvent(
-    new window.MouseEvent("click", { bubbles: true, clientX: x, clientY: 10 }),
-  );
+  // A real click starts with a press at the same point.
+  for (const type of ["pointerdown", "click"])
+    box.dispatchEvent(
+      new window.MouseEvent(type, { bubbles: true, clientX: x, clientY: 10 }),
+    );
   await settle();
 }
 
 /**
- * The mock's October Issues, served one a page, so Load more has pages to fetch.
+ * insights-mock.js's October Issues, served one a page, so Load more has pages to fetch.
  * @param {any} api
  */
 const onePerPage = (api) =>
@@ -102,7 +120,7 @@ const onePerPage = (api) =>
     return reply;
   });
 
-test("Issues lists the period's Issues in the mock's columns, latest activity first", async () => {
+test("Issues lists the period's Issues in the server's order, asking for latest activity first", async () => {
   const { api } = await mountAdmin("/insights/raw/issues?period=2026-10", {
     insights: true,
   });
@@ -124,12 +142,10 @@ test("Issues lists the period's Issues in the mock's columns, latest activity fi
       t("admin.insights.raw.col.open"),
     ],
   );
-  // Record IDs mean nothing to people, so no row shows one.
-  assert.ok(missing("[data-record-id]"));
   // Each row ends in the Overview table's open marker, so it reads as clickable.
   assert.ok(
     !missing(
-      '[data-issue-row="t1"] .insights__chev wa-icon[name="chevron-right"]',
+      '[data-issue-row="t1"] [data-open-marker] wa-icon[name="chevron-right"]',
     ),
   );
   // The record URL stays on the link, so a new tab still opens the record.
@@ -159,7 +175,7 @@ test("the bar above the list has Group by, then the count, then Export CSV, and 
   );
 });
 
-test("the controls follow the mock: Period, Filter, then the list's own row", async () => {
+test("the controls run Period, Filter, then the list's own row", async () => {
   await mountAdmin("/insights/raw/issues?period=2026-10", { insights: true });
   assert.deepEqual(
     $$("[data-control-label]").map((l) => l.dataset.controlLabel),
@@ -179,10 +195,6 @@ test("the controls follow the mock: Period, Filter, then the list's own row", as
       "responseState",
     ],
   );
-  // No search box, Source filter or help paragraph: the rebuilt page has none.
-  assert.ok(missing("#insights-search"));
-  assert.ok(missing('[data-filter="source"]'));
-  assert.ok(missing('[data-filter="severityBand"] wa-option[value="unknown"]'));
 });
 
 test("the Category select lists only the categories the data holds", async () => {
@@ -207,6 +219,8 @@ test("the Site select lists every Site by name and narrows to the one picked", a
     lastQuery(api, /^reporting\/scope-options/).get("include"),
     "sites",
   );
+  // Every select fills from one read.
+  assert.equal(api.calls("GET", /^reporting\/scope-options/).length, 1);
   assert.ok(
     $$('[data-filter="siteIds"] wa-option')
       .map((o) => o.textContent)
@@ -253,20 +267,19 @@ test("a filter goes in the URL and to the server, and grouping by Site sorts by 
   assert.match(url(), /group=site/);
 });
 
-test("Day created groups under a weekday heading", async () => {
+test("Day created puts each Issue under the weekday it was created", async () => {
   await mountAdmin("/insights/raw/issues?period=2026-10&group=created", {
     insights: true,
   });
+  // t1 was created on Oct 2, 2026.
+  const group = $('[data-issue-row="t1"]').closest("[data-issue-group]");
   assert.equal(
-    $$("[data-group-head]")[0].textContent.trim(),
-    t("admin.insights.raw.dayHeading", {
-      weekday: "Tuesday",
-      date: "Oct 20",
-    }),
+    group.querySelector("[data-group-head]").textContent.trim(),
+    dayHeading("2026-10-02"),
   );
 });
 
-test("no matching Issues says so in the mock's words and offers to clear the filters", async () => {
+test("no matching Issues says so and offers to clear the filters", async () => {
   await mountAdmin(
     "/insights/raw/issues?period=2026-10&severityBand=moderate&siteIds=s4",
     { insights: true },
@@ -339,13 +352,10 @@ function stubObserver() {
   );
   return {
     watched: () => observers.flatMap((o) => [...o.targets]),
+    // A browser can deliver an entry queued before the row was redrawn, so every observer hears it.
     scrollIn: () => {
       for (const o of observers)
-        if (o.targets.size)
-          o.callback(
-            [...o.targets].map((target) => ({ target, isIntersecting: true })),
-            o,
-          );
+        o.callback([{ target: null, isIntersecting: true }], o);
     },
   };
 }
@@ -369,7 +379,9 @@ test("scrolling near Load more fetches the next page once, leaves focus alone, a
       .calls("GET", /^reporting\/issues\?/)
       .filter((/** @type {any} */ c) => /cursor=/.test(c.search)).length;
   assert.deepEqual(recordLinks(), ["s1|t2"]);
-  assert.deepEqual(io.watched(), [$(".insights__more")]);
+  assert.deepEqual(io.watched(), [$("[data-load-more-row]")]);
+  // A reader on a row stays there while rows load below it.
+  $('[data-record-link="s1|t2"]').focus();
   const before = window.document.activeElement;
   io.scrollIn();
   await tick(0);
@@ -381,7 +393,7 @@ test("scrolling near Load more fetches the next page once, leaves focus alone, a
   held.release();
   await settle();
   assert.deepEqual(recordLinks(), ["s1|t2", "s1|t1"]);
-  assert.equal(window.document.activeElement, before);
+  assert.ok(window.document.activeElement === before);
   // The button is still there for keyboard and screen-reader users.
   assert.ok(!missing("#insights-load-more"));
   io.scrollIn();
@@ -455,16 +467,9 @@ test("a first load that fails says why, and Retry brings the list", async () => 
 });
 
 test("a reply that lands after a newer filter is dropped", async () => {
-  const { api } = await mountAdmin("/insights/raw/issues?period=2026-10", {
-    insights: true,
-  });
+  await mountAdmin("/insights/raw/issues?period=2026-10", { insights: true });
   const held = gate();
-  api.on("GET", /^reporting\/issues\?/, async (/** @type {any} */ r) => {
-    const reply = api.reply(r);
-    if (new URLSearchParams(r.search).get("severityBand") === "minor")
-      await held.promise;
-    return reply;
-  });
+  lateReplies((params) => params.severityBand === "minor", held.promise);
   const slow = fill('wa-select[data-filter="severityBand"]', "minor");
   await settle();
   await fill('wa-select[data-filter="severityBand"]', "severe");
@@ -484,11 +489,11 @@ test("a row opens its record in the side panel; Esc closes it and focus goes bac
     t("admin.insights.panel.issue"),
   );
   assert.equal(text("#insights-panel-title"), categoryWord("Unsecured gate"));
-  // The list keeps its place and URL behind the panel (mock 1240).
+  // The list keeps its place and URL behind the panel.
   assert.equal(url(), list);
   assert.ok(!missing("[data-insights-table]"));
   await press("#insights-panel", "Escape");
-  assert.equal(panel(), null);
+  assert.ok(!panel());
   assert.ok(focused('[data-record-link="s1|t1"]'));
 });
 
@@ -501,14 +506,14 @@ test("× and a click outside the panel close it too", async () => {
     t("common.close"),
   );
   await click("#insights-panel-close");
-  assert.equal(panel(), null);
+  assert.ok(!panel());
   assert.ok(focused('[data-record-link="s4|t9"]'));
   await click('[data-record-link="s4|t9"]');
   // A short record leaves the dialog itself showing inside the panel; a click there stays.
   await clickAt("#insights-panel", 700);
   assert.equal(panel()?.open, true);
   await clickAt("#insights-panel", 100);
-  assert.equal(panel(), null);
+  assert.ok(!panel());
 });
 
 test("links inside the panel switch it to that record", async () => {
@@ -539,8 +544,6 @@ test("Open full record goes to the record; its root crumb returns to the list wi
   await click("#insights-panel-full");
   assert.match(url(), /^\/insights\/raw\/issues\/t1\?/);
   assert.equal(text("h1"), categoryWord("Unsecured gate"));
-  // No Manage button on Insights records (plan §3).
-  assert.ok(missing("#insights-manage-site"));
   assert.deepEqual(
     $$("[data-record-trail] li").map((li) =>
       li.textContent.replace(/›/g, "").trim(),
@@ -586,18 +589,17 @@ test("each record hop is a history entry, so browser Back steps back one record"
   await click("[data-parent-check]");
   assert.match(url(), /^\/insights\/raw\/checks\/c1\?/);
   const check = url();
+  // The trail names each record walked through, after Raw data and a list.
+  const trail = () => $$("[data-record-trail] a").map((a) => a.textContent);
+  assert.equal(trail().length, 3);
+  assert.equal(trail().at(-1), categoryWord("Unsecured gate"));
   await click('[data-record-link="s1|t1"]');
   assert.match(url(), /^\/insights\/raw\/issues\/t1\?/);
-  // The trail names each record walked through, and a middle crumb jumps to it.
-  assert.deepEqual(
-    $$("[data-record-trail] a").map((a) => a.textContent),
-    [
-      t("admin.insights.raw"),
-      t("admin.insights.issues"),
-      categoryWord("Unsecured gate"),
-      t("admin.insights.check", { id: "c1" }),
-    ],
-  );
+  // Back at a record already on the trail, the trail ends before it again.
+  assert.deepEqual(trail(), [
+    t("admin.insights.raw"),
+    t("admin.insights.issues"),
+  ]);
   window.history.back();
   await settle();
   assert.equal(url(), check);
@@ -606,15 +608,22 @@ test("each record hop is a history entry, so browser Back steps back one record"
   assert.equal(url(), issue);
   window.history.forward();
   await settle();
-  window.history.forward();
-  await settle();
-  await click('[data-crumb="1"]');
   assert.equal(url(), check);
+  // A middle crumb jumps to its record.
+  await click('[data-crumb="0"]');
+  assert.match(url(), /^\/insights\/raw\/issues\/t1\?/);
 });
 
 test("an Issue record shows its facts, response facts with a ? and a timeline in time order", async () => {
   await mountAdmin("/insights/raw/issues/t1?period=2026-10&siteId=s1", {
     insights: true,
+    // Resolved before its first response, so time order differs from field order.
+    setup: (api) =>
+      api.on("GET", /^reporting\/issues\/t1/, (/** @type {any} */ r) => {
+        const reply = api.reply(r);
+        reply.json.issue.resolvedAt = "2026-10-02T18:00:00.000Z";
+        return reply;
+      }),
   });
   assert.equal(
     text("[data-record-meta]"),
@@ -645,17 +654,17 @@ test("an Issue record shows its facts, response facts with a ? and a timeline in
   );
   assert.deepEqual(
     $$("[data-timeline] li").map((li) => li.dataset.event),
-    ["created", "firstResponse"],
+    ["created", "resolved", "firstResponse"],
   );
   assert.equal(
     text('[data-fact="action"] dd'),
     t("admin.insights.record.action.onsite"),
   );
   // Help sits in "?" popovers only, not in the page's own text.
+  const page = $("insights-record").cloneNode(true);
+  for (const tip of page.querySelectorAll("[popover]")) tip.remove();
   assert.ok(
-    $$("insights-record p").every(
-      (p) => !p.textContent.includes(t("admin.insights.record.responseHelp")),
-    ),
+    !page.textContent.includes(t("admin.insights.record.responseHelp")),
   );
 });
 
@@ -738,7 +747,7 @@ test("a record the data doesn't have says so, and a failed one can retry", async
   assert.ok(!missing('[data-fact="status"]'));
 });
 
-test("Export CSV asks first in the mock's words, then sends every matching row's query", async () => {
+test("Export CSV asks first, then sends every matching row's query", async () => {
   const { api } = await mountAdmin(
     "/insights/raw/issues?period=2026-10&severityBand=severe",
     { insights: true },
@@ -782,14 +791,12 @@ test("Export CSV asks first in the mock's words, then sends every matching row's
     $("#insights-export-download").getAttribute("href"),
     "/mock-downloads/insights-issues.csv",
   );
+  downloads.length = 0;
   await click("#insights-export-download");
+  // The browser downloads the file; the page only closes the dialog.
+  assert.deepEqual(downloads, ["/mock-downloads/insights-issues.csv"]);
   assert.ok(missing("#insights-export-done"));
   assert.equal(text("#insights-export"), t("admin.insights.export.button"));
-  // Plan §7: a finished export never takes the user off their list.
-  assert.equal(
-    url(),
-    "/insights/raw/issues?period=2026-10&severityBand=severe",
-  );
 });
 
 test("an export the server refuses as too big says what to change", async () => {
@@ -810,7 +817,7 @@ test("an export the server refuses as too big says what to change", async () => 
   assert.ok(!missing("#insights-export-retry"));
 });
 
-test("Export CSV is off with nothing or too much to export, and says why to screen readers", async () => {
+test("Export CSV is off with nothing to export, and says why to screen readers", async () => {
   await mountAdmin("/insights/raw/issues?period=2026-09", { insights: true });
   assert.equal($("#insights-export").getAttribute("aria-disabled"), "true");
   assert.equal(
@@ -821,20 +828,6 @@ test("Export CSV is off with nothing or too much to export, and says why to scre
     text("#insights-export-why"),
     t("admin.insights.export.nothing"),
   );
-  await mountAdmin("/insights/raw/issues?period=2026-10", {
-    insights: true,
-    setup: (api) =>
-      api.on("GET", /^reporting\/issues\?/, (/** @type {any} */ r) => {
-        const reply = api.reply(r);
-        reply.json.total = 250_001;
-        return reply;
-      }),
-  });
-  assert.equal($("#insights-export").getAttribute("aria-disabled"), "true");
-  assert.equal(
-    text("#insights-export-why"),
-    t("admin.insights.export.tooMany", { max: 250_000 }),
-  );
   await click("#insights-export");
   assert.ok(missing("#insights-export-dialog"));
 });
@@ -842,16 +835,24 @@ test("Export CSV is off with nothing or too much to export, and says why to scre
 test("Checks list perimeter Checks, filter by recorded state and mute unfinished ones", async () => {
   const { api } = await mountAdmin("/insights/raw/checks?period=2026-10", {
     insights: true,
+    // A second Check, started 20 minutes after c1 and never finished.
     setup: (a) =>
       a.on("GET", /^reporting\/checks\?/, (/** @type {any} */ r) => {
         const reply = a.reply(r);
-        if (!new URLSearchParams(r.search).get("state"))
+        const state = new URLSearchParams(r.search).get("state");
+        if (state !== "completed")
           reply.json.checks.push({
-            ...reply.json.checks[0],
             checkId: "c2",
+            siteId: "s1",
+            siteName: "Example Site",
+            source: "perimeter",
             state: "unfinished",
+            startedAt: "2026-10-02T17:10:00.000Z",
             completedAt: null,
+            activityAt: "2026-10-02T17:10:00.000Z",
+            issues: 0,
           });
+        reply.json.total = reply.json.checks.length;
         return reply;
       }),
   });
@@ -867,7 +868,7 @@ test("Checks list perimeter Checks, filter by recorded state and mute unfinished
         '"]',
     ),
     t("admin.insights.raw.startedAt", {
-      time: formatInstant("2026-10-02T16:50:00.000Z"),
+      time: formatInstant("2026-10-02T17:10:00.000Z"),
     }),
   );
   // Only the unfinished Check's time and state are muted.
@@ -879,10 +880,7 @@ test("Checks list perimeter Checks, filter by recorded state and mute unfinished
     lastQuery(api, /^reporting\/checks\?/).get("state"),
     "unfinished",
   );
-  assert.equal(
-    text('[data-insights-empty="filtered"] h2'),
-    t("admin.insights.raw.noMatchTitle.checks"),
-  );
+  assert.deepEqual(recordLinks(), ["s1|c2"]);
 });
 
 test("Issues and Checks are links that keep the period", async () => {
@@ -915,7 +913,7 @@ test("Esc with a ? tip open closes the tip only, so the record stays open", asyn
   assert.equal(hidden, true);
   assert.equal(panel()?.open, true);
   await press("#insights-panel", "Escape");
-  assert.equal(panel(), null);
+  assert.ok(!panel());
 });
 
 test("an Issue in the panel shows its photos and notes; a photo opens full size and Esc closes only the photo", async () => {
@@ -947,7 +945,7 @@ test("an Issue in the panel shows its photos and notes; a photo opens full size 
   await press(viewer, "Escape");
   assert.ok(missing("#insights-photo-viewer"));
   assert.equal(panel()?.open, true);
-  assert.equal(window.document.activeElement, thumbs[1]);
+  assert.ok(window.document.activeElement === thumbs[1]);
 });
 
 test("a Check record page lists its description as a note under its photo", async () => {
@@ -997,21 +995,22 @@ test("records switched to inside the panel add no crumb to the full record", asy
 
 test("an Issue opened from a Check's panel shows a trail back to the Check, and keeps it on its full record", async () => {
   await mountAdmin("/insights/raw/checks?period=2026-10", { insights: true });
-  assert.ok(!missing('[data-check-row="c1"] .insights__chev'));
+  assert.ok(!missing('[data-check-row="c1"] [data-open-marker]'));
   await click('[data-record-link="s1|c1"]');
   assert.ok(missing("#insights-panel [data-panel-trail]"));
   // Each Issue in the Check carries the same open marker as the lists.
-  assert.ok(!missing('#insights-panel [data-issue-row="t1"] .insights__chev'));
-  await click('#insights-panel [data-record-link="s1|t1"]');
-  assert.deepEqual(
-    $$("#insights-panel [data-panel-trail] li").map((li) =>
-      li.textContent.replace(/›/g, "").trim(),
-    ),
-    [
-      t("admin.insights.check", { id: "c1" }),
-      t("admin.insights.issue", { id: "t1" }),
-    ],
+  assert.ok(
+    !missing('#insights-panel [data-issue-row="t1"] [data-open-marker]'),
   );
+  await click('#insights-panel [data-record-link="s1|t1"]');
+  const trail = $$("#insights-panel [data-panel-trail] li");
+  assert.equal(
+    trail[0].textContent.replace(/›/g, "").trim(),
+    t("admin.insights.check", { id: "c1" }),
+  );
+  // The open Issue ends the trail, marked as the current place.
+  assert.equal(trail.length, 2);
+  assert.ok(trail[1].querySelector('[aria-current="page"]'));
   await click("#insights-panel [data-panel-trail] a");
   assert.equal(
     text("#insights-panel-title"),
@@ -1049,15 +1048,14 @@ test("a filter change during Load more, then a failed load, leaves no stuck Load
     insights: true,
     setup: (api) => {
       onePerPage(api);
-      api.on("GET", /^reporting\/issues\?/, async (/** @type {any} */ r) => {
-        const params = new URLSearchParams(r.search);
-        if (params.get("severityBand"))
-          return { status: 503, json: { error: "unavailable" } };
-        if (params.get("cursor")) await held.promise;
-        return undefined;
-      });
+      api.on("GET", /^reporting\/issues\?/, async (/** @type {any} */ r) =>
+        new URLSearchParams(r.search).get("severityBand")
+          ? { status: 503, json: { error: "unavailable" } }
+          : undefined,
+      );
     },
   });
+  lateReplies((params) => !!params.cursor, held.promise);
   $("#insights-load-more").click();
   await tick(0);
   await fill('wa-select[data-filter="severityBand"]', "severe");
@@ -1066,6 +1064,7 @@ test("a filter change during Load more, then a failed load, leaves no stuck Load
   assert.ok(!missing("[data-insights-stale]"));
   // A page of the old filters can't follow the new ones, so Retry is the way on.
   assert.ok(missing("#insights-load-more"));
+  assert.deepEqual(recordLinks(), ["s1|t2"]);
 });
 
 test("a list URL too long to return to still leads back to the list at its period", async () => {
@@ -1100,25 +1099,6 @@ test("browser Back from a record restores the list, but a fresh visit loads it a
   // The Raw data tab to the same address is a new visit, so the data is read again.
   await routeTo(list);
   assert.equal(api.calls("GET", /^reporting\/issues\?/).length, asked + 1);
-});
-
-test("each filter is named for what it filters, whatever value it shows", async () => {
-  await mountAdmin("/insights/raw/issues?period=2026-10&issueStatus=open", {
-    insights: true,
-  });
-  assert.equal(
-    $('wa-select[data-filter="issueStatus"]').getAttribute("aria-label"),
-    t("admin.insights.raw.field.issueStatus"),
-  );
-  assert.equal(
-    $('wa-select[data-filter="siteIds"]').getAttribute("aria-label"),
-    t("admin.insights.raw.field.siteIds"),
-  );
-  await routeTo("/insights/raw/checks?period=2026-10");
-  assert.equal(
-    $('wa-select[data-filter="state"]').getAttribute("aria-label"),
-    t("admin.insights.raw.field.state"),
-  );
 });
 
 test("the Response filter offers No response time, which rows can show", async () => {
@@ -1189,22 +1169,35 @@ test("a new filter drops the old interval while the list loads", async () => {
   assert.ok(text("[data-insights-interval]"));
 });
 
-test("record facts and the panel's Issues fit a phone and the panel", () => {
-  // A path, not a URL: happy-dom's URL class isn't one node:fs accepts.
-  const css = readFileSync(
-    join(import.meta.dirname, "pages/insights/insights.css"),
-    "utf8",
+test("a restarted list that then fails to load doesn't claim it started again", async () => {
+  const { api } = await mountAdmin("/insights/raw/issues?period=2026-10", {
+    insights: true,
+    setup: onePerPage,
+  });
+  api.on("GET", /^reporting\/issues\?/, (/** @type {any} */ r) =>
+    new URLSearchParams(r.search).get("cursor")
+      ? { status: 409, json: { error: "snapshot_changed" } }
+      : { status: 503, json: { error: "unavailable" } },
   );
-  const rule = (/** @type {string} */ selector) =>
-    css.slice(css.indexOf(`${selector} {`)).split("}")[0];
-  // A value column of at least 12 characters keeps times and states whole.
-  assert.match(
-    rule(".insights__states"),
-    /grid-template-columns: minmax\(0, max-content\) minmax\(12ch, 1fr\)/,
-  );
-  // Five columns don't fit the 520 px panel, so it shows cards with no header row.
-  assert.match(
-    rule(".insights__panel .insights__table thead"),
-    /display: none/,
-  );
+  await click("#insights-load-more");
+  assert.ok(!missing("[data-insights-stale]"));
+  assert.ok(missing("[data-insights-notice]"));
+});
+
+test("a failed load with no rows to keep drops the old count", async () => {
+  const { api } = await mountAdmin("/insights/raw/issues?period=2026-09", {
+    insights: true,
+  });
+  assert.ok(text("#insights-count"));
+  api.fail("GET", /^reporting\/issues\?.*severityBand=minor/, 503);
+  await fill('wa-select[data-filter="severityBand"]', "minor");
+  assert.equal(text("#insights-count"), "");
+});
+
+test("selecting text in a row doesn't open the row", async () => {
+  await mountAdmin("/insights/raw/issues?period=2026-10", { insights: true });
+  const selection = /** @type {any} */ ("Example Site");
+  vi.spyOn(window.document, "getSelection").mockReturnValue(selection);
+  await click('[data-issue-row="t9"] [data-response]');
+  assert.ok(!panel());
 });

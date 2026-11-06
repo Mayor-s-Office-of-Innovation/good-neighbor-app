@@ -15,24 +15,31 @@ import {
   periodClicked,
 } from "./insights.templates.js";
 import { optionsView } from "./overview.templates.js";
+import { confirmFirst } from "./confirm-dialog.js";
+import { plainClick } from "./overview-rules.js";
 import { recordHref } from "./record-links.js";
-import { RecordPanel, hopOf, plainClick } from "./record-panel.js";
+import { RecordPanel, hopOf } from "./record-panel.js";
 import { JobAction } from "./job-action.js";
+import { exportBody, rawApiParams, rawSearch, readRaw } from "./raw-query.js";
 import {
-  MAX_EXPORT_ROWS,
-  exportBody,
-  rawApiParams,
-  rawSearch,
-  readRaw,
-} from "./raw-query.js";
+  exportOff,
+  isListPath,
+  restartsPaging,
+  restores,
+} from "./raw-list-rules.js";
 import {
   categoryOptions,
+  checkRowsView,
   checksView,
   countText,
   exportDialogView,
   exportWhyOff,
   filtersToggleText,
+  issueGroupView,
+  issueGroups,
+  issueRowsView,
   issuesView,
+  moreView,
   rawBarView,
   rawFiltersView,
   rawHeadView,
@@ -43,13 +50,6 @@ import {
 /** @typedef {import("./insights-query.js").Period} Period */
 /** @typedef {import("./raw-query.js").RawKind} RawKind */
 /** @typedef {Record<string, any>} Row */
-
-// Asking again with the same cursor fails the same way.
-const RESTART_PAGING = new Set([
-  "snapshot_changed",
-  "invalid_cursor",
-  "cursor_query_mismatch",
-]);
 
 class InsightsRawList extends HTMLElement {
   connectedCallback() {
@@ -69,8 +69,6 @@ class InsightsRawList extends HTMLElement {
     this.more = "";
     this.stale = "";
     this.notice = "";
-    /** @type {{ body: Record<string, unknown>, count: number } | null} */
-    this.exportAsk = null;
     this.generation = 0;
     this.panel = new RecordPanel(this, {
       fullLabel: t("admin.insights.panel.open"),
@@ -99,31 +97,34 @@ class InsightsRawList extends HTMLElement {
     });
     this.addEventListener("click", this.clicked);
     this.addEventListener("change", this.changed);
-    this.addEventListener("close", this.dialogClosed, true);
     this.unsubscribe = this.session.exportJobs[this.kind].subscribe(() =>
       this.drawExport(),
     );
     this.drawPeriod();
     this.drawExport();
     void this.loadOptions();
-    // Back from a record shows the rows left, every loaded page included.
-    // Opened any other way, the list loads fresh, so its data is current.
     const memory = this.session.raw[this.kind];
-    const returning =
-      history.state?.insightsReturn ||
+    const back =
+      !!history.state?.insightsReturn ||
       this.session.returning === this.currentPath();
     this.session.returning = "";
-    if (returning && memory.path === this.currentPath() && memory.reply) {
+    if (restores(memory, this.currentPath(), back)) {
       this.reply = memory.reply;
       this.rows = memory.rows;
       this.nextCursor = memory.nextCursor;
       this.more = this.nextCursor ? "ready" : "";
       this.drawLoaded();
-      // A task later, so it comes after the dashboard focuses the page title on arrival.
-      this.focusTimer = setTimeout(() => this.returnFocus(), 0);
-    } else if (
-      /^\/insights\/raw\/(issues|checks)\/?$/.test(location.pathname)
-    ) {
+      this.backTo = memory.focus;
+      memory.focus = "";
+      // The dashboard focuses the title on arrival, more than once, so each one hands focus on to the row.
+      this.querySelector("#insights-title")?.addEventListener(
+        "focus",
+        this.returnFocus,
+      );
+      // Once the user acts, a title focus is theirs to keep.
+      this.addEventListener("pointerdown", this.arrived, true);
+      this.addEventListener("keydown", this.arrived, true);
+    } else if (isListPath(location.pathname)) {
       // A view left by another way mustn't pull focus later. The dashboard
       // can draw the list once more as it leaves for a record; that draw
       // mustn't wipe what the record's way back needs.
@@ -138,10 +139,9 @@ class InsightsRawList extends HTMLElement {
     this.panel?.destroy();
     this.unsubscribe?.();
     this.export?.destroy();
-    clearTimeout(this.focusTimer);
     this.removeEventListener("click", this.clicked);
     this.removeEventListener("change", this.changed);
-    this.removeEventListener("close", this.dialogClosed, true);
+    this.arrived();
   }
 
   /** @param {string} name @returns {HTMLElement} */
@@ -218,11 +218,13 @@ class InsightsRawList extends HTMLElement {
       : adminApi.reportingChecks(params, signal);
   }
 
-  async load() {
+  /** @param {{ notice?: string }} [why] notice: why the list starts over, shown with its rows */
+  async load({ notice = "" } = {}) {
     const mine = ++this.generation;
     this.controller?.abort();
     this.controller = new AbortController();
     this.stale = "";
+    this.notice = notice;
     // A page of the old filters can't follow the new ones, even if this load fails.
     this.more = "";
     // The rows and interval on screen answer the old filters, so they go until the new ones load.
@@ -246,6 +248,8 @@ class InsightsRawList extends HTMLElement {
         err,
         t(`admin.insights.raw.loadFailed.${this.kind}`),
       );
+      // The list didn't start over after all.
+      this.notice = "";
       this.drawPeriod();
       if (this.rows.length && this.reply) {
         // The last rows stay, under a banner that says they're out of date.
@@ -254,6 +258,8 @@ class InsightsRawList extends HTMLElement {
         this.drawResults();
         this.drawExport();
       } else {
+        // An old empty reply's count would sit beside the error.
+        this.reply = null;
         this.region("freshness").innerHTML = freshnessView(null);
         drawInterval(this, null);
         showLoaded(this.region("results"), failedView(message));
@@ -266,12 +272,12 @@ class InsightsRawList extends HTMLElement {
     if (mine !== this.generation) return;
     this.removeAttribute("aria-busy");
     this.reply = reply;
-    this.rows = this.rowsOf(reply);
+    // A copy, since Load more adds to it.
+    this.rows = [...this.rowsOf(reply)];
     this.nextCursor = reply.nextCursor ?? "";
     this.more = this.nextCursor ? "ready" : "";
     this.remember();
     this.drawLoaded();
-    this.notice = "";
     this.restoreFocus();
   }
 
@@ -280,13 +286,15 @@ class InsightsRawList extends HTMLElement {
     return this.kind === "issues" ? reply.issues : reply.checks;
   }
 
-  /** @param {{ byUser?: boolean }} [how] a scroll load leaves focus where the reader is */
+  /**
+   * New rows are added below the old ones, which stay in place with any focus on them.
+   * @param {{ byUser?: boolean }} [how] a scroll load leaves focus where the reader is
+   */
   async loadMore({ byUser = true } = {}) {
     if (!this.nextCursor || this.more === "loading") return;
     const mine = this.generation;
     this.more = "loading";
-    this.drawResults();
-    const first = this.rows.length;
+    this.drawMore();
     /** @type {Row} */
     let reply;
     try {
@@ -297,15 +305,13 @@ class InsightsRawList extends HTMLElement {
         /** @type {any} */ (err)?.name === "AbortError"
       )
         return;
-      const code = /** @type {any} */ (err)?.message;
-      if (RESTART_PAGING.has(code)) {
+      if (restartsPaging(/** @type {any} */ (err)?.message)) {
         // New data leaves no place to resume, so the list starts again.
-        this.notice = t("admin.insights.raw.restarted");
         this.refocus = byUser;
-        return void this.load();
+        return void this.load({ notice: t("admin.insights.raw.restarted") });
       }
       this.more = failureText(err, t("admin.insights.raw.moreFailed"));
-      this.drawResults();
+      this.drawMore();
       if (byUser)
         /** @type {HTMLElement | null} */ (
           this.querySelector("#insights-load-more")
@@ -313,16 +319,59 @@ class InsightsRawList extends HTMLElement {
       return;
     }
     if (mine !== this.generation) return;
-    this.rows = [...this.rows, ...this.rowsOf(reply)];
+    const fresh = this.rowsOf(reply);
+    const first = this.rows.length;
+    this.rows.push(...fresh);
     this.nextCursor = reply.nextCursor ?? "";
     this.more = this.nextCursor ? "ready" : "";
     this.remember();
-    this.drawResults();
+    this.appendRows(fresh);
+    this.drawMore();
+    this.drawCount();
     if (!byUser) return;
     // The button may be gone, so focus goes on to the first new row.
     /** @type {HTMLElement | null | undefined} */ (
-      this.querySelectorAll("[data-record-link]")[first]
+      this.region("results").querySelectorAll("[data-record-link]")[first]
     )?.focus();
+  }
+
+  /** @param {Row[]} fresh */
+  appendRows(fresh) {
+    const href = (/** @type {Row} */ row) => this.recordHref(row);
+    const table = this.region("results").querySelector("table");
+    if (!table) return this.drawResults();
+    if (this.kind === "checks") {
+      table
+        .querySelector("[data-check-rows]")
+        ?.insertAdjacentHTML("beforeend", checkRowsView(fresh, href));
+      return;
+    }
+    const groups = issueGroups(fresh, this.state.group);
+    const last = /** @type {HTMLElement | null} */ (
+      [...table.querySelectorAll("[data-issue-group]")].at(-1) ?? null
+    );
+    // A page can carry on the last day or Site shown, so its rows join that group.
+    if (last && last.dataset.issueGroup === groups[0]?.key)
+      last.insertAdjacentHTML(
+        "beforeend",
+        issueRowsView(/** @type {Row[]} */ (groups.shift()?.issues), href),
+      );
+    table.insertAdjacentHTML(
+      "beforeend",
+      groups.map((group) => issueGroupView(group, href)).join(""),
+    );
+  }
+
+  /** Redraws only Load more, so rows keep their place and focus. */
+  drawMore() {
+    const region = this.querySelector("[data-more-region]");
+    if (!region || !this.reply) return this.drawResults();
+    region.innerHTML = moreView({
+      more: this.more,
+      rows: this.rows,
+      reply: this.reply,
+    });
+    this.watchMore();
   }
 
   remember() {
@@ -366,7 +415,7 @@ class InsightsRawList extends HTMLElement {
   // Scrolling near the end loads the next page; the button stays for keyboard and screen-reader users.
   watchMore() {
     this.moreObserver?.disconnect();
-    const row = this.querySelector(".insights__more");
+    const row = this.querySelector("[data-load-more-row]");
     if (
       !row ||
       this.more !== "ready" ||
@@ -419,7 +468,7 @@ class InsightsRawList extends HTMLElement {
     this.export.draw({
       label: t("admin.insights.export.button"),
       why: exportWhyOff(total),
-      off: !total || total > MAX_EXPORT_ROWS,
+      off: exportOff(total),
     });
   }
 
@@ -429,7 +478,7 @@ class InsightsRawList extends HTMLElement {
     this.dispatchEvent(new CustomEvent("insights-url", { bubbles: true }));
   }
 
-  /** A new population: the list starts over. @param {(state: import("./raw-query.js").RawState) => void} change */
+  /** Old pages answer the old filters, so the list starts over. @param {(state: import("./raw-query.js").RawState) => void} change */
   refine(change) {
     change(this.state);
     this.writeUrl();
@@ -437,7 +486,7 @@ class InsightsRawList extends HTMLElement {
     void this.load();
   }
 
-  /** Phones fold the filters away; the button says how many are on. */
+  /** Folded away on phones, so the list starts on the first screen. */
   toggleFilters() {
     const toggle = /** @type {HTMLElement} */ (
       this.querySelector("#insights-filters-toggle")
@@ -516,7 +565,9 @@ class InsightsRawList extends HTMLElement {
 
   /** A click anywhere on a row opens it, so the small link isn't the only target. @param {Element} target @param {MouseEvent} event */
   rowClicked(target, event) {
-    if (target.closest("[popover]") || !plainClick(event)) return;
+    if (target.closest("[popover]")) return;
+    // A drag selects text to copy, not the row.
+    if (!plainClick(event) || String(document.getSelection?.() ?? "")) return;
     const link = /** @type {HTMLElement | null | undefined} */ (
       target
         .closest("[data-issue-row], [data-check-row]")
@@ -555,53 +606,40 @@ class InsightsRawList extends HTMLElement {
   }
 
   /** A user back from a record carries on from its row, not the top. */
-  returnFocus() {
-    const memory = this.session.raw[this.kind];
-    if (!memory.focus) return;
-    const key = memory.focus;
-    memory.focus = "";
+  returnFocus = () => {
+    if (!this.backTo) return;
     /** @type {HTMLElement | null} */ (
-      this.querySelector(`[data-record-link="${CSS.escape(key)}"]`)
+      this.querySelector(`[data-record-link="${CSS.escape(this.backTo)}"]`)
     )?.focus();
-  }
+  };
+
+  arrived = () => {
+    this.backTo = "";
+    this.querySelector("#insights-title")?.removeEventListener(
+      "focus",
+      this.returnFocus,
+    );
+    this.removeEventListener("pointerdown", this.arrived, true);
+    this.removeEventListener("keydown", this.arrived, true);
+  };
 
   openExportDialog() {
     const reply = this.reply;
     if (!reply || this.export.off()) return;
-    this.querySelector("#insights-export-dialog")?.remove();
-    // Confirm sends what the dialog counted, even if a load lands meanwhile.
-    this.exportAsk = {
-      body: exportBody(
-        this.kind,
-        this.state,
-        this.period ?? periodOf(reply.meta.interval),
-      ),
-      count: reply.total,
-    };
-    this.insertAdjacentHTML(
-      "beforeend",
-      exportDialogView({ kind: this.kind, count: reply.total }),
+    const jobs = this.session.exportJobs[this.kind];
+    const body = exportBody(
+      this.kind,
+      this.state,
+      this.period ?? periodOf(reply.meta.interval),
     );
-    /** @type {HTMLDialogElement} */ (
-      this.querySelector("#insights-export-dialog")
-    ).showModal();
+    const count = reply.total;
+    confirmFirst(this, {
+      id: "insights-export-dialog",
+      markup: exportDialogView({ kind: this.kind, count }),
+      button: "insights-export",
+      confirmed: () => void jobs.startWith(body, count),
+    });
   }
-
-  /** @param {Event} event */
-  dialogClosed = (event) => {
-    const dialog = /** @type {HTMLDialogElement} */ (event.target);
-    if (dialog.id !== "insights-export-dialog") return;
-    const confirmed = dialog.returnValue === "confirm";
-    const ask = this.exportAsk;
-    this.exportAsk = null;
-    dialog.remove();
-    if (confirmed && ask)
-      void this.session.exportJobs[this.kind].startWith(ask.body, ask.count);
-    // The button shows the export's progress, so focus stays on it.
-    /** @type {HTMLElement | null} */ (
-      this.querySelector("#insights-export")
-    )?.focus();
-  };
 }
 
 if (!customElements.get("insights-raw-list"))
