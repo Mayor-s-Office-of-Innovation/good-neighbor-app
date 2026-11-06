@@ -303,8 +303,14 @@ it.each([null, true, false])(
     for (const markup of [action, notes]) {
       expect(markup).toContain(t("taskUpdate.cityHelp.title"));
       expect(markup).not.toContain("data-action-outcome");
-      expect(markup).toMatch(/class="btn-ink"\s+data-city-help="yes"/);
-      expect(markup).toMatch(/class="btn-outline"\s+data-city-help="no"/);
+      const yesClass = cityHelpNeeded === true ? "btn-ink" : "btn-outline";
+      const noClass = cityHelpNeeded === false ? "btn-ink" : "btn-outline";
+      expect(markup).toMatch(
+        new RegExp(`class="${yesClass}"\\s+data-city-help="yes"`),
+      );
+      expect(markup).toMatch(
+        new RegExp(`class="${noClass}"\\s+data-city-help="no"`),
+      );
       expect(/data-save-(?:action|notes)\s+disabled/.test(markup)).toBe(
         cityHelpNeeded === null,
       );
