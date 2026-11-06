@@ -42,7 +42,7 @@ export const RECORD_FILTERS = {
 };
 
 // Not offered, but a link may carry them, so they still filter.
-const LINK_ONLY = {
+export const LINK_ONLY = {
   severityBand: ["unknown"],
 };
 
@@ -119,8 +119,9 @@ export function rawApiParams(kind, state, period, cursor = "") {
     if (value) params[key] = value;
   if (kind === "issues")
     params.sort =
-      ISSUE_GROUPS[/** @type {keyof typeof ISSUE_GROUPS} */ (state.group)];
-  // The Site page's Completed Checks counts perimeter Checks, so its link must list the same ones.
+      ISSUE_GROUPS[/** @type {keyof typeof ISSUE_GROUPS} */ (state.group)] ??
+      ISSUE_GROUPS.latest;
+  // Single problem reports list as Issues; mixing them in would break the Site page's Completed Checks count.
   else params.source = "perimeter";
   if (cursor) params.cursor = cursor;
   return params;

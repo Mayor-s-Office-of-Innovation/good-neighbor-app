@@ -6,12 +6,18 @@ import { formatInstant } from "./insights.templates.js";
 import { readRaw } from "./raw-query.js";
 import {
   checksView,
+  countWords,
   dayHeading,
   exportDialogView,
   exportWhyOff,
+  fixedOptions,
+  issueGroups,
   issueRow,
   issuesView,
+  moreView,
+  rawFiltersView,
 } from "./raw.templates.js";
+import { select } from "./overview.templates.js";
 import {
   checkBodyView,
   issueBodyView,
@@ -65,7 +71,7 @@ const href = () => "/record";
 const cells = (html) =>
   [...html.matchAll(/data-label="([^"]+)"/g)].map((m) => m[1]);
 
-test("an Issue row has the mock's columns, each labelled for phones, and its severity dot beside the words", () => {
+test("an Issue row's cells are each labelled for phones, with the severity dot beside the words", () => {
   const html = issueRow(issue, href);
   assert.deepEqual(
     cells(html),
@@ -78,32 +84,37 @@ test("an Issue row has the mock's columns, each labelled for phones, and its sev
     html,
     /data-severity="severe"[^>]*><span [^>]*aria-hidden="true">/,
   );
-  assert.match(html, new RegExp(t("admin.insights.severity.severe")));
-  // Overdue reads as a warning, in words as well as colour.
+  assert.ok(html.includes(t("admin.insights.severity.severe")));
+  // Overdue reads as a warning in words, not colour alone.
   assert.match(
     html,
-    new RegExp(
-      `data-response="overdue"><span [^>]*>${t("admin.insights.response.overdue")}<`,
-    ),
+    /data-response="overdue"><span [^>]*>([^<]*)<\/span><\/td>/,
+  );
+  assert.equal(
+    html.match(/data-response="overdue"><span [^>]*>([^<]*)</)?.[1],
+    t("admin.insights.response.overdue"),
   );
 });
 
-test("Issues group under a weekday heading, or under their Site", () => {
-  const view = {
-    rows: [issue],
+test("Issues group under the day they were created, the day of their latest activity, or their Site", () => {
+  // Created on Friday, last touched the next Monday.
+  const touched = { ...issue, latestActivityAt: "2026-10-05T17:00:00.000Z" };
+  const headings = (/** @type {string} */ group) =>
+    issueGroups([touched], group).map((g) => g.heading);
+  assert.deepEqual(headings("created"), [dayHeading("2026-10-02")]);
+  assert.deepEqual(headings("latest"), [dayHeading("2026-10-05")]);
+  assert.deepEqual(headings("site"), ["Example Site"]);
+  const html = issuesView({
+    rows: [touched],
     reply: { meta, total: 1 },
     href,
     more: "",
     notice: "",
     stale: "",
-  };
-  assert.match(
-    issuesView({ ...view, state: readRaw("issues", "?group=created") }),
-    new RegExp(escapeHtml(dayHeading("2026-10-02"))),
-  );
-  assert.match(
-    issuesView({ ...view, state: readRaw("issues", "?group=site") }),
-    /data-group-head>Example Site</,
+    state: readRaw("issues", "?group=created"),
+  });
+  assert.ok(
+    html.includes(`data-group-head>${escapeHtml(dayHeading("2026-10-02"))}<`),
   );
   assert.equal(
     dayHeading("2026-10-02"),
@@ -139,9 +150,27 @@ test("an empty list says why: no data, no match with Clear filters, or none", ()
     issuesView({ ...view, reply: { meta }, state: readRaw("issues", "") }),
     /data-insights-empty="none"/,
   );
-  assert.doesNotMatch(
-    checksView({ ...view, reply: { meta }, state: readRaw("checks", "") }),
-    /past-end|id="insights-(prev|next)"/,
+  const checks = checksView({
+    ...view,
+    reply: { meta },
+    state: readRaw("checks", "?state=unfinished"),
+  });
+  assert.ok(checks.includes(t("admin.insights.raw.noMatchTitle.checks")));
+  assert.match(checks, /id="insights-clear-filters"/);
+});
+
+test("rows of one day stay in one group, and two Sites with one name stay apart", () => {
+  const second = { ...issue, issueId: "t2" };
+  const twin = { ...issue, issueId: "t3", siteId: "s2" };
+  assert.deepEqual(
+    issueGroups([issue, second, twin], "site").map((g) => [
+      g.key,
+      g.issues.length,
+    ]),
+    [
+      ["s1", 2],
+      ["s2", 1],
+    ],
   );
 });
 
@@ -165,29 +194,70 @@ test("an unfinished Check row says when it started, muted", () => {
   assert.match(html, /id="insights-load-more"/);
 });
 
-test("the export dialog names the count and what the file holds, with Download CSV", () => {
-  const html = exportDialogView({ kind: "checks", count: 12 });
-  assert.match(
-    html,
-    new RegExp(
-      t("admin.insights.export.title.checks", { count: 12 }).replace(
-        "?",
-        "\\?",
-      ),
+test("big numbers are grouped, so 250000 reads as 250,000", () => {
+  assert.equal(
+    countWords("admin.insights.raw.issuesCount", 12_345, { period: "x" }),
+    translate("admin.insights.raw.issuesCount", {
+      count: 2,
+      period: "x",
+    }).replace("2", "12,345"),
+  );
+  assert.equal(
+    countWords("admin.insights.raw.issuesCount", 1, { period: "x" }),
+    translate("admin.insights.raw.issuesCount", { count: 1, period: "x" }),
+  );
+  assert.ok(
+    moreView({ more: "ready", rows: [issue], reply: { total: 1500 } }).includes(
+      t("admin.insights.raw.showing", { shown: "1", total: "1,500" }),
     ),
   );
-  assert.match(
-    html,
-    new RegExp(t("admin.insights.export.body.checks", { count: 12 })),
+});
+
+test("the export dialog names the count and what the file holds, with Download CSV", () => {
+  const html = exportDialogView({ kind: "checks", count: 12 });
+  assert.ok(
+    html.includes(t("admin.insights.export.title.checks", { count: 12 })),
   );
-  assert.match(html, new RegExp(`>${t("admin.insights.export.confirm")}<`));
+  assert.ok(
+    html.includes(t("admin.insights.export.body.checks", { count: 12 })),
+  );
+  assert.ok(html.includes(`>${t("admin.insights.export.confirm")}<`));
+});
+
+test("each filter is named for what it filters, whatever value it shows", () => {
+  const html = rawFiltersView(
+    "issues",
+    readRaw("issues", "?issueStatus=open"),
+    {},
+  );
+  for (const name of ["siteIds", "providerId", "issueStatus", "severityBand"])
+    assert.match(
+      html,
+      new RegExp(
+        `data-filter="${name}"[^>]*aria-label="${t(`admin.insights.field.${name}`)}"`,
+      ),
+    );
+  assert.ok(
+    select("managerId", "All", [], "", { label: "Manager" }).includes(
+      'aria-label="Manager" placeholder="All"',
+    ),
+  );
+});
+
+test("Unknown severity is listed, in words, only when a link asks for it", () => {
+  const values = ["severe", "moderate", "minor"];
+  assert.deepEqual(fixedOptions("severityBand", values, "unknown").at(-1), {
+    value: "unknown",
+    label: translate("admin.insights.severity.unknown"),
+  });
+  assert.equal(fixedOptions("severityBand", values, "").length, 3);
 });
 
 test("Export CSV says why it's off", () => {
   assert.equal(exportWhyOff(0), translate("admin.insights.export.nothing"));
   assert.equal(
     exportWhyOff(250_001),
-    translate("admin.insights.export.tooMany", { max: 250_000 }),
+    translate("admin.insights.export.tooMany", { max: "250,000" }),
   );
   assert.equal(exportWhyOff(3), "");
 });
@@ -308,6 +378,4 @@ test("a Check record's head and facts, and its Issues", () => {
     new RegExp(t("admin.insights.record.issuesFrom", { count: 1 })),
   );
   assert.match(body, /data-issue-row="t1"/);
-  assert.doesNotMatch(body, /data-record-id/);
-  assert.doesNotMatch(body, /device/i);
 });

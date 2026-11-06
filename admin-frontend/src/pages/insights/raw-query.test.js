@@ -36,7 +36,7 @@ test("a Raw data view survives the trip through its URL, with no search, source 
   assert.equal(rawSearch("issues", state, october), search);
   assert.equal(isFiltered(state), true);
   assert.equal(isFiltered(readRaw("issues", "?group=site")), false);
-  // Old PR 5 links carried these; the rebuilt page has no use for them.
+  // Hand-edited links may carry these; the page has no control for them.
   const old = readRaw("issues", "?q=pier&source=perimeter&cursor=c2");
   assert.equal(rawSearch("issues", old, null), "");
   assert.deepEqual(rawApiParams("issues", old, null), {
@@ -57,6 +57,9 @@ test("each grouping asks the server for its own sort", () => {
         .sort,
   );
   assert.deepEqual(sorts, ["latestActivityAt", "createdAt", "siteName"]);
+  // The server refuses a missing sort, so an unknown grouping falls back.
+  const odd = { ...readRaw("issues", ""), group: "day" };
+  assert.equal(rawApiParams("issues", odd, october).sort, "latestActivityAt");
   // Checks have one order, so they send none.
   assert.equal(
     rawApiParams("checks", readRaw("checks", ""), null).sort,

@@ -4,6 +4,7 @@ import {
   formatDateTime,
   pacificDateKey,
 } from "../../../../frontend/src/i18n/dates.js";
+import { dayInstant } from "../../../../frontend/src/domain/reports-periods.js";
 import { rulebookText } from "../../../../frontend/src/i18n/rulebook.js";
 import { escapeHtml } from "../../dom.js";
 import { jobButtonView, resultBarView } from "./job-action.js";
@@ -14,9 +15,9 @@ import {
   noDataFor,
   periodLabel,
   severityBand,
-  severityWord,
 } from "./insights.templates.js";
 import {
+  LINK_ONLY,
   MAX_EXPORT_ROWS,
   RECORD_FILTERS,
   SITE_FILTERS,
@@ -30,6 +31,27 @@ import {
 
 /** @param {string} key a word that may not be translated yet @param {string} fallback */
 export const wordFor = (key, fallback) => t(hasKey(key) ? key : fallback);
+
+// Admin copy is English in every locale, so numbers group the English way.
+const grouped = new Intl.NumberFormat("en-US");
+const plurals = new Intl.PluralRules("en-US");
+
+/** @param {number} value e.g. "250,000" */
+export const formatCount = (value) => grouped.format(value);
+
+/**
+ * t() shows a count as "12345"; this shows "12,345 Issues".
+ * @param {string} key a key with .one and .other forms
+ * @param {number} count
+ * @param {Record<string, string | number>} [params]
+ */
+export function countWords(key, count, params = {}) {
+  const form = `${key}.${plurals.select(count)}`;
+  return t(hasKey(form) ? form : `${key}.other`, {
+    ...params,
+    count: formatCount(count),
+  });
+}
 
 /** Categories are stored as the rulebook's English, so that is the filter value. @param {string[]} categories @returns {Option[]} */
 export function categoryOptions(categories) {
@@ -91,10 +113,19 @@ const OPTION_WORDS = {
   state: "admin.insights.raw.state",
 };
 
-/** @param {string} name @param {readonly string[]} values @returns {Option[]} */
-function fixedOptions(name, values) {
+/**
+ * A link-only value in use is listed too, so the select names it in words.
+ * @param {string} name
+ * @param {readonly string[]} values
+ * @param {string} selected
+ * @returns {Option[]}
+ */
+export function fixedOptions(name, values, selected) {
   const prefix = /** @type {Record<string, string>} */ (OPTION_WORDS)[name];
-  return values.map((value) => ({ value, label: t(`${prefix}.${value}`) }));
+  const extra = /** @type {Record<string, string[]>} */ (LINK_ONLY)[name] ?? [];
+  return [...values, ...extra.filter((value) => value === selected)].map(
+    (value) => ({ value, label: t(`${prefix}.${value}`) }),
+  );
 }
 
 /** A Site page link can name several Sites; the select then shows how many. @param {RawState} state @param {Option[]} sites */
@@ -127,13 +158,13 @@ export function filtersToggleText(kind, state) {
 /** Drawn once; options fill in later, in place. @param {RawKind} kind @param {RawState} state @param {Record<string, Option[]>} options */
 export function rawFiltersView(kind, state, options) {
   const field = (/** @type {string} */ name) =>
-    t(`admin.insights.raw.field.${name}`);
+    t(`admin.insights.field.${name}`);
   const sites = select(
     "siteIds",
     t("admin.insights.filter.siteIds"),
     siteOptions(state, options.siteIds ?? []),
     state.siteIds.join(","),
-    field("siteIds"),
+    { label: field("siteIds") },
   );
   const site = SITE_FILTERS.map((name) =>
     select(
@@ -141,16 +172,18 @@ export function rawFiltersView(kind, state, options) {
       t(`admin.insights.filter.${name}`),
       options[name] ?? [],
       state.filters[name],
-      field(name),
+      { label: field(name) },
     ),
   );
   const records = Object.entries(RECORD_FILTERS[kind]).map(([name, values]) =>
     select(
       name,
       t(`admin.insights.raw.${name}`),
-      values ? fixedOptions(name, values) : (options[name] ?? []),
+      values
+        ? fixedOptions(name, values, state.filters[name])
+        : (options[name] ?? []),
       state.filters[name],
-      field(name),
+      { label: field(name) },
     ),
   );
   const tip =
@@ -218,8 +251,7 @@ export function rawBarView(kind, state) {
 
 /** @param {RawKind} kind @param {Row} reply */
 export function countText(kind, reply) {
-  return t(`admin.insights.raw.${kind}Count`, {
-    count: reply.total,
+  return countWords(`admin.insights.raw.${kind}Count`, reply.total, {
     period: periodLabel(reply.meta.interval),
   });
 }
@@ -229,7 +261,9 @@ export function exportWhyOff(total) {
   if (total === null) return "";
   if (!total) return t("admin.insights.export.nothing");
   if (total > MAX_EXPORT_ROWS)
-    return t("admin.insights.export.tooMany", { max: MAX_EXPORT_ROWS });
+    return t("admin.insights.export.tooMany", {
+      max: formatCount(MAX_EXPORT_ROWS),
+    });
   return "";
 }
 
@@ -238,8 +272,8 @@ export function exportDialogView({ kind, count }) {
   return `<dialog id="insights-export-dialog" class="places-modal" aria-labelledby="insights-export-title" aria-describedby="insights-export-copy">
     <form class="places-modal__card" method="dialog">
       <div class="places-modal__copy">
-        <h2 class="places-modal__title" id="insights-export-title">${escapeHtml(t(`admin.insights.export.title.${kind}`, { count }))}</h2>
-        <p class="places-modal__text" id="insights-export-copy">${escapeHtml(t(`admin.insights.export.body.${kind}`, { count }))}</p>
+        <h2 class="places-modal__title" id="insights-export-title">${escapeHtml(countWords(`admin.insights.export.title.${kind}`, count))}</h2>
+        <p class="places-modal__text" id="insights-export-copy">${escapeHtml(countWords(`admin.insights.export.body.${kind}`, count))}</p>
       </div>
       <div class="places-modal__actions">
         <button class="btn-outline" value="cancel">${escapeHtml(t("common.cancel"))}</button>
@@ -262,7 +296,7 @@ const label = (kind, key) =>
 
 /** The Overview table's open marker, so every openable row looks the same. */
 const chevCell =
-  '<td role="cell" class="insights__chev" aria-hidden="true"><wa-icon name="chevron-right"></wa-icon></td>';
+  '<td role="cell" class="insights__chev" aria-hidden="true" data-open-marker><wa-icon name="chevron-right"></wa-icon></td>';
 
 /** Its header, named for screen readers as on Overview. */
 export const openColumnHead = () =>
@@ -296,15 +330,14 @@ export function issueRow(issue, href, columns = ISSUE_COLUMNS) {
 
 /** @param {string} day YYYY-MM-DD @returns {string} e.g. "Monday · Sep 28" */
 export function dayHeading(day) {
-  const noon = `${day}T12:00:00Z`;
+  const at = dayInstant(day);
   return t("admin.insights.raw.dayHeading", {
-    weekday: formatDateTime(noon, { weekday: "long" }),
-    date: formatDateTime(noon, { month: "short", day: "numeric" }),
+    weekday: formatDateTime(at, { weekday: "long" }),
+    date: formatDateTime(at, { month: "short", day: "numeric" }),
   });
 }
 
 /**
- * Rows come sorted by the grouping, so equal keys are always together.
  * Sites group by ID, so two Sites with one name stay apart.
  * @param {Row} issue
  * @param {string} group
@@ -318,6 +351,51 @@ function groupOf(issue, group) {
       : pacificDateKey(issue.latestActivityAt ?? issue.createdAt);
   return [day, dayHeading(day)];
 }
+
+/** @typedef {{ key: string, heading: string, issues: Row[] }} IssueGroup */
+
+/**
+ * Rows come sorted by the grouping, so equal keys are always together.
+ * @param {Row[]} rows
+ * @param {string} group
+ * @returns {IssueGroup[]}
+ */
+export function issueGroups(rows, group) {
+  /** @type {IssueGroup[]} */
+  const groups = [];
+  for (const issue of rows) {
+    const [key, heading] = groupOf(issue, group);
+    const last = groups.at(-1);
+    if (last?.key === key) last.issues.push(issue);
+    else groups.push({ key, heading, issues: [issue] });
+  }
+  return groups;
+}
+
+/** @param {Row[]} issues @param {(row: Row) => string} href */
+export const issueRowsView = (issues, href) =>
+  issues.map((issue) => issueRow(issue, href)).join("");
+
+/** @param {IssueGroup} group @param {(row: Row) => string} href */
+export const issueGroupView = ({ key, heading, issues }, href) =>
+  `<tbody role="rowgroup" data-issue-group="${escapeHtml(key)}">
+        <tr role="row"><th role="rowheader" scope="rowgroup" colspan="${ISSUE_COLUMNS.length + 1}" class="insights__grouphead" data-group-head>${escapeHtml(heading)}</th></tr>
+        ${issueRowsView(issues, href)}
+      </tbody>`;
+
+/** @param {Row[]} checks @param {(row: Row) => string} href */
+export const checkRowsView = (checks, href) =>
+  checks
+    .map(
+      (c) => `<tr role="row" data-check-row="${escapeHtml(c.checkId)}">
+        <th role="rowheader" scope="row" ${label("check", "site")}><a href="${escapeHtml(href(c))}" data-route data-record-link="${escapeHtml(recordKey(c))}" data-panel-kind="check" data-panel-id="${escapeHtml(c.checkId)}" data-panel-site="${escapeHtml(c.siteId)}">${escapeHtml(siteName(c))}</a></th>
+        <td role="cell" ${label("check", "time")}${c.state === "completed" ? "" : ' class="muted" data-muted'}>${escapeHtml(checkTime(c))}</td>
+        <td role="cell" ${label("check", "state")}${c.state === "completed" ? "" : ' class="insights__unknown" data-muted'}>${escapeHtml(checkStateWord(c))}</td>
+        <td role="cell" class="insights__num" ${label("check", "issues")}>${escapeHtml(c.issues ?? 0)}</td>
+        ${chevCell}
+      </tr>`,
+    )
+    .join("");
 
 /** @param {RawKind} kind @param {Row} reply @param {RawState} state */
 function emptyView(kind, reply, state) {
@@ -338,15 +416,18 @@ function emptyView(kind, reply, state) {
  * stale: the reason a reload failed, with these rows still shown under it
  */
 
-/** @param {ListView} view */
-function moreView({ more, rows, reply }) {
+/**
+ * Its own region, so Load more redraws it without touching the rows above.
+ * @param {{ more: string, rows: Row[], reply: Row }} view
+ */
+export function moreView({ more, rows, reply }) {
   if (!more) return "";
   const failed =
     more !== "ready" && more !== "loading"
       ? `<p class="error">${escapeHtml(more)}</p>`
       : "";
-  const shown = `<span class="muted" data-shown>${escapeHtml(t("admin.insights.raw.showing", { shown: rows.length, total: reply.total }))}</span>`;
-  return `<div class="insights__more">${failed}<div class="insights__more-row"><button type="button" class="btn-secondary" id="insights-load-more" ${more === "loading" ? "disabled" : ""}>${escapeHtml(t("admin.status.loadMore"))}</button>${shown}</div></div>`;
+  const shown = `<span class="muted" data-shown>${escapeHtml(t("admin.insights.raw.showing", { shown: formatCount(rows.length), total: formatCount(reply.total) }))}</span>`;
+  return `<div class="insights__more" data-load-more-row>${failed}<div class="insights__more-row"><button type="button" class="btn-secondary" id="insights-load-more" ${more === "loading" ? "disabled" : ""}>${escapeHtml(t("admin.status.loadMore"))}</button>${shown}</div></div>`;
 }
 
 /** @param {ListView} view */
@@ -363,30 +444,17 @@ export function issuesView(view) {
   const { rows, reply, state, href } = view;
   if (!rows.length)
     return `${bannersView(view)}${emptyView("issues", reply, state)}`;
-  /** @type {[string, string, Row[]][]} */
-  const groups = [];
-  for (const issue of rows) {
-    const [key, heading] = groupOf(issue, state.group);
-    const last = groups.at(-1);
-    if (last?.[0] === key) last[2].push(issue);
-    else groups.push([key, heading, [issue]]);
-  }
   return `${bannersView(view)}
   <div class="table-wrap insights__table insights__table--paged" data-insights-table>
     <table role="table">
       <caption class="visually-hidden">${escapeHtml(t(`admin.insights.raw.groupCaption.${state.group}`))}</caption>
       <thead role="rowgroup"><tr role="row">${ISSUE_COLUMNS.map((k) => col("issue", k)).join("")}${openColumnHead()}</tr></thead>
-      ${groups
-        .map(
-          ([, heading, issues]) => `<tbody role="rowgroup" data-issue-group>
-        <tr role="row"><th role="rowheader" scope="rowgroup" colspan="${ISSUE_COLUMNS.length + 1}" class="insights__grouphead" data-group-head>${escapeHtml(heading)}</th></tr>
-        ${issues.map((issue) => issueRow(issue, href)).join("")}
-      </tbody>`,
-        )
+      ${issueGroups(rows, state.group)
+        .map((group) => issueGroupView(group, href))
         .join("")}
     </table>
   </div>
-  ${moreView(view)}`;
+  <div data-more-region>${moreView(view)}</div>`;
 }
 
 /** @param {ListView} view */
@@ -399,18 +467,8 @@ export function checksView(view) {
     <table role="table">
       <caption class="visually-hidden">${escapeHtml(t("admin.insights.raw.checksCaption"))}</caption>
       <thead role="rowgroup"><tr role="row">${["site", "time", "state", "issues"].map((k) => col("check", k)).join("")}${openColumnHead()}</tr></thead>
-      <tbody role="rowgroup">${rows
-        .map(
-          (c) => `<tr role="row" data-check-row="${escapeHtml(c.checkId)}">
-        <th role="rowheader" scope="row" ${label("check", "site")}><a href="${escapeHtml(href(c))}" data-route data-record-link="${escapeHtml(recordKey(c))}" data-panel-kind="check" data-panel-id="${escapeHtml(c.checkId)}" data-panel-site="${escapeHtml(c.siteId)}">${escapeHtml(siteName(c))}</a></th>
-        <td role="cell" ${label("check", "time")}${c.state === "completed" ? "" : ' class="muted" data-muted'}>${escapeHtml(checkTime(c))}</td>
-        <td role="cell" ${label("check", "state")}${c.state === "completed" ? "" : ' class="insights__unknown" data-muted'}>${escapeHtml(checkStateWord(c))}</td>
-        <td role="cell" class="insights__num" ${label("check", "issues")}>${escapeHtml(c.issues ?? 0)}</td>
-        ${chevCell}
-      </tr>`,
-        )
-        .join("")}</tbody>
+      <tbody role="rowgroup" data-check-rows>${checkRowsView(rows, href)}</tbody>
     </table>
   </div>
-  ${moreView(view)}`;
+  <div data-more-region>${moreView(view)}</div>`;
 }
