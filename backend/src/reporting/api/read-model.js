@@ -1143,7 +1143,7 @@ export function trends(snap, { interval, scope, breakdown, now }) {
   };
 }
 
-// The words the admin app shows, so the CSV and the screen agree.
+// The words the Insights pages show, so the CSV and the screen agree.
 const RESPONSE_WORDS = {
   awaiting: "Awaiting response",
   overdue: "Overdue",
@@ -1279,7 +1279,9 @@ export function exportRows(snap, { dataset, interval, filter, list }) {
     for (const i of snap.tables.issues) {
       if (!i.checkId) continue;
       const key = `${i.siteId}|${i.checkId}`;
-      raised.set(key, [...(raised.get(key) ?? []), i.issueId]);
+      const ids = raised.get(key);
+      if (ids) ids.push(i.issueId);
+      else raised.set(key, [i.issueId]);
     }
     return {
       columns,

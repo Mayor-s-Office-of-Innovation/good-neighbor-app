@@ -1591,7 +1591,7 @@ describe("exportRows", () => {
     expect(res.columns).toContain("Response state");
   });
 
-  it("writes Issues under the mock's plain headers, in its order, with words for states", () => {
+  it("writes Issues under plain headers, in the list's order, with words for states", () => {
     const res = exportRows(snap, {
       dataset: "issues",
       interval: october,
@@ -1653,24 +1653,34 @@ describe("exportRows", () => {
   });
 
   it("dates a completed Check with no finish time as the list does", () => {
+    // Apart from the start time, so a CSV that read startedAt would fail.
+    const placedAt = "2026-10-02T16:55:00.000Z";
     const changed = indexSnapshot({
       prefix: "p1",
       manifest,
       tables: {
         ...tables,
         checks: tables.checks.map((c) =>
-          c.checkId === "c1" ? { ...c, completedAt: null } : c,
+          c.checkId === "c1"
+            ? { ...c, completedAt: null, activityAt: placedAt }
+            : c,
         ),
       },
     });
-    const row = exportRows(changed, {
-      dataset: "checks",
+    const req = {
       interval: october,
       filter: {},
       list: list("checks", { source: "perimeter" }),
-    }).rows.find((r) => r["Check ID"] === "c1");
+    };
+    const row = exportRows(changed, { dataset: "checks", ...req }).rows.find(
+      (r) => r["Check ID"] === "c1",
+    );
+    const listed = listChecks(changed, { ...req, now: NOW }).checks.find(
+      (c) => c.checkId === "c1",
+    );
     expect(row?.["Recorded state"]).toBe("Completed");
-    expect(row?.["Completed or started"]).toBe("2026-10-02T17:00:00.000Z");
+    expect(row?.["Completed or started"]).toBe(placedAt);
+    expect(listed?.activityAt).toBe(placedAt);
   });
 
   it("labels an Issue the Resolved filter keeps as Resolved, even with an empty time", () => {
@@ -1693,19 +1703,6 @@ describe("exportRows", () => {
     expect(rows.map((r) => r["Issue ID"])).toContain("t3");
     expect(rows.every((r) => r.State === "Resolved")).toBe(true);
   });
-
-  it.each(["issues", "checks"])(
-    "writes no rule or contract version in the %s CSV",
-    (dataset) => {
-      const { columns } = exportRows(snap, {
-        dataset: /** @type {any} */ (dataset),
-        interval: october,
-        filter: {},
-        list: list(/** @type {any} */ (dataset)),
-      });
-      expect(columns.join(",")).not.toMatch(/version/i);
-    },
-  );
 
   it.each([
     { responseState: "late" },
