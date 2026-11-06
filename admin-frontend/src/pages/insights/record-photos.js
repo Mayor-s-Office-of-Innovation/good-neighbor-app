@@ -4,10 +4,26 @@ import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
 import { adminApi } from "../../services/admin-api.js";
 import "../../system-status.css";
-import { formatInstant, loadingView } from "./insights.templates.js";
+import {
+  failedView,
+  failureText,
+  formatInstant,
+  loadingView,
+} from "./insights.templates.js";
+import { closeOnBackdrop } from "./modal-backdrop.js";
 
-/** @typedef {{ artifactId: string, source: "check" | "update", takenAt: string | null, thumbnailUrl: string, url: string }} Photo */
+/** @typedef {{ artifactId: string, source: "check" | "update", takenAt: string | null, thumbnailUrl: string, url: string, urlExpiresAt?: string }} Photo */
 /** @typedef {{ source: "check" | "update", at: string | null, text: string }} Note */
+/** @typedef {{ photos: Photo[], notes: Note[] }} PhotosReply */
+/** @typedef {{ first: Promise<PhotosReply>, read: () => Promise<PhotosReply> }} PhotosRead */
+
+/** @param {Photo} photo */
+const openLabel = (photo) =>
+  photo.takenAt
+    ? t(`admin.insights.record.photoOpen.${photo.source}`, {
+        time: formatInstant(photo.takenAt),
+      })
+    : t(`admin.insights.record.photoOpenUndated.${photo.source}`);
 
 /** @param {{ photos: Photo[], notes: Note[], level: 2 | 3 }} view */
 export function recordPhotosView({ photos, notes, level }) {
@@ -18,8 +34,8 @@ export function recordPhotosView({ photos, notes, level }) {
   const strip = photos.length
     ? `<div class="status-filmstrip" data-photo-strip>${photos
         .map(
-          (p, i) =>
-            `<button type="button" class="btn-secondary status-tile" data-photo-open="${i}" aria-label="${escapeHtml(t(`admin.insights.record.photoOpen.${p.source}`, { time: formatInstant(p.takenAt) }))}"><img src="${escapeHtml(p.thumbnailUrl)}" alt="" loading="lazy"><small>${escapeHtml(formatInstant(p.takenAt))}</small></button>`,
+          (p) =>
+            `<button type="button" class="btn-secondary status-tile" data-photo-open="${escapeHtml(p.artifactId)}" aria-label="${escapeHtml(openLabel(p))}"><img src="${escapeHtml(p.thumbnailUrl)}" alt="" loading="lazy"><small>${escapeHtml(formatInstant(p.takenAt))}</small></button>`,
         )
         .join("")}</div>`
     : "";
@@ -34,48 +50,163 @@ export function recordPhotosView({ photos, notes, level }) {
   return `${head}${strip}${list}`;
 }
 
+/** @param {Element} from */
+const isManager = (from) =>
+  /** @type {any} */ (from.closest("admin-insights-page"))?.session?.role ===
+  "compliance-manager";
+
 /**
- * Fills a record's photos region. Managers can't read photos, so the region
- * goes away for them instead of showing an error.
- * @param {HTMLElement | null} region the record body's [data-record-photos]
- * @param {{ kind: "issue" | "check", id: string, siteId: string, level: 2 | 3 }} record
+ * Starts the photos read, so it runs beside the record's own read. Null when
+ * there's nothing to read: photos are for supervisors only.
+ * @param {Element} from any element on the page, for the signed-in role
+ * @param {{ kind: "issue" | "check", id: string, siteId: string }} record
  * @param {AbortSignal} signal
+ * @returns {PhotosRead | null}
  */
-export async function showRecordPhotos(region, record, signal) {
-  if (!region || !record.siteId) return region?.remove();
-  region.innerHTML = loadingView();
-  /** @type {{ photos: Photo[], notes: Note[] }} */
-  let reply;
-  try {
-    reply = await adminApi.recordPhotos(
+export function readRecordPhotos(from, record, signal) {
+  if (!record.siteId || isManager(from)) return null;
+  const read = () => {
+    const reply = adminApi.recordPhotos(
       record.siteId,
       record.kind === "issue" ? { issueId: record.id } : { checkId: record.id },
       signal,
     );
+    // showRecordPhotos handles the failure; until it waits on it, it isn't unhandled.
+    reply.catch(() => {});
+    return reply;
+  };
+  return { first: read(), read };
+}
+
+// Links run out five minutes after the read. Asking at most once a minute keeps a fast clock from asking over and over.
+/** @param {Photo} photo @param {number} readAt */
+const linkRunningOut = (photo, readAt) =>
+  Date.now() - readAt >= 60_000 &&
+  Date.parse(photo.urlExpiresAt ?? "") <= Date.now() + 60_000;
+
+/** @param {HTMLElement} region @param {string} id */
+const photoButton = (region, id) =>
+  /** @type {HTMLElement | null} */ (
+    region.querySelector(`[data-photo-open="${CSS.escape(id)}"]`)
+  );
+
+/**
+ * Fills a record's photos region.
+ * @param {HTMLElement | null} region the record body's [data-record-photos]
+ * @param {PhotosRead | null} photos from readRecordPhotos
+ * @param {{ level: 2 | 3, signal: AbortSignal }} options
+ */
+export async function showRecordPhotos(region, photos, { level, signal }) {
+  if (!region) return;
+  if (!photos) return region.remove();
+  // Retry is about to go, so focus waits on the region instead of falling to the page.
+  if (region.contains(document.activeElement)) {
+    region.tabIndex = -1;
+    region.focus();
+  }
+  region.innerHTML = loadingView();
+  /** @type {PhotosReply} */
+  let reply;
+  try {
+    reply = await photos.first;
   } catch (err) {
-    if (/** @type {any} */ (err)?.name === "AbortError") return;
-    if (/** @type {any} */ (err)?.status === 403) return region.remove();
-    region.innerHTML = `<p class="muted" data-photos-failed>${escapeHtml(t("admin.insights.record.photosFailed"))}</p>`;
+    if (signal.aborted || /** @type {any} */ (err)?.name === "AbortError")
+      return;
+    // Only the supervisors-only refusal hides the region; a blocked request can be retried.
+    if (/** @type {any} */ (err)?.message === "supervisor_required")
+      return region.remove();
+    region.innerHTML = failedView(
+      failureText(err, t("admin.insights.record.photosFailed")),
+      "insights-photos-retry",
+    );
+    region.onclick = (event) => {
+      if (
+        !(
+          /** @type {Element} */ (event.target).closest(
+            "#insights-photos-retry",
+          )
+        )
+      )
+        return;
+      void showRecordPhotos(
+        region,
+        { first: photos.read(), read: photos.read },
+        { level, signal },
+      );
+    };
     return;
   }
   if (signal.aborted) return;
-  region.innerHTML = recordPhotosView({ ...reply, level: record.level });
-  region.onclick = (event) => {
+  let readAt = Date.now();
+  /** @type {PhotosReply} */
+  let shown = reply;
+  const draw = () => {
+    const active = document.activeElement;
+    const focusedId =
+      active && region.contains(active)
+        ? active.getAttribute("data-photo-open")
+        : null;
+    region.innerHTML = recordPhotosView({ ...reply, level });
+    shown = reply;
+    if (focusedId) photoButton(region, focusedId)?.focus();
+  };
+  draw();
+  /** @type {Promise<void> | null} */
+  let renewing = null;
+  const renew = () =>
+    (renewing ??= photos
+      .read()
+      .then(
+        (next) => {
+          if (signal.aborted) return;
+          reply = next;
+          readAt = Date.now();
+          // Redrawing would take the open photo away; it redraws on close instead.
+          if (!region.querySelector("#insights-photo-viewer")) draw();
+        },
+        () => {},
+      )
+      .finally(() => {
+        renewing = null;
+      }));
+  // A thumbnail whose link ran out loads again with a new one.
+  region.addEventListener(
+    "error",
+    (event) => {
+      const img = /** @type {Element} */ (event.target);
+      if (
+        img.tagName === "IMG" &&
+        shown.photos.some((p) => linkRunningOut(p, readAt))
+      )
+        void renew();
+    },
+    true,
+  );
+  region.onclick = async (event) => {
     const button = /** @type {Element} */ (event.target).closest(
       "[data-photo-open]",
     );
-    if (!button) return;
-    const photo = reply.photos[Number(button.getAttribute("data-photo-open"))];
-    if (photo) openPhoto(region, photo, /** @type {HTMLElement} */ (button));
+    const id = button?.getAttribute("data-photo-open");
+    if (!id) return;
+    const before = shown.photos.find((p) => p.artifactId === id);
+    if (!before) return;
+    if (linkRunningOut(before, readAt)) await renew();
+    const photo = shown.photos.find((p) => p.artifactId === id);
+    const opener = photoButton(region, id);
+    if (!photo || !opener || signal.aborted) return;
+    openPhoto(region, photo, () => {
+      if (shown !== reply) draw();
+      photoButton(region, id)?.focus();
+    });
   };
 }
 
 /**
  * @param {HTMLElement} region
  * @param {Photo} photo
- * @param {HTMLElement} opener focus returns here
+ * @param {() => void} closed puts focus back
  */
-function openPhoto(region, photo, opener) {
+function openPhoto(region, photo, closed) {
   region.querySelector("#insights-photo-viewer")?.remove();
   region.insertAdjacentHTML(
     "beforeend",
@@ -96,20 +227,13 @@ function openPhoto(region, photo, opener) {
   });
   viewer.addEventListener("click", (event) => {
     event.stopPropagation();
-    const target = /** @type {Element} */ (event.target);
-    const r = viewer.getBoundingClientRect();
-    // Padding inside the dialog is the dialog too; only the backdrop is outside its box.
-    const backdrop =
-      target === viewer &&
-      (event.clientX < r.left ||
-        event.clientX > r.right ||
-        event.clientY < r.top ||
-        event.clientY > r.bottom);
-    if (backdrop || target.closest("[data-photo-close]")) viewer.close();
+    if (/** @type {Element} */ (event.target).closest("[data-photo-close]"))
+      viewer.close();
   });
+  closeOnBackdrop(viewer, () => viewer.close());
   viewer.addEventListener("close", () => {
     viewer.remove();
-    if (opener.isConnected) opener.focus();
+    closed();
   });
   viewer.showModal();
   /** @type {HTMLElement} */ (
