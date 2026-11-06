@@ -21,8 +21,10 @@ import {
   periodLabel,
   redrawKeepingFocus,
   severityWord,
+  shortInstant,
   showLoading,
 } from "./insights.templates.js";
+import { intervalOf } from "./insights-query.js";
 
 // Markup escapes apostrophes, so copy is compared as the markup holds it.
 /** @param {string} key @param {Record<string, string | number>} [params] */
@@ -339,6 +341,34 @@ test("a running period is marked on its control; Next stays off", () => {
     ),
   );
   assert.match(html, /data-period-step="1"[^>]*disabled/);
+});
+
+test("the period arrows turn off where a step would pass the years the server takes", () => {
+  /** @param {import("./insights-query.js").Period} period */
+  const arrows = (period) => {
+    const box = document.createElement("div");
+    box.innerHTML = periodView({
+      interval: intervalOf(period),
+      kind: period.kind,
+      draft: { from: "", to: "" },
+      error: "",
+    });
+    return ["-1", "1"].map(
+      (step) =>
+        /** @type {HTMLButtonElement} */ (
+          box.querySelector(`[data-period-step="${step}"]`)
+        ).disabled,
+    );
+  };
+  assert.deepEqual(arrows({ kind: "month", month: "2000-01" }), [true, false]);
+  assert.deepEqual(arrows({ kind: "month", month: "2000-02" }), [false, false]);
+  assert.deepEqual(arrows({ kind: "year", year: 2999 }), [false, true]);
+});
+
+test("the footer's data time is short: no minutes on the hour, no space before AM", () => {
+  assert.equal(shortInstant("2026-11-04T19:00:00.000Z"), "Nov 4, 11AM");
+  assert.equal(shortInstant("2026-11-04T19:30:00.000Z"), "Nov 4, 11:30AM");
+  assert.equal(shortInstant("2026-11-05T01:05:00.000Z"), "Nov 4, 5:05PM");
 });
 
 test("a ? names what it explains and holds its text in a popover", () => {

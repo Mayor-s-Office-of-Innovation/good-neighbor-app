@@ -96,6 +96,12 @@ test("a tile is added in tile order, and picking it again takes it off", () => {
   assert.equal(toggleTile(RESPONSE, "", "onTime"), "onTime");
 });
 
+test("in a one-at-a-time list a tile replaces the pick, and pressing it again keeps it", () => {
+  const SEVERITY = ["severe", "moderate", "minor", "unknown"];
+  assert.equal(toggleTile(SEVERITY, "severe", "moderate", true), "moderate");
+  assert.equal(toggleTile(SEVERITY, "moderate", "moderate", true), "moderate");
+});
+
 test("a concern's list asks by concern, not by the tiles", () => {
   assert.deepEqual(
     listFilter("responseState", { tile: "overdue", concern: "" }),

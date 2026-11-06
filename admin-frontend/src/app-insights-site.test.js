@@ -6,6 +6,7 @@ import {
   click,
   focused,
   missing,
+  pageError,
   settle,
   text,
   window,
@@ -100,6 +101,17 @@ test("Site insights names the Site, its manager and its activity, in page order"
     );
 });
 
+test("a blocked sign-in while the manager's name loads shows in the error line", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", {
+    insights: true,
+    setup: (api) =>
+      api.fail("GET", /^oversight-options/, 403, "request_blocked"),
+  });
+  await settle();
+  assert.equal(pageError(), t("admin.errors.requestBlocked"));
+  assert.equal(text("h1"), "Example Site");
+});
+
 test("a Site with concerns says why, each with its count and where to look", async () => {
   await mountAdmin("/insights/sites/s1?period=2026-10", {
     insights: true,
@@ -185,17 +197,17 @@ test("Severe Issues counts each severity band and opens on Severe's Issues", asy
   assert.deepEqual(listed("severity"), ["t1"]);
 });
 
-test("picking a severity tile reloads only the Severe Issues list", async () => {
+test("a severity tile replaces the picked one and reloads only the Severe Issues list", async () => {
   const { api } = await mountAdmin("/insights/sites/s1?period=2026-10", {
     insights: true,
   });
   await click('[data-list="severity"] [data-tile="moderate"]');
-  assert.deepEqual(pressed("severity"), ["severe", "moderate"]);
-  assert.deepEqual(listed("severity"), ["t2", "t1"]);
-  assert.deepEqual(issueStates(api, "severityBand"), [
-    "severe",
-    "severe,moderate",
-  ]);
+  assert.deepEqual(pressed("severity"), ["moderate"]);
+  assert.deepEqual(issueStates(api, "severityBand"), ["severe", "moderate"]);
+  // Pressing the picked tile again keeps it, so the list never goes empty.
+  await click('[data-list="severity"] [data-tile="moderate"]');
+  assert.deepEqual(pressed("severity"), ["moderate"]);
+  assert.deepEqual(issueStates(api, "severityBand"), ["severe", "moderate"]);
   // Issue Response Time keeps its picks and list, and isn't asked again.
   assert.deepEqual([pressed(), listed()], [["overdue", "late"], ["t2"]]);
   assert.deepEqual(issueStates(api), ["overdue,late"]);

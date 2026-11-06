@@ -4,7 +4,7 @@ import { escapeHtml } from "../../dom.js";
 import { adminApi } from "../../services/admin-api.js";
 import { periodApiParams, periodSearch, readPeriod } from "./insights-query.js";
 import { safeReturnPath } from "./insights-routes.js";
-import { sessionOf } from "./insights-session.js";
+import { reportSignInError, sessionOf } from "./insights-session.js";
 import { LatestLoad, superseded } from "./latest-load.js";
 import {
   drawPeriodControl,
@@ -168,7 +168,8 @@ class InsightsSite extends HTMLElement {
       if (!this.isConnected) return;
       this.managerNames = names.managerId;
       if (this.reply) this.drawHead();
-    } catch {
+    } catch (err) {
+      reportSignInError(this, err);
       // The manager's ID shows instead of a name.
     }
   }
@@ -377,11 +378,16 @@ class InsightsSite extends HTMLElement {
       );
   }
 
-  /** Each tile adds or removes its value from its own list. @param {SiteList} list @param {string} tile */
+  /** A tile adds or removes its value, or replaces it in a one-at-a-time list. @param {SiteList} list @param {string} tile */
   pickTile(list, tile) {
     if (!this.reply) return;
     const state = this.lists[list];
-    state.tile = toggleTile(SITE_LISTS[list].tiles, state.tile, tile);
+    const { tiles, single } =
+      /** @type {{ tiles: string[], single?: boolean }} */ (SITE_LISTS[list]);
+    const picked = toggleTile(tiles, state.tile, tile, single);
+    // The same list again would only reload what's on screen.
+    if (picked === state.tile && !state.concern) return;
+    state.tile = picked;
     state.concern = "";
     this.drawPressed(list);
     void this.loadIssues(list);

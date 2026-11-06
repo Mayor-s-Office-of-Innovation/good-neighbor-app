@@ -202,7 +202,7 @@ export function overviewBarView(state) {
     start: `<span class="insights__sortlabel" aria-hidden="true">${escapeHtml(t("admin.insights.sort.label"))}</span>
       <wa-select data-filter="sort" aria-label="${escapeHtml(t("admin.insights.sort.label"))}" value="${escapeHtml(state.sort)}" size="s" pill>${SITE_SORTS.map(
         (s) =>
-          `<wa-option value="${s}">${escapeHtml(t(`admin.insights.sort.${s}`))}</wa-option>`,
+          `<wa-option value="${s}">${escapeHtml(t(`admin.insights.col.${SORT_COLUMN[s]}`))}</wa-option>`,
       ).join("")}</wa-select>`,
     end: jobButtonView("insights-report", t("admin.insights.report.button")),
   });
@@ -231,6 +231,16 @@ export function selectAllState(listedIds, selected) {
   return { checked: all, indeterminate: !all && selected.length > 0 };
 }
 
+// Each Sort option is named after the column it orders.
+/** @type {Record<string, string>} */
+const SORT_COLUMN = {
+  name: "site",
+  completedPerimeterChecks: "checks",
+  overdueLate: "response",
+  maxSeverity: "severity",
+  issuesCreated: "issuesPer30d",
+};
+
 /** @param {string} key admin.insights.col.* @param {boolean} [num] */
 function columnHead(key, num = false) {
   const tip = hasKey(`admin.insights.colHelp.${key}`)
@@ -246,8 +256,17 @@ function columnHead(key, num = false) {
   return `<th role="columnheader" scope="col" ${num ? 'class="insights__num"' : ""}>${escapeHtml(words.join(" "))} <span class="insights__nowrap">${escapeHtml(last ?? "")}${tip}</span></th>`;
 }
 
-/** @param {{ reply: Record<string, any>, state: OverviewState, siteHref: (id: string) => string, names: Record<string, Map<string, string>> }} view */
-export function resultsView({ reply, state, siteHref, names }) {
+/**
+ * shown: rows drawn so far; the rest wait for Load more.
+ * @param {{ reply: Record<string, any>, state: OverviewState, siteHref: (id: string) => string, names: Record<string, Map<string, string>>, shown?: number }} view
+ */
+export function resultsView({
+  reply,
+  state,
+  siteHref,
+  names,
+  shown = Infinity,
+}) {
   const rows = /** @type {SiteRow[]} */ (reply.sites);
   const interval = reply.meta.interval;
   const selected = new Set(state.selected);
@@ -265,9 +284,12 @@ export function resultsView({ reply, state, siteHref, names }) {
         ${columnHead("site")}${columnHead("checks", true)}${columnHead("response", true)}${columnHead("severity")}${columnHead("issuesPer30d", true)}
         <th role="columnheader" scope="col"><span class="visually-hidden">${escapeHtml(t("admin.insights.col.open"))}</span></th>
       </tr></thead>
-      <tbody role="rowgroup">${rows.map((row) => siteRow(row, { selected, noData, siteHref, names, most })).join("")}</tbody>
+      <tbody role="rowgroup">${rows
+        .slice(0, shown)
+        .map((row) => siteRow(row, { selected, noData, siteHref, names, most }))
+        .join("")}</tbody>
     </table>
-  </div>`;
+  </div>${rows.length > shown ? `<button type="button" class="btn-secondary insights__more" data-more-sites>${escapeHtml(t("admin.status.loadMore"))}</button>` : ""}`;
 }
 
 /** Each empty case offers the one step that shows Sites again. @param {Record<string, any>} reply @param {OverviewState} state */

@@ -51,6 +51,19 @@ export function siteToFocus(back, here) {
     : "";
 }
 
+// Drawing every row took about half a second at 500 Sites, so the table grows by Load more.
+export const SITES_PAGE = 50;
+
+/**
+ * A page of rows, or enough to reach the Site the user came back from.
+ * @param {string[]} listedIds
+ * @param {string} siteId
+ */
+export function rowsToShow(listedIds, siteId) {
+  const at = siteId ? listedIds.indexOf(siteId) : -1;
+  return Math.max(1, Math.ceil((at + 1) / SITES_PAGE)) * SITES_PAGE;
+}
+
 /** Any other click opens the link's own address, as links do. @param {MouseEvent} event */
 export const plainClick = (event) =>
   event.button === 0 &&

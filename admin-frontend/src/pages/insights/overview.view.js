@@ -15,7 +15,7 @@ import {
   readPeriod,
 } from "./insights-query.js";
 import { carriedQuery } from "./insights-routes.js";
-import { sessionOf } from "./insights-session.js";
+import { reportSignInError, sessionOf } from "./insights-session.js";
 import { JobAction } from "./job-action.js";
 import { LatestLoad, superseded } from "./latest-load.js";
 import {
@@ -30,10 +30,12 @@ import {
   periodClicked,
 } from "./insights.templates.js";
 import {
+  SITES_PAGE,
   arrival,
   pickAll,
   pickOne,
   plainClick,
+  rowsToShow,
   siteToFocus,
 } from "./overview-rules.js";
 import {
@@ -63,6 +65,8 @@ class InsightsOverview extends HTMLElement {
     this.reportAsk = null;
     /** @type {number | null} every Site, for "22 Sites (out of 500)" */
     this.allSites = null;
+    /** Site rows drawn; Load more adds a page. */
+    this.shown = SITES_PAGE;
     /** @type {Period | null} */
     this.fallback = null;
     this.periodKind = this.period?.kind ?? "month";
@@ -154,7 +158,8 @@ class InsightsOverview extends HTMLElement {
         const id = line.dataset.manager ?? "";
         line.textContent = names.managerId.get(id) ?? id;
       }
-    } catch {
+    } catch (err) {
+      reportSignInError(this, err);
       // The table still works; filters then list only what a link chose.
     }
   }
@@ -209,6 +214,10 @@ class InsightsOverview extends HTMLElement {
     this.reply = reply;
     this.state.selected = keptSelection(this.state.selected, this.listedIds());
     this.keepSelection();
+    this.shown = rowsToShow(
+      this.listedIds(),
+      siteToFocus(this.session.overview, this.currentPath()),
+    );
     this.region("freshness").innerHTML = freshnessView(reply.meta);
     drawInterval(this, reply.meta.interval);
     this.drawPeriod();
@@ -227,9 +236,22 @@ class InsightsOverview extends HTMLElement {
         state: this.state,
         siteHref: (id) => this.siteHref(id),
         names: this.names,
+        shown: this.shown,
       }),
     );
     this.drawBar();
+  }
+
+  showMoreSites() {
+    const first = this.shown;
+    this.shown += SITES_PAGE;
+    this.drawResults();
+    // The button is gone after the redraw, so focus the first new Site's link.
+    /** @type {HTMLElement | null | undefined} */ (
+      this.querySelectorAll("[data-site-row]")[first]?.querySelector(
+        "[data-site-link]",
+      )
+    )?.focus();
   }
 
   drawBar() {
@@ -417,6 +439,7 @@ class InsightsOverview extends HTMLElement {
       this.refocus = inTable;
       return void this.load();
     }
+    if (button.hasAttribute("data-more-sites")) return this.showMoreSites();
     if (button.id === "insights-clear-filters") {
       this.refocus = inTable;
       return this.refine(

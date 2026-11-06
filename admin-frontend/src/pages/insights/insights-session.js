@@ -120,6 +120,18 @@ export function createInsightsSession(catalog = createAdminCatalog()) {
   return session;
 }
 
+/**
+ * An expired or blocked sign-in goes to <admin-app>'s error line, as on Manage pages; other read errors stay quiet.
+ * @param {HTMLElement} page
+ * @param {unknown} err
+ */
+export function reportSignInError(page, err) {
+  if (![401, 403].includes(/** @type {any} */ (err)?.status)) return;
+  page.dispatchEvent(
+    new CustomEvent("page-error", { bubbles: true, detail: err }),
+  );
+}
+
 /** @typedef {ReturnType<typeof createInsightsSession>} InsightsSession */
 
 /** @param {Element} element a page inside the dashboard @returns {InsightsSession} */

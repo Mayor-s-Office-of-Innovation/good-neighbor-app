@@ -2,10 +2,12 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import { MAX_REPORT_SITES } from "./insights-query.js";
 import {
+  SITES_PAGE,
   arrival,
   pickAll,
   pickOne,
   plainClick,
+  rowsToShow,
   siteToFocus,
 } from "./overview-rules.js";
 
@@ -91,4 +93,14 @@ test("only a plain left click counts as a click on the page", () => {
     ].map((change) => plainClick(event(change))),
     [true, false, false, false, false, false],
   );
+});
+
+test("Overview draws a page of rows, or enough to reach the Site the user came back from", () => {
+  const ids = Array.from({ length: 120 }, (_, i) => `s${i}`);
+  assert.equal(rowsToShow(ids, ""), SITES_PAGE);
+  assert.equal(rowsToShow(ids, "s49"), SITES_PAGE);
+  assert.equal(rowsToShow(ids, "s50"), 2 * SITES_PAGE);
+  assert.equal(rowsToShow(ids, "s119"), 3 * SITES_PAGE);
+  // A Site no longer listed has no row to reach.
+  assert.equal(rowsToShow(ids, "gone"), SITES_PAGE);
 });

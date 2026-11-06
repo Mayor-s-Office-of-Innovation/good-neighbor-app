@@ -927,3 +927,7 @@
     overflow-wrap: anywhere;
   }
 }
+
+.insights__more {
+  margin-block-start: 0.75rem;
+}

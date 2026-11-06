@@ -42,6 +42,8 @@ export const SITE_LISTS = Object.freeze({
     // Worst first, as the response tiles lead with Overdue.
     tiles: ["severe", "moderate", "minor", "unknown"],
     first: "severe",
+    // One severity at a time, so the list matches the one count pressed.
+    single: true,
     warn: new Set(["severe"]),
     retry: "insights-severe-retry",
   },

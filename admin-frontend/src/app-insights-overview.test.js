@@ -7,6 +7,7 @@ import {
   fill,
   focused,
   missing,
+  pageError,
   routeTo,
   settle,
   text,
@@ -256,6 +257,27 @@ test("a supervisor, who manages no Sites, sees no (me) option", async () => {
   assert.equal(select.querySelector("wa-divider"), null);
 });
 
+test("a blocked sign-in while the filters load shows in the error line", async () => {
+  await mountAdmin("/insights?period=2026-10", {
+    insights: true,
+    setup: (api) =>
+      api.fail("GET", /^reporting\/scope-options/, 403, "request_blocked"),
+  });
+  await settle();
+  assert.equal(pageError(), t("admin.errors.requestBlocked"));
+  // The table doesn't need the filter lists, so it still loads.
+  assert.ok(rows().length > 0);
+});
+
+test("a filter list that fails for another reason leaves the error line empty", async () => {
+  await mountAdmin("/insights?period=2026-10", {
+    insights: true,
+    setup: (api) => api.fail("GET", /^reporting\/scope-options/, 500),
+  });
+  await settle();
+  assert.equal(pageError(), "");
+});
+
 test("Overview names the exact interval under the count, and no version", async () => {
   await mountAdmin("/insights?period=2026-10", { insights: true });
   assert.equal(
@@ -277,7 +299,8 @@ test("a running period's footer ends at the data time, as its period pill does",
     text("[data-insights-interval]"),
     t("admin.insights.intervalSoFar", {
       from: formatDay("2026-11-01"),
-      to: formatInstant("2026-11-04T18:00:00.000Z"),
+      // 18:00 UTC; the footer drops ":00" and the space before AM.
+      to: "Nov 4, 10AM",
     }),
   );
 });
@@ -452,15 +475,19 @@ test("a failed load shows why, hides old rows and retries", async () => {
   assert.equal(rows().length, 4);
 });
 
-test("every Site is on one page, with no pager", async () => {
-  // One past the old 50-row page.
+test("Load more adds the next Sites to the same list, with no pager", async () => {
   await mountAdmin("/insights", { insights: true, setup: manySites(51) });
-  assert.equal(rows().length, 51);
+  assert.equal(rows().length, 50);
   assert.ok(missing("[data-page]"));
+  // The count is every matching Site, not just the drawn rows.
   assert.equal(
     text("#insights-count"),
     t("admin.insights.siteCount", { count: 51 }),
   );
+  await click("[data-more-sites]");
+  assert.equal(rows().length, 51);
+  assert.ok(missing("[data-more-sites]"));
+  assert.ok(focused(`[data-site-link="${rows()[50]}"]`));
 });
 
 test("Quarter opens on the calendar quarter the month falls in", async () => {
@@ -501,14 +528,18 @@ test("select all sits in the table header and picks every Site, with no cap", as
   assert.ok($("thead").contains($("#insights-select-all")));
   await fill("#insights-select-all", true);
   const boxes = $$("[data-select-site]");
-  assert.equal(boxes.filter((b) => b.checked).length, 51);
+  assert.equal(boxes.filter((b) => b.checked).length, 50);
   assert.ok(boxes.every((b) => !b.disabled));
+  // The Site past the first 50 rows is picked too, and shows ticked once drawn.
   assert.equal(
     text("#insights-report"),
     t("admin.insights.report.buttonCount", { count: 51 }),
   );
+  await click("[data-more-sites]");
+  const ticked = () => $$("[data-select-site]").filter((b) => b.checked).length;
+  assert.equal(ticked(), 51);
   await fill("#insights-select-all", false);
-  assert.equal(boxes.filter((b) => b.checked).length, 0);
+  assert.equal(ticked(), 0);
 });
 
 test("the bar above the table has Sort, then the count, then Generate report", async () => {
@@ -1176,4 +1207,15 @@ test("a row click with a modifier key, or after selecting text, stays on Overvie
   window.getSelection().removeAllRanges();
   await click('[data-site-row="s4"] [data-checks]');
   assert.equal(text("h1"), "Pier Example Site");
+});
+
+test("Sort options name the table's columns, in the table's order", async () => {
+  await mountAdmin("/insights", { insights: true });
+  const options = $$('wa-select[data-filter="sort"] wa-option').map((o) =>
+    o.textContent.trim(),
+  );
+  const heads = ["site", "checks", "response", "severity", "issuesPer30d"].map(
+    (col) => t(`admin.insights.col.${col}`),
+  );
+  assert.deepEqual(options, heads);
 });

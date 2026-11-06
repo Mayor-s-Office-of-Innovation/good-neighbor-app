@@ -50,8 +50,10 @@ export const alsoPath = (overviewPath, back) =>
  * @param {readonly string[]} order
  * @param {string} picked comma-separated, or ""
  * @param {string} tile
+ * @param {boolean} [single] the tile replaces the pick, and pressing it again keeps it
  */
-export function toggleTile(order, picked, tile) {
+export function toggleTile(order, picked, tile, single = false) {
+  if (single) return tile;
   const on = new Set(picked.split(",").filter(Boolean));
   if (!on.delete(tile)) on.add(tile);
   return order.filter((key) => on.has(key)).join(",");

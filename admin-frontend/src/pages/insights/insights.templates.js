@@ -88,12 +88,23 @@ export const intervalText = (interval) =>
     to: formatDay(interval.endDay),
   });
 
+/** "Nov 4, 11AM", or "Nov 4, 11:30AM" off the hour; the footer is one short line. @param {string} instant */
+export function shortInstant(instant) {
+  const minutes = new Date(instant).getUTCMinutes();
+  return formatDateTime(instant, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    ...(minutes ? { minute: "2-digit" } : {}),
+  }).replace(/\s+([AP]M)/, "$1");
+}
+
 /** A running period's counts stop at the data time, so the footer ends there too. @param {Interval} interval */
 export const footerText = (interval) =>
   interval.incomplete && interval.observedTo
     ? t("admin.insights.intervalSoFar", {
         from: formatDay(interval.startDay),
-        to: formatInstant(interval.observedTo),
+        to: shortInstant(interval.observedTo),
       })
     : intervalText(interval);
 
@@ -191,6 +202,17 @@ export const periodName = (interval) =>
   interval ? periodLabel(interval) : t("common.loading");
 
 /**
+ * Whether a step would pass the years the server takes, so the arrow does nothing.
+ * @param {Interval | null} interval
+ * @param {1 | -1} step
+ */
+const atEdge = (interval, step) => {
+  if (!interval || interval.kind === "custom") return false;
+  const period = periodOf(interval);
+  return samePeriod(stepPeriod(period, step), period);
+};
+
+/**
  * Custom waits for "Show period", so half-typed dates don't load. With no
  * interval yet, only Custom works: the server hasn't said which month it chose.
  * @param {{ interval: Interval | null, kind: string, draft: { from: string, to: string }, error: string, dataTime?: string | null }} view
@@ -209,9 +231,9 @@ export function periodView({ interval, kind, draft, error, dataTime = null }) {
           <button type="button" class="btn-secondary" id="insights-period-apply">${escapeHtml(t("admin.insights.period.apply"))}</button>
         </div>`
       : `<div class="insights__stepper">
-          <button type="button" class="btn-icon" data-period-step="-1" aria-label="${escapeHtml(t("admin.insights.period.previous"))}" ${interval ? "" : "disabled"}><wa-icon name="chevron-left" aria-hidden="true"></wa-icon></button>
+          <button type="button" class="btn-icon" data-period-step="-1" aria-label="${escapeHtml(t("admin.insights.period.previous"))}" ${!interval || atEdge(interval, -1) ? "disabled" : ""}><wa-icon name="chevron-left" aria-hidden="true"></wa-icon></button>
           <span class="insights__period-label" data-period-label>${escapeHtml(periodName(interval))}</span>
-          <button type="button" class="btn-icon" data-period-step="1" aria-label="${escapeHtml(t("admin.insights.period.next"))}" ${!interval || interval.incomplete ? "disabled" : ""}><wa-icon name="chevron-right" aria-hidden="true"></wa-icon></button>
+          <button type="button" class="btn-icon" data-period-step="1" aria-label="${escapeHtml(t("admin.insights.period.next"))}" ${!interval || interval.incomplete || atEdge(interval, 1) ? "disabled" : ""}><wa-icon name="chevron-right" aria-hidden="true"></wa-icon></button>
         </div>`;
   const pill =
     interval?.incomplete && dataTime

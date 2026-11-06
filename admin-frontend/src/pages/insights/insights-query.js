@@ -25,11 +25,12 @@ export const OVERVIEW_FILTERS = /** @type {const} */ ([
   "department",
 ]);
 // Only sorts the server accepts, so a shared link never asks for one it refuses.
+// In the table's column order, so the Sort menu reads like the headers.
 export const SITE_SORTS = [
   "name",
+  "completedPerimeterChecks",
   "overdueLate",
   "maxSeverity",
-  "completedPerimeterChecks",
   "issuesCreated",
 ];
 
