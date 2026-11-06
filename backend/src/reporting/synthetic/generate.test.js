@@ -8,7 +8,13 @@ import { pacificDateKey } from "../../lib/pacific-dates.js";
 import { createLocalViews, writeLocalLake } from "../local-lake.js";
 import { buildProjection, readLakeInputs } from "../projection.js";
 import { RESPONSE_STATES } from "../contract.js";
-import { PROFILES, generateYear, syntheticSite } from "./generate.js";
+import {
+  CALM,
+  PROFILES,
+  generateYear,
+  profileOf,
+  syntheticSite,
+} from "./generate.js";
 import { compareWithAnswers } from "./verify.js";
 
 // Two months across the fall-back, one Site per pattern: small enough for
@@ -294,5 +300,20 @@ describe("projection over generated records", () => {
         generated.answers,
       ).mismatches.some((m) => m.includes("issuesCreated")),
     ).toBe(true);
+  });
+});
+
+describe("profileOf", () => {
+  it("cycles every profile in a small year", () => {
+    const keys = Array.from({ length: 24 }, (_, s) => profileOf(s, 24).key);
+    expect(new Set(keys)).toEqual(new Set(PROFILES.map((p) => p.key)));
+  });
+
+  it("makes 9 in 10 Sites calm in a large year, keeping every other profile", () => {
+    const keys = Array.from({ length: 500 }, (_, s) => profileOf(s, 500).key);
+    expect(keys.filter((k) => k === CALM.key)).toHaveLength(450);
+    expect(new Set(keys)).toEqual(
+      new Set([CALM.key, ...PROFILES.map((p) => p.key)]),
+    );
   });
 });

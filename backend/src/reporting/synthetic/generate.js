@@ -33,8 +33,9 @@ const MINUTE = 60_000;
  * @property {number} skipRate share of days with no Checks
  * @property {number} issueRate Issues per Check, on average
  * @property {number} severeShare share of Issues at severity 4–5
- * @property {"prompt" | "mixed" | "late" | "none" | "untimed"} response
+ * @property {"onTime" | "prompt" | "mixed" | "late" | "none" | "untimed"} response
  * @property {boolean} resolves whether responded Issues get resolved
+ * @property {number} [resolveShare] share of responded Issues resolved when resolves is true; 0.7 if unset
  * @property {number} singleReportRate single-issue reports per day
  * @property {boolean} publicContact
  * @property {boolean} siteContact
@@ -42,6 +43,38 @@ const MINUTE = 60_000;
  * @property {number} [closesAt] share of the range after which it is archived
  * @property {[number, number]} [gap] [share of the range, days] with no Checks
  */
+
+// Most real Sites are quiet, so a large year makes 9 in 10 Sites this one: under every concern limit.
+/** @type {Profile} */
+export const CALM = {
+  key: "calm",
+  looksLike:
+    "3 or 4 Checks every day, about 1 Issue a month, answered and resolved on time",
+  // A spare Check a day keeps the odd unfinished one from dipping under the 3 owed.
+  checksPerDay: [3, 4],
+  skipRate: 0,
+  issueRate: 0.008,
+  severeShare: 0.05,
+  // Unlike "prompt", never a response at or past the edge, so no calm Site reads as slow.
+  response: "onTime",
+  resolves: true,
+  // Every Issue closes, so none stays open past the 14-day limit.
+  resolveShare: 1,
+  singleReportRate: 0.01,
+  publicContact: true,
+  siteContact: true,
+};
+
+/**
+ * A small year cycles every profile so each shows up; a large one is mostly calm.
+ * @param {number} s
+ * @param {number} siteCount
+ * @returns {Profile}
+ */
+export function profileOf(s, siteCount) {
+  if (siteCount <= 2 * PROFILES.length) return PROFILES[s % PROFILES.length];
+  return s % 10 === 0 ? PROFILES[(s / 10) % PROFILES.length] : CALM;
+}
 
 /** @type {Profile[]} */
 export const PROFILES = [
@@ -445,9 +478,9 @@ export function generateYear(opts = {}) {
   let ticket = 1000;
   let lastWithPublicContact = -1;
   for (let s = 0; s < siteCount; s += 1)
-    if (PROFILES[s % PROFILES.length].publicContact) lastWithPublicContact = s;
+    if (profileOf(s, siteCount).publicContact) lastWithPublicContact = s;
   for (let s = 0; s < siteCount; s += 1) {
-    const profile = PROFILES[s % PROFILES.length];
+    const profile = profileOf(s, siteCount);
     const siteId = `syn-site-${pad(s + 1)}`;
     const { name: siteName, siteType } = syntheticSite(s);
     const pk = `SITE#${siteId}`;
@@ -849,6 +882,7 @@ export function generateYear(opts = {}) {
       let delay = null;
       const r = rand();
       if (!respond) delay = null;
+      else if (profile.response === "onTime") delay = between(1, 48) * unit;
       else if (profile.response === "prompt")
         delay =
           r < 0.9
@@ -890,7 +924,8 @@ export function generateYear(opts = {}) {
         task.status = "in_progress";
       } else if (seen) {
         const respondedAt = iso(/** @type {number} */ (responseMs));
-        const resolved = profile.resolves && rand() < 0.7;
+        const resolved =
+          profile.resolves && rand() < (profile.resolveShare ?? 0.7);
         const updateId = `${taskId}-u1`;
         const type = escalation
           ? "311_ticket_filed"
