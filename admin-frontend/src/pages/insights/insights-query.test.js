@@ -16,6 +16,9 @@ import {
   stepPeriod,
 } from "./insights-query.js";
 
+// Nov 4, 2026, 11 AM Pacific.
+const now = new Date("2026-11-04T19:00:00.000Z");
+
 const october = {
   kind: "month",
   startDay: "2026-10-01",
@@ -160,15 +163,67 @@ test("custom periods need an end on or after the start, and at most 12 months", 
       ["2025-09-01", "2026-08-31"],
       ["", "2026-08-31"],
       ["1999-12-01", "2000-01-15"],
-    ].map(([from, to]) => customPeriodError(from, to)),
+      // 12 months from Feb 29 ends on Feb 28, as the server counts.
+      ["2024-02-29", "2025-02-27"],
+      ["2024-02-29", "2025-02-28"],
+    ].map(([from, to]) => customPeriodError(from, to, now)),
     [
       "admin.insights.period.endBeforeStart",
       "admin.insights.error.periodTooLong",
       "",
       "admin.insights.period.missingDay",
       "admin.insights.period.invalidDay",
+      "",
+      "admin.insights.error.periodTooLong",
     ],
   );
+});
+
+test("a custom period starting after today is refused before it's asked for", () => {
+  assert.deepEqual(
+    [
+      customPeriodError("2026-11-04", "2026-11-30", now),
+      customPeriodError("2026-11-05", "2026-11-30", now),
+    ],
+    ["", "admin.insights.error.futurePeriod"],
+  );
+});
+
+test("a link to a period that hasn't started opens the default month", () => {
+  assert.deepEqual(
+    [
+      "?period=2026-11",
+      "?period=2026-12",
+      "?period=2026-Q4",
+      "?period=2027-Q1",
+      "?period=2027",
+      "?period=fy2027",
+      "?period=custom&from=2026-11-05&to=2026-11-30",
+    ].map((search) => readPeriod(search, now)),
+    [
+      { kind: "month", month: "2026-11" },
+      null,
+      { kind: "quarter", year: 2026, quarter: 4 },
+      null,
+      null,
+      null,
+      null,
+    ],
+  );
+});
+
+test("Previous stops at the first year the server takes", () => {
+  for (const period of /** @type {any[]} */ ([
+    { kind: "month", month: "2000-01" },
+    { kind: "quarter", year: 2000, quarter: 1 },
+    { kind: "year", year: 2000 },
+    { kind: "financialYear", startYear: 2000 },
+  ]))
+    assert.deepEqual(stepPeriod(period, -1), period);
+  assert.deepEqual(stepPeriod({ kind: "month", month: "2000-02" }, -1), {
+    kind: "month",
+    month: "2000-01",
+  });
 });
 
 test("Overview opens on Top concerns, sorted by Site name", () => {
@@ -186,10 +241,12 @@ test("Overview opens on Top concerns, sorted by Site name", () => {
 test("Overview ignores filter values it doesn't offer", () => {
   const state = readOverview("?show=compliant&responseState=passed&sort=score");
   // The response and contact filters were cut, so old links drop them.
-  assert.deepEqual(
-    [state.show, "responseState" in state, state.sort],
-    ["top", false, "name"],
-  );
+  assert.deepEqual([state.show, state.sort], ["top", "name"]);
+  assert.equal(overviewSearch(state, null), "");
+  assert.deepEqual(overviewApiParams(state, null), {
+    show: "top",
+    sort: "name",
+  });
 });
 
 test("Overview's URL leaves out defaults and the picks, and keeps the period", () => {
@@ -238,7 +295,6 @@ test("the selection keeps only listed Sites, up to a limit above the city's Site
 });
 
 test("a period holding today is running, as of the time asked", () => {
-  const now = new Date("2026-11-04T19:00:00.000Z");
   assert.deepEqual(
     [
       intervalOf({ kind: "month", month: "2026-11" }, now),

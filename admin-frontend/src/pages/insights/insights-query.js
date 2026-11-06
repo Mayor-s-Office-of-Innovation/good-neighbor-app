@@ -13,10 +13,10 @@ import { pacificDateKey } from "../../../../frontend/src/i18n/dates.js";
 
 /** @typedef {ReturnType<typeof readOverview>} OverviewState */
 
-// Matches LIMITS.maxReportSites, so picking stops before the server refuses.
+// The server refuses a report of more Sites, so picking stops here.
 export const MAX_REPORT_SITES = 2000;
 
-// The mock's order; Top concerns stays the default (plan §7).
+// In the order the Show control lists them.
 export const SHOW = ["all", "top", "unknown"];
 // One list, so Clear filters and the empty-state check reset the same ones.
 export const OVERVIEW_FILTERS = /** @type {const} */ ([
@@ -24,7 +24,7 @@ export const OVERVIEW_FILTERS = /** @type {const} */ ([
   "providerId",
   "department",
 ]);
-// Matches SORTS.sites, so a shared link never asks for a sort it refuses.
+// Only sorts the server accepts, so a shared link never asks for one it refuses.
 export const SITE_SORTS = [
   "name",
   "overdueLate",
@@ -33,20 +33,20 @@ export const SITE_SORTS = [
   "issuesCreated",
 ];
 
-// Years 2000–2999, as the server's isYear accepts.
+// Years 2000–2999, the only years the server accepts.
 const DAY = /^2\d{3}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const MONTH = /^2\d{3}-(0[1-9]|1[0-2])$/;
 const QUARTER = /^(2\d{3})-Q([1-4])$/;
 const YEAR = /^2\d{3}$/;
 // Free-text filters are IDs or names; anything longer is a crafted link.
 const MAX_VALUE = 200;
-// The handler's LIMITS.maxSearch; a longer search is refused, not cut.
+// The server refuses a longer search rather than cutting it.
 export const MAX_SEARCH = 100;
 
 /** Feb 30 passes the pattern, but the server refuses it. @param {string} day */
 const isDay = (day) => DAY.test(day) && addDays(day, 0) === day;
 
-/** Clamps as the server's addMonthsSameDay does, so both cap periods alike. @param {string} day @param {number} months */
+/** Clamps to a short month's last day, as the server does, so both cap periods alike. @param {string} day @param {number} months */
 function addMonths(day, months) {
   const [y, m, d] = day.split("-").map(Number);
   const first = new Date(Date.UTC(y, m - 1 + months, 1));
@@ -57,9 +57,8 @@ function addMonths(day, months) {
   return first.toISOString().slice(0, 10);
 }
 
-/** @param {string} search @returns {Period | null} null for the server's default month */
-export function readPeriod(search) {
-  const params = new URLSearchParams(search);
+/** @param {URLSearchParams} params @param {Date} now @returns {Period | null} */
+function periodIn(params, now) {
   const value = params.get("period") || "";
   if (MONTH.test(value)) return { kind: "month", month: value };
   const quarter = QUARTER.exec(value);
@@ -72,13 +71,22 @@ export function readPeriod(search) {
   if (YEAR.test(value)) return { kind: "year", year: Number(value) };
   if (/^fy2\d{3}$/.test(value))
     return { kind: "financialYear", startYear: Number(value.slice(2)) };
-  if (value === "custom") {
-    const from = params.get("from") || "";
-    const to = params.get("to") || "";
-    // A range the server refuses would leave the page with no period to step from.
-    if (!customPeriodError(from, to)) return { kind: "custom", from, to };
-  }
-  return null;
+  if (value !== "custom") return null;
+  const from = params.get("from") || "";
+  const to = params.get("to") || "";
+  return customPeriodError(from, to, now) ? null : { kind: "custom", from, to };
+}
+
+/**
+ * A period the server refuses, such as one not started yet, would leave the
+ * page with no period to step from, so it falls back to the default month.
+ * @param {string} search
+ * @param {Date} [now]
+ * @returns {Period | null} null for the server's default month
+ */
+export function readPeriod(search, now = new Date()) {
+  const period = periodIn(new URLSearchParams(search), now);
+  return period && !hasStarted(period, now) ? null : period;
 }
 
 /** @param {Period | null} period @returns {Record<string, string>} */
@@ -178,8 +186,12 @@ export function periodSearch(period) {
   return params;
 }
 
-/** @param {Period} period not custom @param {1 | -1} step @returns {Period} */
-export function stepPeriod(period, step) {
+/** @param {Period} period @param {Date} now */
+const hasStarted = (period, now) =>
+  intervalOf(period, now).startDay <= pacificDateKey(now);
+
+/** @param {Period} period not custom @param {1 | -1} step */
+function stepped(period, step) {
   if (period.kind === "month")
     return {
       kind: "month",
@@ -195,11 +207,19 @@ export function stepPeriod(period, step) {
   return period;
 }
 
-/** @param {string} from @param {string} to last day, inclusive @returns {string} a translation key, or "" */
-export function customPeriodError(from, to) {
+/** @param {Period} period not custom @param {1 | -1} step @returns {Period} the same period when the step would leave the years the server takes */
+export function stepPeriod(period, step) {
+  const next = /** @type {Period} */ (stepped(period, step));
+  return YEAR.test(intervalOf(next).startDay.slice(0, 4)) ? next : period;
+}
+
+/** @param {string} from @param {string} to last day, inclusive @param {Date} [now] @returns {string} a translation key, or "" */
+export function customPeriodError(from, to, now = new Date()) {
   if (!from || !to) return "admin.insights.period.missingDay";
   if (!isDay(from) || !isDay(to)) return "admin.insights.period.invalidDay";
   if (to < from) return "admin.insights.period.endBeforeStart";
+  // The server refuses a period that starts after today.
+  if (from > pacificDateKey(now)) return "admin.insights.error.futurePeriod";
   // The server caps a period at 12 months from its first day, end exclusive.
   if (addDays(to, 1) > addMonths(from, 12))
     return "admin.insights.error.periodTooLong";
@@ -218,7 +238,7 @@ export function readOverview(search) {
   const params = new URLSearchParams(search);
   return {
     q: pick(params, "q", null, "", MAX_SEARCH),
-    // Top concerns opens first (plan §7); "all" must be asked for.
+    // Top concerns opens first, so Sites needing attention lead; "all" must be asked for.
     show: pick(params, "show", SHOW, "top"),
     managerId: pick(params, "managerId", null),
     providerId: pick(params, "providerId", null),
@@ -255,7 +275,7 @@ export function overviewApiParams(state, period) {
   return params;
 }
 
-/** A report never holds a Site the user can't see (plan §3). @param {string[]} selected @param {string[]} listedIds */
+/** A report never holds a Site the user can't see in the list. @param {string[]} selected @param {string[]} listedIds */
 export function keptSelection(selected, listedIds) {
   const listed = new Set(listedIds);
   return selected.filter((id) => listed.has(id)).slice(0, MAX_REPORT_SITES);
