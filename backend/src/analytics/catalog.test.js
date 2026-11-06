@@ -14,16 +14,9 @@ vi.mock("@aws-sdk/client-s3", () => ({
   },
 }));
 
-const {
-  CATALOG,
-  ParamError,
-  bindParams,
-  getQuery,
-  listCatalog,
-  renderWithDefaults,
-} = await import("./catalog.js");
+const { CATALOG, ParamError, bindParams, getQuery, renderWithDefaults } =
+  await import("./catalog.js");
 const { createViews } = await import("./lake-views.js");
-const { runQuery, _test } = await import("./query.js");
 
 describe("CATALOG", () => {
   it("has unique ids and a description on every entry", () => {
@@ -48,8 +41,8 @@ describe("CATALOG", () => {
 
   it("gives every scheduled entry defaults for all parameters", () => {
     const scheduled = CATALOG.filter((q) => q.scheduled);
+    // Compliance by site is off the schedule, so the old 3-a-day score stops publishing.
     expect(scheduled.map((q) => q.id)).toEqual([
-      "compliance-by-site",
       "worst-locations",
       "open-tasks-by-site",
     ]);
@@ -64,15 +57,32 @@ describe("every catalog query runs against the lake views", () => {
   /** @type {any} */
   let conn;
 
+  /**
+   * Run a catalog query with bound parameters; counts come back as numbers.
+   * @param {string} sql
+   * @param {Record<string, number | string>} params
+   */
+  async function runQuery(sql, params) {
+    const prepared = await conn.prepare(sql);
+    prepared.bind(params);
+    const reader = await prepared.runAndReadAll();
+    return {
+      columns: reader.columnNames(),
+      rows: reader
+        .getRowsJS()
+        .map((/** @type {unknown[]} */ row) =>
+          row.map((v) => (typeof v === "bigint" ? Number(v) : v)),
+        ),
+    };
+  }
+
   beforeEach(async () => {
     send.mockReset();
     send.mockResolvedValue({ KeyCount: 0 });
-    _test.invalidateWarm();
     const { DuckDBInstance } = await import("@duckdb/node-api");
     const db = await DuckDBInstance.create(":memory:");
     conn = await db.connect();
     await createViews(conn, "bucket-x", { s3: { send }, install: false });
-    _test.seedWarm(conn, "bucket-x");
   });
 
   afterEach(() => {
@@ -83,7 +93,7 @@ describe("every catalog query runs against the lake views", () => {
     "%s binds and executes with default parameters",
     async (_id, q) => {
       const params = bindParams(q, { siteId: "site-1" });
-      const result = await runQuery("bucket-x", q.sql, params);
+      const result = await runQuery(q.sql, params);
       expect(result.columns.length).toBeGreaterThan(0);
       expect(Array.isArray(result.rows)).toBe(true);
     },
@@ -97,7 +107,7 @@ describe("every catalog query runs against the lake views", () => {
         ('s2', 'c3', 'in_progress', NULL, NULL, current_date, '{}')
       ) t(siteId, checkId, status, grade, gradeScore, date, raw)`);
     const q = /** @type {any} */ (getQuery("grade-distribution"));
-    const result = await runQuery("bucket-x", q.sql, bindParams(q, {}));
+    const result = await runQuery(q.sql, bindParams(q, {}));
     expect(result.columns).toEqual(["grade", "checks", "pct"]);
     expect(result.rows).toEqual([
       ["Good", 1, 50],
@@ -111,15 +121,11 @@ describe("every catalog query runs against the lake views", () => {
         ('site', 'sim', 'open', 'city_escalation', 'litter', 1, 'escalation', '2026-10-30', current_date, '{"deliberate311DeliveryMode":"simulated"}')
       ) t(siteId, taskId, taskStatus, type, category, severity, kind, createdAt, date, raw)`);
     const list = /** @type {any} */ (getQuery("open-escalations"));
-    expect(
-      (await runQuery("bucket-x", list.sql, bindParams(list, {}))).rows,
-    ).toHaveLength(1);
-    const counts = /** @type {any} */ (getQuery("open-tasks-by-site"));
-    const result = await runQuery(
-      "bucket-x",
-      counts.sql,
-      bindParams(counts, {}),
+    expect((await runQuery(list.sql, bindParams(list, {}))).rows).toHaveLength(
+      1,
     );
+    const counts = /** @type {any} */ (getQuery("open-tasks-by-site"));
+    const result = await runQuery(counts.sql, bindParams(counts, {}));
     expect(result.rows[0][result.columns.indexOf("open_escalations")]).toBe(1);
     expect(result.rows[0][result.columns.indexOf("open_tasks")]).toBe(2);
   });
@@ -183,24 +189,5 @@ describe("renderWithDefaults", () => {
   it("refuses a parameter without a default", () => {
     const q = /** @type {any} */ (getQuery("site-recent-checks"));
     expect(() => renderWithDefaults(q)).toThrow(/no default/);
-  });
-});
-
-describe("listCatalog", () => {
-  it("serves the UI shape with SQL and a boolean scheduled flag", () => {
-    const listed = listCatalog();
-    expect(listed.length).toBe(CATALOG.length);
-    for (const q of listed) {
-      expect(Object.keys(q).sort()).toEqual([
-        "description",
-        "group",
-        "id",
-        "params",
-        "scheduled",
-        "sql",
-        "title",
-      ]);
-      expect(typeof q.scheduled).toBe("boolean");
-    }
   });
 });

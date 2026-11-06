@@ -14,6 +14,15 @@ export function modeNav(mode, href) {
   return `<nav class="entity-tabs" id="admin-modes" aria-label="${escapeHtml(t("admin.modes.label"))}">${tab("manage")}${tab("insights")}</nav>`;
 }
 
+// Manage loads this file, so the message shows without downloading Insights.
+export function insightsOffView() {
+  return `<section class="empty-state" id="insights-off" aria-labelledby="insights-title">
+    <h1 id="insights-title" tabindex="-1">${escapeHtml(t("admin.insights.off.title"))}</h1>
+    <p class="muted">${escapeHtml(t("admin.insights.off.body"))}</p>
+    <a class="btn-secondary" href="${MODE_HOME.manage}" data-route data-insights-off-manage>${escapeHtml(t("admin.insights.off.manage"))}</a>
+  </section>`;
+}
+
 /** @param {string} path a path already checked by safeReturnPath */
 export function insightsReturnLink(path) {
   return path

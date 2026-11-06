@@ -1,17 +1,15 @@
-// Canned analytics queries over the lake views (ADR 0013). One definition
-// serves three consumers: the admin analytics page (buttons, no SQL
-// knowledge needed), the catalog API, and the scheduled report Lambda
-// (entries flagged `scheduled` are materialized daily with their default
-// parameters).
+// Canned analytics queries over the lake views (ADR 0013). The scheduled
+// report Lambda materializes entries flagged `scheduled` daily with their
+// default parameters. Insights replaced the admin Analytics page, so the
+// other entries have no caller.
 //
 // Conventions:
 // - SQL is a single SELECT-shaped statement against the lake views
 //   (lake-views.js), one per convert.js ENTITY_COLUMNS key. Promoted columns are the
 //   converter's (convert.js ENTITY_COLUMNS); anything else comes from the raw
 //   JSON column via `raw->>'$.field'`.
-// - Parameters are `$name` placeholders bound through DuckDB prepared
-//   statements (query.js) — never interpolated. Integers are always wrapped
-//   in CAST($x AS INTEGER) because the binding may arrive as a DOUBLE.
+// - Parameters are `$name` placeholders. Integers are always wrapped in
+//   CAST($x AS INTEGER) because a bound value may arrive as a DOUBLE.
 // - The hive `date` column is the item's own event date in UTC
 //   (startedAt / createdAt / reportedAt). Day-based windows use it so
 //   partition pruning applies. Note: legal per-day compliance is a local-day
@@ -129,7 +127,6 @@ ORDER BY date`,
       "Share of days each site met the legal duty of at least 3 completed checks per day. Counts every site on every day in the window, so inactive sites show 0%. Days are UTC.",
     group: "Compliance",
     params: [DAYS_7],
-    scheduled: true,
     sql: `WITH dates AS (
   SELECT unnest(generate_series(
     current_date - CAST($days AS INTEGER),
@@ -442,21 +439,4 @@ export function renderWithDefaults(query) {
     sql = sql.replaceAll(`$${p.name}`, literal);
   }
   return sql;
-}
-
-/**
- * The catalog as served to the admin page: everything the UI needs to
- * render a button, its parameter controls, and the SQL behind it.
- * @returns {CatalogQuery[]}
- */
-export function listCatalog() {
-  return CATALOG.map((q) => ({
-    id: q.id,
-    title: q.title,
-    description: q.description,
-    group: q.group,
-    params: q.params,
-    sql: q.sql,
-    scheduled: q.scheduled === true,
-  }));
 }

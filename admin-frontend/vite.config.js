@@ -19,7 +19,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: resolve(adminRoot, "index.html"),
-        analytics: resolve(adminRoot, "analytics.html"),
       },
     },
   },

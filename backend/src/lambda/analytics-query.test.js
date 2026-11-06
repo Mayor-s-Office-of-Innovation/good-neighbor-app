@@ -1,20 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { handlers } = vi.hoisted(() => ({
-  handlers: {
-    listAnalyticsQueries: vi.fn(async () => ({
-      statusCode: 200,
-      body: "list",
-    })),
-    runAnalyticsCatalogQuery: vi.fn(async () => ({
-      statusCode: 200,
-      body: "catalog",
-    })),
-    runAnalyticsQuery: vi.fn(async () => ({ statusCode: 200, body: "raw" })),
-  },
-}));
-vi.mock("../handlers/admin-analytics.js", () => handlers);
-
 const { reporting } = vi.hoisted(() => {
   /** @param {string} body */
   const reply = (body) => vi.fn(async () => ({ statusCode: 200, body }));
@@ -72,24 +57,17 @@ const event = (routeKey) => ({
 });
 
 describe("analytics-query lambda", () => {
+  // Insights replaced the Analytics page, so its catalog and SQL routes are gone.
   it.each([
-    ["GET /admin/v1/analytics/queries", "listAnalyticsQueries", "list"],
-    [
-      "POST /admin/v1/analytics/queries/{queryId}",
-      "runAnalyticsCatalogQuery",
-      "catalog",
-    ],
-    ["POST /admin/v1/analytics/query", "runAnalyticsQuery", "raw"],
-  ])("dispatches %s", async (routeKey, name, body) => {
-    const res = await handler(
-      event(routeKey),
-      /** @type {any} */ ({}),
-      () => {},
+    "GET /admin/v1/analytics/queries",
+    "POST /admin/v1/analytics/queries/{queryId}",
+    "POST /admin/v1/analytics/query",
+  ])("404s on the old Analytics route %s", async (routeKey) => {
+    const res = /** @type {any} */ (
+      await handler(event(routeKey), /** @type {any} */ ({}), () => {})
     );
-    expect(res).toEqual({ statusCode: 200, body });
-    expect(
-      handlers[/** @type {keyof typeof handlers} */ (name)],
-    ).toHaveBeenCalledWith(event(routeKey));
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(String(res.body)).error).toBe("not_found");
   });
 
   it.each([

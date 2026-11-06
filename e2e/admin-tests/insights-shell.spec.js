@@ -69,3 +69,11 @@ test("when Insights can't download, Manage keeps working", async ({ page }) => {
   await expect(page.locator("#directory-title")).toBeVisible();
   await expect(pageError(page)).toHaveCount(0);
 });
+
+test("an old Analytics bookmark opens Insights", async ({ page }) => {
+  await mockAdmin(page, { insights: true });
+  // The CDN serves .html paths as files, never the app, so the file itself must redirect.
+  await page.goto("/analytics.html");
+  await expect(page).toHaveURL(/\/insights$/);
+  await expect(heading(page)).toHaveText(t("admin.insights.overview"));
+});

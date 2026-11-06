@@ -6,6 +6,7 @@ import {
   returnPathTo,
   routeMode,
   safeReturnPath,
+  signInReturnPath,
 } from "./insights-routes.js";
 
 test("each Insights page has its own route", () => {
@@ -85,6 +86,7 @@ test("a return path outside Insights is refused", () => {
     "",
     "/sites",
     "/system-status",
+    "/analytics",
     "https://example.org/insights",
     "//example.org/insights",
     "/\\example.org/insights",
@@ -152,4 +154,21 @@ test("the way back to a page keeps its filters, or only its period past the leng
     returnPathTo("/insights/raw/issues", long),
     "/insights/raw/issues?period=2026-10",
   );
+});
+
+test("sign-in comes back only to Insights pages and old Analytics links", () => {
+  assert.equal(
+    signInReturnPath("/insights/sites/s1?period=2026-09"),
+    "/insights/sites/s1?period=2026-09",
+  );
+  // A page that only redirects comes back as where it leads.
+  assert.equal(
+    signInReturnPath("/insights/raw?period=2026-09"),
+    "/insights/raw/issues?period=2026-09",
+  );
+  assert.equal(signInReturnPath("/insights/nothing-here"), "/insights");
+  // Kept, so with Insights off the link still says why.
+  assert.equal(signInReturnPath("/analytics/"), "/analytics");
+  for (const value of ["/sites", "/programs/p1", "//evil.example", "", null])
+    assert.equal(signInReturnPath(value), "", String(value));
 });

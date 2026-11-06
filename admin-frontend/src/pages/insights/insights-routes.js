@@ -93,3 +93,23 @@ export function safeReturnPath(value) {
 export const returnPathTo = (pathname, search) =>
   safeReturnPath(`${pathname}${search}`) ||
   `${pathname}${carriedQuery(search)}`;
+
+/**
+ * The page to reopen after sign-in. Only Insights pages and old Analytics
+ * bookmarks come back; a redirect-only page comes back as where it leads.
+ * @param {string | null | undefined} value
+ * @returns {string} a checked path, or ""
+ */
+export function signInReturnPath(value) {
+  const [pathname = "", query = ""] = String(value ?? "").split(/\?(.*)/s);
+  const search = query ? `?${query}` : "";
+  // Kept as is, so with Insights off the bookmark still explains why.
+  if (/^\/analytics\/?$/.test(pathname)) return "/analytics";
+  const name = INSIGHTS_ROUTES.find(([, pattern]) =>
+    pattern.test(pathname),
+  )?.[0];
+  if (name === "insights-raw")
+    return safeReturnPath(`/insights/raw/issues${search}`);
+  if (name === "insights-unknown") return MODE_HOME.insights;
+  return safeReturnPath(`${pathname}${search}`);
+}

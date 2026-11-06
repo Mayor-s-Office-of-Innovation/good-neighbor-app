@@ -51,6 +51,7 @@ test("Settings, creation pages and unsafe paths are never remembered", () => {
     "/sites/import",
     "/insights/raw",
     "/insights/compliance",
+    "/analytics",
     "//example.org/sites",
     "/not-a-page",
   ])

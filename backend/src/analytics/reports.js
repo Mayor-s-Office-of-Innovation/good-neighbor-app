@@ -2,13 +2,6 @@
 // in-memory DuckDB, builds the shared lake views (lake-views.js), runs every
 // catalog query flagged `scheduled` (catalog.js) with its default
 // parameters, and writes each result to reports/<query-id>/<date>.csv.
-//
-// The catalog is the single definition: the same SQL the admin analytics
-// page runs on demand is what gets materialized here, so a report never
-// drifts from its dashboard.
-//
-// This engine writes CSVs to /tmp, so it does NOT apply the lake-views
-// lockdown (that is for the admin query engine, which runs untrusted SQL).
 
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { DuckDBInstance } from "@duckdb/node-api";

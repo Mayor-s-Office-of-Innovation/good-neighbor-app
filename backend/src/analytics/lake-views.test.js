@@ -19,7 +19,6 @@ const {
   createViews,
   emptyViewSql,
   lakeViewSql,
-  lockdown,
   stripTrailingSemicolon,
 } = await import("./lake-views.js");
 const { ENTITY_COLUMNS } = await import("./convert.js");
@@ -280,31 +279,6 @@ describe("createViews", () => {
     await expect(
       createViews(conn, "bucket-x", /** @type {any} */ ({ install: false })),
     ).rejects.toThrow(/s3 client/);
-  });
-});
-
-describe("lockdown", () => {
-  it("blocks local filesystem reads and configuration changes on every connection, but still allows views", async () => {
-    await lockdown(conn);
-    await expect(
-      conn.run("SELECT content FROM read_text('/etc/hosts')"),
-    ).rejects.toThrow(/LocalFileSystem has been disabled/);
-    await expect(conn.run("SET threads = 1")).rejects.toThrow(/locked/);
-    await expect(
-      conn.run("SET GLOBAL disabled_filesystems = ''"),
-    ).rejects.toThrow(/locked/);
-
-    // A second connection on the same instance is locked too.
-    const other = await db.connect();
-    try {
-      await expect(
-        other.run("SELECT content FROM read_text('/etc/hosts')"),
-      ).rejects.toThrow(/LocalFileSystem has been disabled/);
-      await other.run("CREATE OR REPLACE VIEW v AS SELECT 1 AS x");
-    } finally {
-      other.closeSync();
-    }
-    expect(await rows("SELECT x FROM v")).toEqual([[1]]);
   });
 });
 

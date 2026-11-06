@@ -12,10 +12,11 @@ import {
   text,
   window,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
+import { mountAdmin, waitFor } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 import { insightsDownload } from "./pages/insights/insights-page.js";
+import { matchRoute } from "./router.js";
 
 const manageTab = '#admin-modes a[data-mode="manage"]';
 const insightsTab = '#admin-modes a[data-mode="insights"]';
@@ -409,4 +410,129 @@ test("a new page load, as after signing in again, starts each tab at home", asyn
   );
   await mountAdmin("/sites", { insights: true });
   assert.equal($(insightsTab).getAttribute("href"), "/insights");
+});
+
+test("an old Analytics link opens Insights in its place", async () => {
+  await mountAdmin("/sites", { insights: true });
+  const entries = window.history.length;
+  await routeTo("/analytics");
+  assert.equal(url(), "/insights");
+  assert.equal(heading(), t("admin.insights.overview"));
+  // Replaced, so Back skips the old link instead of bouncing to Insights again.
+  assert.equal(window.history.length, entries + 1);
+});
+
+test("the old analytics.html sends bookmarks to /analytics/, which the app routes", () => {
+  const page = readFileSync(
+    join(import.meta.dirname, "../public/analytics.html"),
+    "utf8",
+  );
+  // Without the slash the dev server serves this file again, so it reloads forever.
+  assert.match(page, /http-equiv="refresh" content="0; url=\/analytics\/"/);
+  assert.match(page, /<a href="\/analytics\/">/);
+  assert.equal(matchRoute("/analytics/").name, "analytics");
+});
+
+test("with Insights off, an old Analytics link says so and leads to Manage", async () => {
+  await mountAdmin("/analytics");
+  assert.equal(url(), "/analytics");
+  assert.equal(heading(), t("admin.insights.off.title"));
+  assert.ok(focused("#insights-title"));
+  assert.ok(text("#insights-off").includes(t("admin.insights.off.body")));
+  assert.ok(missing("#admin-modes"));
+  await click("[data-insights-off-manage]");
+  assert.equal(url(), "/sites");
+  assert.equal(heading(), t("admin.breadcrumb.admin"));
+});
+
+const signInConfig = {
+  apiBase: window.location.origin,
+  localDebugAdmin: false,
+  insightsEnabled: true,
+  cognitoDomain: "https://auth.example.org",
+  clientId: "example-client",
+  redirectUri: "http://localhost/auth/callback",
+};
+
+/**
+ * Sign in from `path`, then come back from the login page as Cognito would.
+ * @param {string} path
+ * @param {{ ok?: boolean, insights?: boolean }} [options] insights: the deploy switch
+ */
+async function signInFrom(path, { ok = true, insights = true } = {}) {
+  const assign = vi
+    .spyOn(window.location, "assign")
+    .mockImplementation(() => {});
+  const config = () => {
+    /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG = {
+      ...signInConfig,
+      insightsEnabled: insights,
+    };
+  };
+  await mountAdmin(path, { insights, setup: config });
+  await click("#sign-in");
+  // The PKCE digest runs off the event loop, where settle() can't see it.
+  await waitFor(() => assign.mock.calls.length > 0);
+  await settle();
+  const state = new URL(assign.mock.calls[0][0]).searchParams.get("state");
+  // The login page is another site; the tab keeps its storage while it's there.
+  const kept = { ...window.sessionStorage };
+  await mountAdmin(`/auth/callback?code=c1&state=${state}`, {
+    insights,
+    setup: () => {
+      config();
+      for (const [key, value] of Object.entries(kept))
+        window.sessionStorage.setItem(key, value);
+    },
+    fetch: (requestUrl) =>
+      requestUrl === "https://auth.example.org/oauth2/token"
+        ? new Response(
+            JSON.stringify(
+              ok
+                ? { access_token: "token-1", expires_in: 3600 }
+                : { error: "invalid_grant" },
+            ),
+            {
+              status: ok ? 200 : 400,
+              headers: { "content-type": "application/json" },
+            },
+          )
+        : undefined,
+  });
+}
+
+test("signing in from an Insights page comes back to it", async () => {
+  await signInFrom("/insights/raw/issues?period=2026-09");
+  assert.equal(url(), "/insights/raw/issues?period=2026-09");
+  assert.equal(heading(), t("admin.insights.raw"));
+});
+
+test("signing in from an old Analytics link comes back to Insights", async () => {
+  await signInFrom("/analytics");
+  assert.equal(url(), "/insights");
+  assert.equal(heading(), t("admin.insights.overview"));
+});
+
+test("signing in from an old Analytics link with Insights off says why", async () => {
+  await signInFrom("/analytics", { insights: false });
+  assert.equal(url(), "/analytics");
+  assert.equal(heading(), t("admin.insights.off.title"));
+});
+
+test("signing in from a page that only redirects comes back to where it leads", async () => {
+  await signInFrom("/insights/raw?period=2026-09");
+  assert.equal(url(), "/insights/raw/issues?period=2026-09");
+});
+
+test("signing in from a Manage page still opens the Site list", async () => {
+  await signInFrom("/programs/p1");
+  assert.equal(url(), "/auth/callback");
+  assert.equal(heading(), t("admin.breadcrumb.admin"));
+});
+
+test("a sign-in that fails stays on its error, not the Insights page", async () => {
+  await signInFrom("/insights/trends", { ok: false });
+  assert.equal(url(), "/auth/callback");
+  assert.equal(pageError(), t("admin.errors.loginFailed"));
+  assert.ok(!missing("#sign-in"));
 });

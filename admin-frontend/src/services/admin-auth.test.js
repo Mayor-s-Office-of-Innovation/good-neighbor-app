@@ -452,3 +452,105 @@ test("a stale refresh failure cannot erase a newer login in another tab", async 
   assert.deepEqual(JSON.parse(local.getItem(SESSION_KEY)), newer);
   assert.equal(await auth.getFreshAdminToken(), "new-access");
 });
+
+/** A signed-out tab that can start a login and take its callback. */
+function loginFixture() {
+  const session = new MemoryStorage();
+  const local = new MemoryStorage();
+  const location = {
+    origin: "https://admin.example.test",
+    pathname: "/insights",
+    search: "",
+    href: "https://admin.example.test/insights",
+    assigned: "",
+    /** @param {string} value */
+    assign(value) {
+      location.assigned = String(value);
+    },
+  };
+  vi.stubGlobal("window", {
+    GOOD_NEIGHBOR_ADMIN_CONFIG: {
+      cognitoDomain: "https://login.example.test",
+      clientId: "client-1",
+      redirectUri: "https://admin.example.test/auth/callback",
+      logoutUri: "https://admin.example.test/",
+    },
+  });
+  vi.stubGlobal("location", location);
+  vi.stubGlobal("history", {
+    replaceState(_state, _title, path) {
+      location.pathname = String(path);
+      location.search = "";
+    },
+  });
+  vi.stubGlobal("sessionStorage", session);
+  vi.stubGlobal("localStorage", local);
+  vi.stubGlobal("fetch", async () => ({
+    ok: true,
+    json: async () => ({ access_token: "access-r", expires_in: 3600 }),
+  }));
+  /** Come back from Cognito with the last login's state. @param {string} [state] */
+  const callback = (state) => {
+    location.pathname = "/auth/callback";
+    location.search = `?code=code-r&state=${state ?? new URL(location.assigned).searchParams.get("state")}`;
+  };
+  return { session, local, location, callback };
+}
+
+test("a login started with a return path hands it back after the callback", async () => {
+  const { session, callback } = loginFixture();
+  const auth = await import("./admin-auth.js");
+  await auth.startAdminLogin("/insights/raw/issues?period=2026-09");
+  callback();
+  assert.deepEqual(await auth.completeAdminLoginFromUrl(), {
+    handled: true,
+    returnTo: "/insights/raw/issues?period=2026-09",
+  });
+
+  // Cognito's MFA journey can replace the tab's storage; the path must survive it.
+  await auth.startAdminLogin("/insights");
+  session.clear();
+  callback();
+  assert.deepEqual(await auth.completeAdminLoginFromUrl(), {
+    handled: true,
+    returnTo: "/insights",
+  });
+});
+
+test("a failed or stale callback hands back no return path", async () => {
+  const { callback } = loginFixture();
+  const auth = await import("./admin-auth.js");
+  await auth.startAdminLogin("/insights");
+  callback("old-state");
+  assert.deepEqual(await auth.completeAdminLoginFromUrl(), {
+    handled: true,
+    error: "invalid_login_state",
+  });
+  vi.stubGlobal("fetch", async () => ({
+    ok: false,
+    json: async () => ({ error: "invalid_grant" }),
+  }));
+  callback();
+  assert.deepEqual(await auth.completeAdminLoginFromUrl(), {
+    handled: true,
+    error: "token_exchange_failed",
+  });
+});
+
+test("a new login without a return path doesn't reuse the last one", async () => {
+  const { callback } = loginFixture();
+  const auth = await import("./admin-auth.js");
+  await auth.startAdminLogin("/insights");
+  await auth.startAdminLogin();
+  callback();
+  assert.deepEqual(await auth.completeAdminLoginFromUrl(), { handled: true });
+});
+
+test("sign-out forgets a pending login's return path", async () => {
+  const { session, local } = loginFixture();
+  const auth = await import("./admin-auth.js");
+  await auth.startAdminLogin("/insights/sites/s1");
+  auth.signOutAdmin();
+  const kept = [...session.values.values(), ...local.values.values()];
+  assert.ok(!kept.some((value) => value.includes("/insights/sites/s1")));
+});

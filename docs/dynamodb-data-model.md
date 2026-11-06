@@ -640,7 +640,7 @@ over them for any set of sites or time grain. The pipeline lives in
 |---|---|---|
 | `analytics-export` | EventBridge `rate(6 hours)` | incremental export, starting from the `ANALYTICS#EXPORT` / `#WATERMARK` cursor, into the analytics lake bucket |
 | `analytics-convert` | export completion | rewrites the export as Parquet, split by entity |
-| `analytics-query` | `GET/POST /admin/v1/analytics/*`, behind the admin JWT authorizer | runs DuckDB over the Parquet lake and serves the named query catalog (`backend/src/analytics/catalog.js`) |
+| `analytics-query` | Insights admin routes, behind the admin JWT authorizer, and the Insights job queue | runs DuckDB over the Parquet lake for Insights reads, CSV exports and PDF reports |
 | `analytics-report` | EventBridge `cron(0 14 * * ? *)`, 14:00 UTC (06:00 Pacific standard time, 07:00 Pacific daylight time) | builds the daily citywide report |
 
 ADR 0013 replaced the Glue and Athena tooling we first sketched. Athena could still be
@@ -655,7 +655,7 @@ All of it is Terraform. Nothing is set up by hand.
 - **Built:** DynamoDB Streams on the table (shared outbox/System Status mapping and a feature-gated duplicate mapping), the S3 analytics lake bucket
   (KMS, lifecycle rules), the four Lambdas, and the two EventBridge schedules above.
 - **Not built:** the Tier-1 Streams aggregator and the `#STATS#` counter items. No
-  Firehose (see T2b above). The admin Analytics page already renders query results; System Status uses its
+  Firehose (see T2b above). Insights reads the lake through `analytics-query`; System Status uses its
   separate operational projections, not the lake or the proposed Tier-1 counters.
 
 Tier-1 buildout is post-MVP and tracked on the issue tracker.

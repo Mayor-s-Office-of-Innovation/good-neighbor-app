@@ -248,11 +248,6 @@ import {
   getStatusMedia,
   getStatusDuplicate,
 } from "../src/handlers/system-status.js";
-import {
-  listAnalyticsQueries,
-  runAnalyticsCatalogQuery,
-  runAnalyticsQuery,
-} from "../src/handlers/admin-analytics.js";
 import { getRecordPhotos } from "../src/handlers/record-photos.js";
 import { seedInsightsRecords } from "./lib/insights-records-seed.mjs";
 import { reportingRoutes } from "../src/handlers/admin-reporting.js";
@@ -693,13 +688,6 @@ const routes = [
     "/admin/v1/emergency-site-revocations",
     startEmergencySiteRevocation,
   ),
-  route("GET", "/admin/v1/analytics/queries", listAnalyticsQueries),
-  route(
-    "POST",
-    "/admin/v1/analytics/queries/{queryId}",
-    runAnalyticsCatalogQuery,
-  ),
-  route("POST", "/admin/v1/analytics/query", runAnalyticsQuery),
   ...Object.entries(reportingRoutes).map(([key, handler]) => {
     const [method, pattern] = key.split(" ");
     return route(method, pattern, handler);

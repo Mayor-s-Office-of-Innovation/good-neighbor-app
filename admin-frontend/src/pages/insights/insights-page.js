@@ -3,8 +3,9 @@ import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { appMessageError } from "../../admin-error-messages.js";
 import { getAdminConfig } from "../../config.js";
 import { currentRoute, navigate } from "../../router.js";
-import { carriedQuery, routeMode } from "./insights-routes.js";
+import { MODE_HOME, carriedQuery, routeMode } from "./insights-routes.js";
 import { insightsAvailable } from "./mode-memory.js";
+import { insightsOffView } from "./shell.templates.js";
 
 /**
  * @typedef {{ name: string, id?: string }} Route
@@ -61,6 +62,12 @@ export class AdminInsightsPage extends HTMLElement {
   /** @param {Route} route @returns {Promise<boolean>} false if the user left or it redirects */
   async open(route) {
     const path = location.pathname + location.search;
+    // Insights replaced Analytics, so its bookmarks open Insights, or say why it is off.
+    if (route.name === "analytics") {
+      if (!insightsOn(this.session)) return true;
+      navigate(MODE_HOME.insights, { replace: true });
+      return false;
+    }
     if (!insightsOn(this.session)) {
       navigate("/sites", { replace: true });
       return false;
@@ -92,6 +99,7 @@ export class AdminInsightsPage extends HTMLElement {
 
   /** @param {Route} route */
   shows(route) {
+    if (route.name === "analytics") return !insightsOn(this.session);
     return Boolean(this.views) && routeMode(route.name) === "insights";
   }
 
@@ -103,6 +111,10 @@ export class AdminInsightsPage extends HTMLElement {
 
   render() {
     const route = currentRoute();
+    if (route.name === "analytics") {
+      this.innerHTML = this.shows(route) ? insightsOffView() : "";
+      return;
+    }
     this.innerHTML =
       this.views && this.shows(route)
         ? this.views.insightsPageView(
