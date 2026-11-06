@@ -430,6 +430,63 @@ it("keeps the task-list evidence selection when check artifacts arrive in a diff
 });
 
 describe("server media paths (signed cookies)", () => {
+  it("registers a task-free check's photo paths before asynchronous hydration completes", async () => {
+    const hydration = hydrateTaskEvidenceFromCheck([], {
+      check: { checkId: "strip-only" },
+      artifacts: [
+        { artifactId: "photo", mediaPath: "/checks/site/strip-only/photo" },
+      ],
+    });
+    expect((await cachedMediaUrls("strip-only", "photo")).downloadUrl).toBe(
+      "/checks/site/strip-only/photo",
+    );
+    await hydration;
+    expect(getMediaUrl).not.toHaveBeenCalled();
+  });
+
+  it("reuses retained paths after cooldown without rehydrating the Reports view", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-06T12:00:00Z"));
+    const checkId = "reports-recovery";
+    const path = `/checks/site/${checkId}/photo`;
+    const [task] = await hydrateTaskEvidenceFromCheck(
+      [{ checkId, taskId: "task", sourceArtifactIds: ["photo"] }],
+      {
+        check: { checkId },
+        artifacts: [
+          {
+            artifactId: "photo",
+            s3Key: path.slice(1),
+            contentType: "image/jpeg",
+            mediaPath: path,
+          },
+        ],
+      },
+    );
+    expect(task.evidence.mediaPath).toBe(path);
+    invalidateMediaUrls(checkId, "photo");
+    getMediaUrl.mockResolvedValue({
+      downloadUrl: "https://media/fallback",
+      expiresIn: 3600,
+    });
+    const fallback = await cachedMediaUrls(checkId, "photo");
+    expect(fallback.downloadUrl).toBe("https://media/fallback");
+    expect(fallback.expiresAt).toBe(Date.now() + 15 * 60 * 1000);
+    vi.advanceTimersByTime(15 * 60 * 1000 - 1);
+    expect((await cachedMediaUrls(checkId, "photo")).downloadUrl).toBe(
+      fallback.downloadUrl,
+    );
+    vi.advanceTimersByTime(1);
+    expect((await cachedMediaUrls(checkId, "photo")).downloadUrl).toBe(path);
+    expect(getMediaUrl).toHaveBeenCalledTimes(1);
+    // A still-invalid cookie starts another bounded fallback, not a retry loop.
+    invalidateMediaUrls(checkId, "photo");
+    expect((await cachedMediaUrls(checkId, "photo")).downloadUrl).toBe(
+      fallback.downloadUrl,
+    );
+    expect(getMediaUrl).toHaveBeenCalledTimes(2);
+  });
+
   beforeEach(() => {
     vi.mocked(getCheck).mockReset();
     vi.mocked(getCheckEvidenceBatch).mockReset();

@@ -365,6 +365,11 @@ describe("retireSessionHandoff", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(send).toHaveBeenCalledTimes(3);
+    expect(response.cookies).toEqual([
+      "CloudFront-Policy=; Path=/checks; Max-Age=0; Secure; HttpOnly; SameSite=Strict",
+      "CloudFront-Signature=; Path=/checks; Max-Age=0; Secure; HttpOnly; SameSite=Strict",
+      "CloudFront-Key-Pair-Id=; Path=/checks; Max-Age=0; Secure; HttpOnly; SameSite=Strict",
+    ]);
     expect(
       send.mock.calls[2][0].input.TransactItems[0].Update.UpdateExpression,
     ).toContain("tokenGeneration + :one");
@@ -406,6 +411,7 @@ describe("retireSessionHandoff", () => {
     const response = await call(retireSessionHandoff, authorizedEvent());
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(String(response.body))).toEqual({ retired: false });
+    expect(response.cookies).toHaveLength(3);
     expect(send).toHaveBeenCalledTimes(1);
   });
 

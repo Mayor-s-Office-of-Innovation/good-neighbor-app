@@ -219,6 +219,16 @@ graceful overlap is ever needed, widen the variable to a list and add both keys 
 Revocation of a device or site follows the cookie lifetime: at most one hour, the same window
 a presigned URL has today.
 
+Successful online sign-out expires all three media cookies on the current host, including
+when media signing has since been disabled. Offline sign-out or a failed server retirement
+cannot clear HttpOnly cookies; those expire naturally. Cookie removal does not erase
+already downloaded photos or unexpired browser HTTP cache entries.
+
+Reports registers the check's media paths before loading its photo strip. If a cookie path
+fails, the client retains it while using presigned URLs for a 15-minute cooldown. The photo
+owner retries the retained path when the cooldown expires (when visible and online), without
+requiring the Reports view to reload; another failure starts another bounded cooldown.
+
 ### What the cookie does not change
 
 Deleting a check photo removes it from the check and its generated tasks. The API also

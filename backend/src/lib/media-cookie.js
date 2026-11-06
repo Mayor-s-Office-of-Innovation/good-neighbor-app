@@ -24,6 +24,17 @@ const COOKIE_NAMES = /** @type {const} */ ([
   "CloudFront-Key-Pair-Id",
 ]);
 
+/**
+ * Expire host-only media cookies even if signing has since been disabled.
+ * @returns {string[]}
+ */
+export function clearMediaCookies() {
+  return COOKIE_NAMES.map(
+    (name) =>
+      `${name}=; Path=${MEDIA_COOKIE_PATH}; Max-Age=0; Secure; HttpOnly; SameSite=Strict`,
+  );
+}
+
 /** @type {SecretsManagerClient | undefined} */
 let secretsClient;
 /** Module-scope cache of the private key PEM, keyed by secret ARN. @type {Map<string, string>} */

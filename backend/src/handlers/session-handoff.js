@@ -21,7 +21,7 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
-import { withMediaCookies } from "../lib/media-cookie.js";
+import { clearMediaCookies, withMediaCookies } from "../lib/media-cookie.js";
 import { URLSearchParams } from "node:url";
 import {
   GetCommand,
@@ -683,7 +683,7 @@ function issuedResponse(grantId, token, expiresAt) {
 function retiredResponse(retired) {
   const response = jsonResponse(200, { retired });
   response.headers = { ...response.headers, "set-cookie": handoffCookie() };
-  return response;
+  return { ...response, cookies: clearMediaCookies() };
 }
 
 /**

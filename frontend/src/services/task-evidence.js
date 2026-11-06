@@ -22,6 +22,9 @@ const MEDIA_URL_CACHE = new Map();
 const MEDIA_FAILURES = new Map();
 /** Keys whose server path recently failed to load; presign is used until then. */
 const MEDIA_PATH_COOLDOWN = new Map();
+// Retain paths independently of the active URL so fallback can recover even
+// when a Reports view never hydrates its tasks again.
+const MEDIA_PATHS = new Map();
 /** Matches the cookie renewal cadence (token refresh every 15 minutes). */
 const MEDIA_PATH_COOLDOWN_MS = 15 * 60 * 1000;
 
@@ -130,6 +133,7 @@ export function registerMediaPaths(checkId, artifactId, paths) {
   const mediaPath = paths?.mediaPath;
   if (typeof mediaPath !== "string" || !mediaPath.startsWith("/")) return null;
   const key = `${checkId}:${artifactId}`;
+  MEDIA_PATHS.set(key, { mediaPath, thumbnailPath: paths.thumbnailPath });
   const cooldown = MEDIA_PATH_COOLDOWN.get(key);
   if (cooldown > Date.now()) return null;
   MEDIA_PATH_COOLDOWN.delete(key);
@@ -198,6 +202,10 @@ async function hydrateTaskFromArtifacts(task, artifacts) {
     georeferencedAddress: artifact.georeferencedAddress || "",
     text: artifact.text || "",
     kind: artifact.contentType?.startsWith?.("image/") ? "photo" : "text",
+    ...(artifact.mediaPath ? { mediaPath: artifact.mediaPath } : {}),
+    ...(artifact.thumbnailPath
+      ? { thumbnailPath: artifact.thumbnailPath }
+      : {}),
   };
   if (artifact.s3Key && artifact.contentType?.startsWith?.("image/")) {
     if (artifact.mediaPath)
@@ -296,6 +304,9 @@ export async function cachedMediaUrls(checkId, artifactId, options = {}) {
   const key = `${checkId}:${artifactId}`;
   const failure = MEDIA_FAILURES.get(key);
   if (failure?.retryAt > Date.now()) throw failure.error;
+  const paths = MEDIA_PATHS.get(key);
+  if (paths && !MEDIA_URL_CACHE.get(key)?.fromPath)
+    registerMediaPaths(checkId, artifactId, paths);
   const cached = MEDIA_URL_CACHE.get(key);
   if (cached && (cached.pending || cached.expiresAt > Date.now()))
     return consumeMedia(cached, key, signal);
@@ -329,6 +340,10 @@ export async function cachedMediaUrls(checkId, artifactId, options = {}) {
       const ttl =
         Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : 300000;
       entry.expiresAt = started + ttl - Math.min(30000, ttl / 10);
+      // Wake the photo owner when cookie paths become eligible again, even
+      // when the signed fallback itself would remain valid for longer.
+      const cooldown = MEDIA_PATH_COOLDOWN.get(key);
+      if (cooldown) entry.expiresAt = Math.min(entry.expiresAt, cooldown);
       entry.pending = false;
       if (MEDIA_URL_CACHE.get(key) === entry) MEDIA_FAILURES.delete(key);
       return { downloadUrl, thumbnailUrl, expiresAt: entry.expiresAt };
