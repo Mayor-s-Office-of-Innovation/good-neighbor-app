@@ -375,6 +375,63 @@ describe("refreshDeviceToken", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("renews the site's media cookies with the session when media cookies are on", async () => {
+    const { generateKeyPairSync } = await import("node:crypto");
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    vi.stubEnv("MEDIA_KEY_PAIR_ID", "K2EXAMPLE");
+    vi.stubEnv(
+      "MEDIA_SIGNING_KEY",
+      privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+    );
+    vi.stubEnv("PROVIDER_APP_URL", "https://app.example.org/");
+    const token = await setupRefresh();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1500 * 1000));
+    try {
+      const res = await callRefresh({ refreshToken: token });
+      expect(res.statusCode).toBe(200);
+      const cookies = /** @type {string[]} */ (
+        /** @type {any} */ (res).cookies
+      );
+      expect(cookies.map((c) => c.split("=")[0])).toEqual([
+        "CloudFront-Policy",
+        "CloudFront-Signature",
+        "CloudFront-Key-Pair-Id",
+      ]);
+      const policy = Buffer.from(
+        cookies[0]
+          .split(";")[0]
+          .slice("CloudFront-Policy=".length)
+          .replaceAll("-", "+")
+          .replaceAll("_", "=")
+          .replaceAll("~", "/"),
+        "base64",
+      ).toString("utf8");
+      expect(JSON.parse(policy).Statement[0].Resource).toBe(
+        "https://app.example.org/checks/site-1/*",
+      );
+      expect(cookies[0]).toContain(
+        "Path=/checks; Max-Age=3600; Secure; HttpOnly",
+      );
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("sets no cookies while media cookies are off", async () => {
+    const token = await setupRefresh();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1500 * 1000));
+    try {
+      const res = await callRefresh({ refreshToken: token });
+      expect(res.statusCode).toBe(200);
+      expect(res).not.toHaveProperty("cookies");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("401s a non-refresh access token", async () => {
     const { mintAccessToken } = await import("../lib/device-token.js");
     const { token } = await mintAccessToken(

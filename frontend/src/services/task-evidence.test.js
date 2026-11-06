@@ -1,13 +1,15 @@
-import { getCheck } from "./api.js";
+import { getCheck, getCheckEvidenceBatch } from "./api.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getMediaUrl = vi.fn();
 vi.mock("./api.js", () => ({
   getCheck: vi.fn(),
+  getCheckEvidenceBatch: vi.fn(),
   getMediaUrl: (...args) => getMediaUrl(...args),
 }));
 
 const {
+  hydrateTaskEvidence,
   hydrateTaskEvidenceFromCheck,
   hydratePendingQuestionEvidence,
   cachedMediaUrls,
@@ -30,6 +32,56 @@ const detail = {
   analyses: [{ artifactId: "p1", georeferencedAddress: "15th St" }],
 };
 
+it("dispatches all backlog batches immediately and shares in-flight checks with questions", async () => {
+  const tasks = Array.from({ length: 41 }, (_, i) => ({
+    checkId: `batch-${i}`,
+    sourceArtifactIds: ["d1"],
+  }));
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  vi.mocked(getCheckEvidenceBatch).mockImplementation(async (ids) => {
+    await gate;
+    return {
+      results: ids.map((checkId) => ({ checkId, status: 200, ...detail })),
+    };
+  });
+  vi.mocked(getCheck).mockResolvedValueOnce({ check: {}, ...detail });
+  const pending = hydrateTaskEvidence([...tasks, tasks[0]], { batch: true });
+  const questions = hydratePendingQuestionEvidence([
+    { checkId: "batch-0", evidenceArtifactId: "d1" },
+  ]);
+  expect(getCheckEvidenceBatch).toHaveBeenCalledTimes(8);
+  expect(
+    vi.mocked(getCheckEvidenceBatch).mock.calls.flatMap(([ids]) => ids),
+  ).toEqual(tasks.slice(0, 40).map((t) => t.checkId));
+  expect(getCheck).toHaveBeenCalledWith("batch-40");
+  release();
+  expect(
+    (await pending).every((t) => t.evidence?.text === "Sidewalk clear."),
+  ).toBe(true);
+  expect((await questions)[0].text).toBe("Sidewalk clear.");
+});
+
+it("sends two checks immediately and retries only the unsuccessful check", async () => {
+  const tasks = ["small-a", "small-b"].map((checkId) => ({
+    checkId,
+    sourceArtifactIds: ["d1"],
+  }));
+  vi.mocked(getCheckEvidenceBatch).mockResolvedValueOnce({
+    results: [
+      { checkId: "small-a", status: 500 },
+      { checkId: "small-b", status: 200, ...detail },
+    ],
+  });
+  const initial = await hydrateTaskEvidence(tasks, { batch: true });
+  expect(initial[0]).toBe(tasks[0]);
+  expect(initial[1].evidence.text).toBe("Sidewalk clear.");
+  vi.mocked(getCheck).mockResolvedValueOnce({ check: {}, ...detail });
+  await hydrateTaskEvidence(tasks, { batch: true });
+  expect(getCheck).toHaveBeenLastCalledWith("small-a");
+});
 describe("hydrateTaskEvidenceFromCheck", () => {
   beforeEach(() => {
     getMediaUrl.mockReset();
@@ -375,4 +427,204 @@ it("keeps the task-list evidence selection when check artifacts arrive in a diff
   );
   expect(task.evidence).toMatchObject({ kind: "photo", artifactId: "photo" });
   expect(task.mediaUrl).toBe("https://media/selected-photo");
+});
+
+describe("server media paths (signed cookies)", () => {
+  it("registers a task-free check's photo paths before asynchronous hydration completes", async () => {
+    const hydration = hydrateTaskEvidenceFromCheck([], {
+      check: { checkId: "strip-only" },
+      artifacts: [
+        { artifactId: "photo", mediaPath: "/checks/site/strip-only/photo" },
+      ],
+    });
+    expect((await cachedMediaUrls("strip-only", "photo")).downloadUrl).toBe(
+      "/checks/site/strip-only/photo",
+    );
+    await hydration;
+    expect(getMediaUrl).not.toHaveBeenCalled();
+  });
+
+  it("reuses retained paths after cooldown without rehydrating the Reports view", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-06T12:00:00Z"));
+    const checkId = "reports-recovery";
+    const path = `/checks/site/${checkId}/photo`;
+    const [task] = await hydrateTaskEvidenceFromCheck(
+      [{ checkId, taskId: "task", sourceArtifactIds: ["photo"] }],
+      {
+        check: { checkId },
+        artifacts: [
+          {
+            artifactId: "photo",
+            s3Key: path.slice(1),
+            contentType: "image/jpeg",
+            mediaPath: path,
+          },
+        ],
+      },
+    );
+    expect(task.evidence.mediaPath).toBe(path);
+    invalidateMediaUrls(checkId, "photo");
+    getMediaUrl.mockResolvedValue({
+      downloadUrl: "https://media/fallback",
+      expiresIn: 3600,
+    });
+    const fallback = await cachedMediaUrls(checkId, "photo");
+    expect(fallback.downloadUrl).toBe("https://media/fallback");
+    expect(fallback.expiresAt).toBe(Date.now() + 15 * 60 * 1000);
+    vi.advanceTimersByTime(15 * 60 * 1000 - 1);
+    expect((await cachedMediaUrls(checkId, "photo")).downloadUrl).toBe(
+      fallback.downloadUrl,
+    );
+    vi.advanceTimersByTime(1);
+    expect((await cachedMediaUrls(checkId, "photo")).downloadUrl).toBe(path);
+    expect(getMediaUrl).toHaveBeenCalledTimes(1);
+    // A still-invalid cookie starts another bounded fallback, not a retry loop.
+    invalidateMediaUrls(checkId, "photo");
+    expect((await cachedMediaUrls(checkId, "photo")).downloadUrl).toBe(
+      fallback.downloadUrl,
+    );
+    expect(getMediaUrl).toHaveBeenCalledTimes(2);
+  });
+
+  beforeEach(() => {
+    vi.mocked(getCheck).mockReset();
+    vi.mocked(getCheckEvidenceBatch).mockReset();
+  });
+  const pathTask = {
+    taskId: "t-path",
+    checkId: "chk-path",
+    sourceArtifactIds: ["a1"],
+    evidence: {
+      artifactId: "a1",
+      kind: "photo",
+      placeName: "North gate",
+      mediaPath: "/checks/site-1/chk-path/a1",
+      thumbnailPath: "/checks/site-1/chk-path/a1.thumb.webp",
+    },
+  };
+
+  it("hydrates a task from its evidence paths with no check read and no signing", async () => {
+    expect(needsTaskEvidenceHydration(pathTask)).toBe(true);
+    const [task] = await hydrateTaskEvidence([pathTask], { batch: true });
+    expect(getCheck).not.toHaveBeenCalled();
+    expect(getCheckEvidenceBatch).not.toHaveBeenCalled();
+    expect(getMediaUrl).not.toHaveBeenCalled();
+    expect(task).toMatchObject({
+      mediaUrl: "/checks/site-1/chk-path/a1",
+      thumbnailUrl: "/checks/site-1/chk-path/a1.thumb.webp",
+      mediaExpiresAt: Infinity,
+      mediaState: "ready",
+    });
+    expect(needsTaskEvidenceHydration(task)).toBe(false);
+    // A card mounting for the same artifact finds the paths in the cache.
+    expect(await cachedMediaUrls("chk-path", "a1")).toEqual({
+      downloadUrl: "/checks/site-1/chk-path/a1",
+      thumbnailUrl: "/checks/site-1/chk-path/a1.thumb.webp",
+      expiresAt: Infinity,
+    });
+    expect(getMediaUrl).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the presign route after a path fails and does not re-register during the cooldown", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-05T12:00:00Z"));
+    await hydrateTaskEvidence([pathTask], { batch: true });
+    // The image failed to load: the component invalidates, as for any URL.
+    invalidateMediaUrls("chk-path", "a1");
+    getMediaUrl.mockResolvedValueOnce({
+      downloadUrl: "https://signed/a1",
+      thumbnailUrl: "https://signed/a1.thumb",
+      expiresIn: 3600,
+    });
+    expect((await cachedMediaUrls("chk-path", "a1")).downloadUrl).toBe(
+      "https://signed/a1",
+    );
+    expect(getMediaUrl).toHaveBeenCalledTimes(1);
+    // The next list refresh carries the same paths; they are not re-adopted
+    // yet, and the photo is signed directly without a check read.
+    expect(needsTaskEvidenceHydration(pathTask)).toBe(false);
+    const [task] = await hydrateTaskEvidence([pathTask], { batch: true });
+    expect(task.mediaUrl).toBe("https://signed/a1");
+    expect(task.evidence.placeName).toBe("North gate");
+    expect(getCheck).not.toHaveBeenCalled();
+    expect(getMediaUrl).toHaveBeenCalledTimes(1);
+    // After the cookie renewal window the server path is trusted again.
+    vi.advanceTimersByTime(15 * 60 * 1000 + 1);
+    expect(needsTaskEvidenceHydration(pathTask)).toBe(true);
+    const [again] = await hydrateTaskEvidence([pathTask], { batch: true });
+    expect(again.mediaUrl).toBe("/checks/site-1/chk-path/a1");
+  });
+
+  it("adopts a thumbnail generated after the original path was cached", async () => {
+    const task = {
+      ...pathTask,
+      checkId: "late-thumbnail",
+      evidence: { ...pathTask.evidence, thumbnailPath: undefined },
+    };
+    await hydrateTaskEvidence([task]);
+    expect(
+      (await cachedMediaUrls(task.checkId, "a1")).thumbnailUrl,
+    ).toBeUndefined();
+
+    const updated = { ...task, evidence: { ...pathTask.evidence } };
+    expect(needsTaskEvidenceHydration(updated)).toBe(true);
+    await hydrateTaskEvidence([updated]);
+    expect((await cachedMediaUrls(task.checkId, "a1")).thumbnailUrl).toBe(
+      updated.evidence.thumbnailPath,
+    );
+    expect(needsTaskEvidenceHydration(updated)).toBe(false);
+    expect(getMediaUrl).not.toHaveBeenCalled();
+    expect(getCheck).not.toHaveBeenCalled();
+  });
+
+  it("registers paths carried by check artifacts so the photo strip signs nothing", async () => {
+    const detailWithPaths = {
+      checkId: "chk-detail",
+      artifacts: [
+        {
+          artifactId: "p9",
+          s3Key: "checks/site-1/chk-detail/p9",
+          contentType: "image/jpeg",
+          mediaPath: "/checks/site-1/chk-detail/p9",
+        },
+      ],
+      analyses: [],
+    };
+    const [task] = await hydrateTaskEvidenceFromCheck(
+      [{ taskId: "t9", checkId: "chk-detail", sourceArtifactIds: ["p9"] }],
+      detailWithPaths,
+    );
+    expect(task.mediaUrl).toBe("/checks/site-1/chk-detail/p9");
+    expect(task.thumbnailUrl).toBeUndefined();
+    expect(getMediaUrl).not.toHaveBeenCalled();
+    expect((await cachedMediaUrls("chk-detail", "p9")).downloadUrl).toBe(
+      "/checks/site-1/chk-detail/p9",
+    );
+  });
+
+  it("ignores paths that are not same-origin absolute paths", async () => {
+    vi.mocked(getCheck).mockResolvedValueOnce({
+      check: {},
+      artifacts: [
+        { artifactId: "a1", s3Key: "k/a1", contentType: "image/jpeg" },
+      ],
+      analyses: [],
+    });
+    const [task] = await hydrateTaskEvidence(
+      [
+        {
+          ...pathTask,
+          taskId: "t-bad",
+          checkId: "chk-bad",
+          evidence: { ...pathTask.evidence, mediaPath: "https://evil/x" },
+        },
+      ],
+      { batch: true },
+    );
+    // Falls through to the ordinary path: a check read, then signing.
+    expect(getCheckEvidenceBatch).not.toHaveBeenCalled();
+    expect(getCheck).toHaveBeenCalledWith("chk-bad");
+    expect(task.mediaUrl).toBe("https://media/default");
+  });
 });

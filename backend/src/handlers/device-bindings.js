@@ -1,4 +1,5 @@
 import { deviceLivenessProblem } from "../lib/device-liveness.js";
+import { withMediaCookies } from "../lib/media-cookie.js";
 import { bindingLifecycleValid } from "./devices.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -204,19 +205,24 @@ export const selectDeviceBinding = async (event) => {
     }
     throw error;
   }
-  return jsonResponse(200, {
-    physicalDeviceId: current.physicalDeviceId,
-    bindingId: binding.bindingId,
-    deviceId: binding.bindingId,
-    site: { siteId: binding.siteId, name: site.name },
-    accessLevel: binding.accessLevel,
-    token: access.token,
-    refreshToken: refresh.token,
-    expiresIn: access.expiresIn,
-    refreshExpiresIn: refresh.expiresIn,
-    tokenGeneration: generation,
-    absoluteExpiresAt: binding.absoluteExpiresAt,
-  });
+  // A site switch reloads onto Home at once; the new site's media cookie has
+  // to be in place before that first paint.
+  return withMediaCookies(
+    jsonResponse(200, {
+      physicalDeviceId: current.physicalDeviceId,
+      bindingId: binding.bindingId,
+      deviceId: binding.bindingId,
+      site: { siteId: binding.siteId, name: site.name },
+      accessLevel: binding.accessLevel,
+      token: access.token,
+      refreshToken: refresh.token,
+      expiresIn: access.expiresIn,
+      refreshExpiresIn: refresh.expiresIn,
+      tokenGeneration: generation,
+      absoluteExpiresAt: binding.absoluteExpiresAt,
+    }),
+    binding.siteId,
+  );
 };
 
 /**
