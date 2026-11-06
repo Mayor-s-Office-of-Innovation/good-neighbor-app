@@ -1,7 +1,22 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
+import { formatDateTime } from "../../../../frontend/src/i18n/dates.js";
+import { escapeHtml } from "../../dom.js";
 import { activityChart, buckets, chartUnit } from "./activity-chart.js";
+
+/** @param {string} html @param {string} attribute */
+const values = (html, attribute) =>
+  [...html.matchAll(new RegExp(`${attribute}="([^"]*)"`, "g"))].map(
+    (m) => m[1],
+  );
+/** @param {string} html */
+const barLabels = (html) =>
+  [...html.matchAll(/<span data-bar-label>([^<]*)<\/span>/g)].map((m) => m[1]);
+/** @param {string} day @param {Intl.DateTimeFormatOptions} options */
+const pacificDay = (day, options) =>
+  // 3 PM Pacific, inside the day in any season.
+  formatDateTime(`${day}T23:00:00Z`, options);
 
 /** @param {string} from @param {number} count @param {(i: number) => number | null} value */
 const run = (from, count, value) =>
@@ -65,7 +80,7 @@ test("a day calendar leaves days before the data hatched, with no count", () => 
     run("2026-10-10", 22, (i) => i % 4),
     "checks",
   );
-  assert.equal(html.match(/insights__cal-none/g)?.length, 9);
+  assert.equal(html.match(/data-cal="none"/g)?.length, 9);
   assert.ok(html.includes('aria-hidden="true"'));
 });
 
@@ -85,6 +100,83 @@ test("weekly bars name each month once", () => {
     run("2026-07-01", 62, () => 1),
     "issues",
   );
-  const labels = [...html.matchAll(/<span>([^<]*)<\/span>/g)].map((m) => m[1]);
-  assert.deepEqual(labels.filter(Boolean), ["Jul", "Aug"]);
+  assert.deepEqual(
+    barLabels(html).filter(Boolean),
+    ["2026-07-01", "2026-08-01"].map((day) =>
+      pacificDay(day, { month: "short" }),
+    ),
+  );
+});
+
+test("days after the data time in a running month are left blank, not marked no data", () => {
+  const span = {
+    startDay: "2026-11-01",
+    endDay: "2026-12-01",
+    incomplete: true,
+    observedTo: "2026-11-04T19:00:00.000Z",
+  };
+  const html = activityChart(
+    span,
+    run("2026-11-01", 4, () => 2),
+    "checks",
+  );
+  assert.equal(values(html, "data-cal").filter((v) => v === "none").length, 0);
+  assert.equal(
+    values(html, "data-cal").filter((v) => v === "future").length,
+    26,
+  );
+});
+
+test("weeks after the data time in a running quarter have no bar", () => {
+  const span = {
+    startDay: "2026-10-01",
+    endDay: "2027-01-01",
+    incomplete: true,
+    observedTo: "2026-11-04T19:00:00.000Z",
+  };
+  const html = activityChart(
+    span,
+    run("2026-10-01", 35, () => 1),
+    "issues",
+  );
+  // Oct 1–4 and Nov 2–4 are only part of their weeks.
+  assert.deepEqual(values(html, "data-bar"), [
+    "partial",
+    ...Array(4).fill("full"),
+    "partial",
+    ...Array(8).fill("future"),
+  ]);
+});
+
+test("a week cut short is drawn lighter and says why on hover", () => {
+  const span = { startDay: "2026-07-01", endDay: "2026-08-15" };
+  const html = activityChart(
+    span,
+    run("2026-07-01", 45, () => 1),
+    "checks",
+  );
+  assert.equal(values(html, "data-bar")[0], "partial");
+  assert.ok(
+    html.includes(`title="${escapeHtml(t("admin.insights.chart.partial"))}"`),
+  );
+});
+
+test("monthly bars across New Year give January its year", () => {
+  const span = { startDay: "2025-07-01", endDay: "2026-07-01" };
+  const labels = barLabels(
+    activityChart(
+      span,
+      run("2025-07-01", 365, () => 1),
+      "checks",
+    ),
+  );
+  assert.equal(labels.length, 12);
+  assert.equal(
+    labels[6],
+    pacificDay("2026-01-01", { month: "short", year: "numeric" }),
+  );
+  assert.deepEqual(
+    labels.filter((label) => /\d{4}/.test(label)),
+    [labels[6]],
+  );
 });

@@ -1,19 +1,27 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
 import { t as translate } from "../../../../frontend/src/i18n/i18n.js";
+import { formatDateTime } from "../../../../frontend/src/i18n/dates.js";
 import { escapeHtml } from "../../dom.js";
+// Stand-ins for Web Awesome inputs, so a date box holds its value.
+import "../../../test-support/admin-dom.js";
 import {
+  failedView,
   failureText,
   formatDay,
   formatInstant,
   focusSoon,
   freshnessView,
   helpTip,
+  monthOfToday,
   perDayText,
   periodForKind,
+  periodInterval,
   periodView,
   periodLabel,
+  redrawKeepingFocus,
   severityWord,
+  showLoading,
 } from "./insights.templates.js";
 
 // Markup escapes apostrophes, so copy is compared as the markup holds it.
@@ -27,11 +35,11 @@ const october = {
   incomplete: false,
 };
 
-/** @param {string[]} reasons @param {Record<string, unknown>} [extra] */
-const meta = (reasons, extra = {}) => ({
+/** @param {string[]} reasons @param {Record<string, unknown>} [extra] @param {string} [coverageStart] */
+const meta = (reasons, extra = {}, coverageStart = "2026-01-01") => ({
   asOf: "2026-11-04T18:00:00.000Z",
   interval: october,
-  dataQuality: { reasons, coverageStart: "2026-01-01" },
+  dataQuality: { reasons, coverageStart },
   ...extra,
 });
 
@@ -48,7 +56,15 @@ test("old data gets a notice but still shows its time", () => {
 });
 
 test("a day key reads as that Pacific day, not the day before", () => {
-  assert.equal(formatDay("2026-01-01"), "Jan 1, 2026");
+  assert.equal(
+    formatDay("2026-01-01"),
+    // 3 PM Pacific on Jan 1.
+    formatDateTime("2026-01-01T23:00:00Z", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }),
+  );
 });
 
 test("a pending page says its data time isn't known yet", () => {
@@ -61,14 +77,7 @@ test("records left out for having no time are named once", () => {
 });
 
 test("a period starting before the data says it's partial", () => {
-  const html = freshnessView(
-    meta(["before_coverage"], {
-      dataQuality: {
-        reasons: ["before_coverage"],
-        coverageStart: "2026-10-15",
-      },
-    }),
-  );
+  const html = freshnessView(meta(["before_coverage"], {}, "2026-10-15"));
   assert.ok(
     html.includes(
       t("admin.insights.quality.beforeCoverage", {
@@ -134,7 +143,7 @@ test("a quarter reads as the field app's reports name it", () => {
   );
 });
 
-test("the period types are Month, Quarter, Year, Financial year and Custom, in the mock's order", () => {
+test("the period types are Month, Quarter, Year, Financial year and Custom, in that order", () => {
   const html = periodView({
     interval: october,
     kind: "quarter",
@@ -236,32 +245,6 @@ test("a timed-out read says it took too long, not a plain retry", () => {
   );
 });
 
-test("a late focus doesn't pull the user back once they've moved on", async () => {
-  /** @type {() => void} */
-  let ready = () => {};
-  const focused = [];
-  const input = {
-    isConnected: true,
-    updateComplete: new Promise((resolve) => {
-      ready = () => resolve(undefined);
-    }),
-    focus: () => focused.push("input"),
-  };
-  const before = globalThis.document;
-  const page = { activeElement: "body" };
-  globalThis.document = /** @type {any} */ (page);
-  try {
-    focusSoon(/** @type {any} */ (input));
-    page.activeElement = "search";
-    ready();
-    await input.updateComplete;
-    await Promise.resolve();
-  } finally {
-    globalThis.document = before;
-  }
-  assert.deepEqual(focused, []);
-});
-
 /**
  * Runs focusSoon on a fake Web Awesome input while `move` changes the page.
  * @param {{ connected?: boolean, move?: (page: { activeElement: string }) => void }} how
@@ -293,6 +276,17 @@ async function focusLater({ connected = true, move = () => {} }) {
   return focused;
 }
 
+test("a late focus doesn't pull the user back once they've moved on", async () => {
+  assert.deepEqual(
+    await focusLater({
+      move: (page) => {
+        page.activeElement = "search";
+      },
+    }),
+    [],
+  );
+});
+
 test("a late focus lands once the input is ready, if the user hasn't moved", async () => {
   assert.deepEqual(await focusLater({}), ["input"]);
 });
@@ -314,19 +308,28 @@ test("data problems share one labelled line, and a running period isn't one", ()
   assert.equal(html.match(/data-insights-quality/g)?.length, 1);
   assert.ok(html.includes(t("admin.insights.quality.label")));
   assert.ok(html.includes(" · "));
-  assert.ok(!html.includes("Incomplete"));
+  assert.ok(
+    !html.includes(
+      t("admin.insights.period.incomplete", {
+        time: formatInstant("2026-10-20T19:00:00.000Z"),
+      }),
+    ),
+  );
 });
+
+const runningOctober = {
+  ...october,
+  incomplete: true,
+  observedTo: "2026-10-20T19:00:00.000Z",
+};
 
 test("a running period is marked on its control; Next stays off", () => {
   const html = periodView({
-    interval: {
-      ...october,
-      incomplete: true,
-      observedTo: "2026-10-20T19:00:00.000Z",
-    },
+    interval: runningOctober,
     kind: "month",
     draft: { from: "", to: "" },
     error: "",
+    dataTime: "2026-10-20T19:00:00.000Z",
   });
   assert.ok(
     html.includes(
@@ -348,4 +351,93 @@ test("a ? names what it explains and holds its text in a popover", () => {
   );
   assert.ok(html.includes(`id="tip-x" popover`));
   assert.ok(html.includes(escapeHtml("Today's details.")));
+});
+
+test("a running period with no reply yet names no data time, since none has been read", () => {
+  const html = periodView({
+    interval: runningOctober,
+    kind: "month",
+    draft: { from: "", to: "" },
+    error: "",
+  });
+  assert.ok(!html.includes("data-period-incomplete"));
+});
+
+/** @param {Partial<import("./insights.templates.js").PeriodHost>} host */
+const host = (host) => ({
+  period: null,
+  periodKind: "month",
+  periodError: "",
+  reply: null,
+  periodPicked: () => {},
+  ...host,
+});
+
+test("after a first load fails, the period controls step from the fallback month", () => {
+  assert.equal(periodInterval(host({})), null);
+  assert.deepEqual(
+    periodInterval(host({ fallback: { kind: "month", month: "2026-10" } }))
+      ?.startDay,
+    "2026-10-01",
+  );
+  // The server's own period wins once a reply names one.
+  assert.equal(
+    periodInterval(
+      host({
+        fallback: { kind: "month", month: "2026-10" },
+        reply: { meta: { interval: { ...october, startDay: "2026-09-01" } } },
+      }),
+    )?.startDay,
+    "2026-09-01",
+  );
+});
+
+test("the fallback month is the one holding today in Pacific time", () => {
+  // 02:00 UTC on Nov 1 is still Oct 31 in San Francisco.
+  assert.deepEqual(monthOfToday(new Date("2026-11-01T02:00:00Z")), {
+    kind: "month",
+    month: "2026-10",
+  });
+});
+
+test("Retry after a failure shows the spinner, not the old error dimmed", () => {
+  const region = document.createElement("div");
+  region.innerHTML = failedView("Couldn't load.");
+  showLoading(region);
+  assert.ok(region.querySelector('[role="status"]'));
+  assert.ok(!region.querySelector("[data-insights-failed]"));
+  assert.equal(region.hasAttribute("inert"), false);
+});
+
+test("old results stay, out of reach, while new ones load", () => {
+  const region = document.createElement("div");
+  region.innerHTML = "<table data-old></table>";
+  showLoading(region);
+  assert.ok(region.querySelector("[data-old]"));
+  assert.equal(region.hasAttribute("inert"), true);
+});
+
+test("a redraw keeps typed dates but doesn't blank the dates it fills in", () => {
+  const region = document.createElement("div");
+  const markup = () =>
+    periodView({
+      interval: october,
+      kind: "custom",
+      draft: { from: "2026-10-01", to: "2026-10-31" },
+      error: "",
+    });
+  region.innerHTML = markup();
+  const from = /** @type {any} */ (
+    region.querySelector("#insights-period-from")
+  );
+  const to = /** @type {any} */ (region.querySelector("#insights-period-to"));
+  from.value = "2026-10-05";
+  to.value = "";
+  redrawKeepingFocus(region, markup);
+  assert.deepEqual(
+    ["#insights-period-from", "#insights-period-to"].map(
+      (id) => /** @type {any} */ (region.querySelector(id)).value,
+    ),
+    ["2026-10-05", "2026-10-31"],
+  );
 });

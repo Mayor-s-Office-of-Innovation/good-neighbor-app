@@ -4,7 +4,11 @@ import {
   formatDateTime,
   pacificDateKey,
 } from "../../../../frontend/src/i18n/dates.js";
-import { addDays } from "../../../../frontend/src/domain/reports-periods.js";
+import {
+  addDays,
+  dayInstant,
+  dayKeysBetween,
+} from "../../../../frontend/src/domain/reports-periods.js";
 import { escapeHtml } from "../../dom.js";
 import {
   customPeriodError,
@@ -20,12 +24,9 @@ import {
 /** @typedef {{ kind: string, startDay: string, endDay: string, incomplete: boolean, observedTo?: string }} Interval */
 /** @typedef {{ asOf: string | null, interval: Interval | null, dataQuality: { reasons: string[], coverageStart: string | null } }} ReplyMeta */
 
-/** Noon UTC is the same calendar day in Pacific time all year. @param {string} day */
-const noon = (day) => `${day}T12:00:00Z`;
-
 /** @param {string} day e.g. "Oct 2, 2026" */
 export function formatDay(day) {
-  return formatDateTime(noon(day), {
+  return formatDateTime(dayInstant(day), {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -52,7 +53,10 @@ export const codeKey = (prefix, code) =>
 export function periodLabel(interval) {
   const start = interval.startDay;
   if (interval.kind === "month")
-    return formatDateTime(noon(start), { month: "long", year: "numeric" });
+    return formatDateTime(dayInstant(start), {
+      month: "long",
+      year: "numeric",
+    });
   if (interval.kind === "quarter") {
     const { year, quarter } = /** @type {{ year: number, quarter: number }} */ (
       quarterOf(start)
@@ -99,26 +103,16 @@ export function drawInterval(root, interval) {
   if (line) line.textContent = interval ? footerText(interval) : "";
 }
 
-/** One decimal, as the mock shows it; the server rounds to one before it flags. @param {number} perDay */
+/** The server rounds to one decimal before it flags, so the page shows the same. @param {number} perDay */
 export const oneDecimal = (perDay) => perDay.toFixed(1);
 
 /** @param {number} perDay */
 export const perDayText = (perDay) =>
   t("admin.insights.perDay", { value: oneDecimal(perDay) });
 
-/**
- * Issues per 30 days, so periods of any length compare.
- * @param {number} count
- * @param {{ startDay: string, endDay: string }} interval end exclusive
- */
-export function per30Days(count, interval) {
-  const days = periodDays(interval);
-  return days > 0 ? (count / days) * 30 : 0;
-}
-
 /** @param {{ startDay: string, endDay: string }} interval end exclusive */
 export const periodDays = (interval) =>
-  (Date.parse(interval.endDay) - Date.parse(interval.startDay)) / 86_400_000;
+  dayKeysBetween(interval.startDay, interval.endDay).length;
 
 /** @param {number} value */
 export const per30Text = (value) =>
@@ -147,7 +141,7 @@ export function contactWord(contact) {
  */
 export function helpTip(id, topic, text) {
   // Anchor positioning keeps the bubble by its "?"; elsewhere it centres.
-  return `<button type="button" class="insights__tip" popovertarget="${id}" aria-label="${escapeHtml(t("admin.insights.helpFor", { topic }))}" style="anchor-name:--${id}">?</button><span id="${id}" popover class="insights__tip-body" data-help="${id}" style="position-anchor:--${id}">${escapeHtml(text)}</span>`;
+  return `<button type="button" class="btn-plain insights__tip" popovertarget="${id}" aria-label="${escapeHtml(t("admin.insights.helpFor", { topic }))}" style="anchor-name:--${id}">?</button><span id="${id}" popover class="insights__tip-body" data-help="${id}" style="position-anchor:--${id}">${escapeHtml(text)}</span>`;
 }
 
 /** Says how old the data is and why counts may be short, so no one reads a gap as zero. @param {ReplyMeta | null} meta */
@@ -199,12 +193,13 @@ export const periodName = (interval) =>
 /**
  * Custom waits for "Show period", so half-typed dates don't load. With no
  * interval yet, only Custom works: the server hasn't said which month it chose.
- * @param {{ interval: Interval | null, kind: string, draft: { from: string, to: string }, error: string }} view
+ * @param {{ interval: Interval | null, kind: string, draft: { from: string, to: string }, error: string, dataTime?: string | null }} view
+ *   dataTime: the reply's data time; the browser clock would claim data no snapshot holds
  */
-export function periodView({ interval, kind, draft, error }) {
+export function periodView({ interval, kind, draft, error, dataTime = null }) {
   const kinds = `<div class="insights__ptabs" role="group" aria-label="${escapeHtml(t("admin.insights.period.kinds"))}">${KINDS.map(
     (k) =>
-      `<button type="button" data-period-kind="${k}" aria-pressed="${k === kind}" ${!interval && k !== "custom" ? "disabled" : ""}>${escapeHtml(t(`admin.insights.period.${k}`))}</button>`,
+      `<button type="button" class="btn-plain" data-period-kind="${k}" aria-pressed="${k === kind}" ${!interval && k !== "custom" ? "disabled" : ""}>${escapeHtml(t(`admin.insights.period.${k}`))}</button>`,
   ).join("")}</div>`;
   const body =
     kind === "custom"
@@ -218,13 +213,14 @@ export function periodView({ interval, kind, draft, error }) {
           <span class="insights__period-label" data-period-label>${escapeHtml(periodName(interval))}</span>
           <button type="button" class="btn-icon" data-period-step="1" aria-label="${escapeHtml(t("admin.insights.period.next"))}" ${!interval || interval.incomplete ? "disabled" : ""}><wa-icon name="chevron-right" aria-hidden="true"></wa-icon></button>
         </div>`;
-  const pill = interval?.incomplete
-    ? `<span class="insights__pill" data-period-incomplete>${escapeHtml(
-        t("admin.insights.period.incomplete", {
-          time: formatInstant(interval.observedTo ?? null),
-        }),
-      )}</span>`
-    : "";
+  const pill =
+    interval?.incomplete && dataTime
+      ? `<span class="insights__pill" data-period-incomplete>${escapeHtml(
+          t("admin.insights.period.incomplete", {
+            time: formatInstant(dataTime),
+          }),
+        )}</span>`
+      : "";
   return `<div class="insights__period" role="group" aria-label="${escapeHtml(t("admin.insights.period.label"))}">
     ${kinds}${body}${pill}
   </div>${error ? `<p class="error" role="alert" data-period-error>${escapeHtml(t(error))}</p>` : ""}`;
@@ -297,10 +293,11 @@ export function redrawKeepingFocus(region, markup, keepTyped = true) {
     (id) => /** @type {any} */ (region.querySelector(id))?.value,
   );
   region.innerHTML = markup();
+  // An empty box holds nothing typed, so the dates the redraw filled in stay.
   if (keepTyped)
     DRAFT_IDS.forEach((id, i) => {
       const input = /** @type {any} */ (region.querySelector(id));
-      if (input && typed[i] !== undefined) input.value = typed[i];
+      if (input && typed[i]) input.value = typed[i];
     });
   if (!key || value === null) return;
   const same = /** @type {HTMLButtonElement | null} */ (
@@ -313,7 +310,16 @@ export function redrawKeepingFocus(region, markup, keepTyped = true) {
   focusSoon(target);
 }
 
-/** @typedef {{ period: Period | null, periodKind: string, periodError: string, reply: Record<string, any> | null, periodPicked: (period: Period) => void }} PeriodHost */
+/**
+ * fallback: the period the controls show when the first load failed before the server named one.
+ * @typedef {{ period: Period | null, periodKind: string, periodError: string, reply: Record<string, any> | null, fallback?: Period | null, periodPicked: (period: Period) => void }} PeriodHost
+ */
+
+/** The month holding today, in Pacific time. @param {Date} [now] @returns {Period} */
+export const monthOfToday = (now = new Date()) => ({
+  kind: "month",
+  month: pacificDateKey(now).slice(0, 7),
+});
 
 /**
  * The reply's interval if it answers the period asked for, else the
@@ -323,8 +329,9 @@ export function redrawKeepingFocus(region, markup, keepTyped = true) {
  */
 export function periodInterval(host) {
   const replied = host.reply?.meta.interval ?? null;
-  if (!host.period) return replied;
-  const asked = intervalOf(host.period);
+  const period = host.period ?? (replied ? null : host.fallback);
+  if (!period) return replied;
+  const asked = intervalOf(period);
   return replied &&
     replied.kind === asked.kind &&
     replied.startDay === asked.startDay &&
@@ -347,6 +354,7 @@ export function drawPeriodControl(host, region) {
             periodOf({ ...interval, kind: "custom" })
           )
         : { from: "", to: "" };
+  const fromReply = !!interval && interval === host.reply?.meta.interval;
   redrawKeepingFocus(
     region,
     () =>
@@ -355,6 +363,7 @@ export function drawPeriodControl(host, region) {
         kind: host.periodKind,
         draft,
         error: host.periodError,
+        dataTime: fromReply ? (interval.observedTo ?? null) : null,
       }),
     periodUnchanged,
   );
@@ -412,20 +421,24 @@ export function severityKnown(severity) {
   );
 }
 
-/** The server's severityBand, so the table and the CSV agree. @param {number | null} severity 1–5 */
-export function severityWord(severity) {
-  if (severity === 1 || severity === 2)
-    return t("admin.insights.severity.minor");
-  if (severity === 3) return t("admin.insights.severity.moderate");
-  if (severity === 4 || severity === 5)
-    return t("admin.insights.severity.severe");
-  return t("admin.insights.severity.unknown");
-}
+/** The server's bands, so the table and the CSV agree. @param {number | null} severity 1–5 */
+export const severityBand = (severity) =>
+  severityKnown(severity)
+    ? Number(severity) >= 4
+      ? "severe"
+      : Number(severity) === 3
+        ? "moderate"
+        : "minor"
+    : "unknown";
+
+/** @param {number | null} severity */
+export const severityWord = (severity) =>
+  t(`admin.insights.severity.${severityBand(severity)}`);
 
 /** @param {string} message already translated @param {string} [retryId] */
 export function failedView(message, retryId = "insights-retry") {
   // The dashboard makes each .error an alert; a second one would repeat it.
-  return `<div class="insights__failed"><p class="error">${escapeHtml(message)}</p><button type="button" class="btn-secondary" id="${retryId}">${escapeHtml(t("common.retry"))}</button></div>`;
+  return `<div class="insights__failed" data-insights-failed><p class="error">${escapeHtml(message)}</p><button type="button" class="btn-secondary" id="${retryId}">${escapeHtml(t("common.retry"))}</button></div>`;
 }
 
 /** @param {unknown} err @param {string} lead translated first sentence */
@@ -439,14 +452,17 @@ export function failureText(err, lead) {
   return `${lead} ${detail}`;
 }
 
-/** @param {string} [label] */
 /**
  * Keeps the old results, dimmed, while new ones load, so the page keeps its height and scroll.
  * @param {Element} region
  */
 export function showLoading(region) {
   region.setAttribute("aria-busy", "true");
-  if (region.childElementCount) {
+  // An old error kept on screen would look like the new load failed too.
+  if (
+    region.childElementCount &&
+    !region.querySelector("[data-insights-failed]")
+  ) {
     region.classList.add("insights__stale");
     // Old rows can't be picked or opened while they're out of date.
     region.toggleAttribute("inert", true);
@@ -461,6 +477,7 @@ export function showLoaded(region, markup) {
   region.innerHTML = markup;
 }
 
+/** @param {string} [label] */
 export function loadingView(label = t("common.loading")) {
   return `<p role="status" class="insights__loading"><wa-spinner aria-hidden="true"></wa-spinner> ${escapeHtml(label)}</p>`;
 }
