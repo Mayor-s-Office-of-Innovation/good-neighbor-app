@@ -459,17 +459,18 @@ original device-login fixtures used by the existing local/E2E harness.
 ### Insights test data (a synthetic year)
 
 Insights pages need a year of records to test against. One command makes a
-seeded year of synthetic staff-app records, loads them into DynamoDB Local,
-exports the table in the PITR export's file format, runs the real analytics
+seeded year of synthetic staff-app records, writes them in the PITR export's
+file format (`--via-dynamodb` loads and scans DynamoDB Local instead, which is
+slow above a few dozen Sites), runs the real analytics
 converter and the Insights projection, and checks the projection's totals
 against what the generator meant to create:
 
 ```sh
 npm run insights:data -w backend
-# options: -- --sites 24 --seed 410 --out <empty folder> --keep
+# options: -- --sites 24 --seed 410 --out <empty folder> --keep --via-dynamodb
 ```
 
-It starts its own in-memory DynamoDB Local and a throwaway MinIO on ports 8461
+It starts its own disk-backed DynamoDB Local and a throwaway MinIO on ports 8461
 and 9461 (set `INSIGHTS_DDB_PORT` / `INSIGHTS_S3_PORT` to move them), so the dev
 stack's data is untouched. It needs Java 17+ and the binaries that
 `npm run local:services -w backend` installs. Extracts land in

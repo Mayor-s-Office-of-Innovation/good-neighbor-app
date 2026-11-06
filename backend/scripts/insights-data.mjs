@@ -4,12 +4,18 @@
 // the Insights projection, and check its totals against the generator's
 // answers.
 //
-//   npm run insights:data -w backend -- [--sites 500] [--seed 410] [--keep]
+//   npm run insights:data -w backend -- [--sites 24] [--seed 410] [--keep] [--via-dynamodb]
 //
-// Starts its own in-memory DynamoDB Local and a throwaway MinIO on spare
-// ports, using the binaries `npm run local:services` already put in
-// backend/.local, so it never touches the dev stack's data. Needs Java 17+.
-// Extracts land in backend/.local/insights-data/.
+// By default the export files are written straight from the generated items,
+// since loading 500 Sites into DynamoDB Local takes hours and GBs of memory.
+// --via-dynamodb loads the table and scans it, to test the whole pipeline.
+// At 500 Sites Node's default 4 GB heap runs out during conversion; raise it,
+// for example NODE_OPTIONS=--max-old-space-size=24576 on a 32 GB machine.
+//
+// Starts its own disk-backed DynamoDB Local, heap capped, and a throwaway
+// MinIO on spare ports, using the binaries `npm run local:services` already
+// put in backend/.local, so it never touches the dev stack's data. Needs
+// Java 17+. Extracts land in backend/.local/insights-data/.
 
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -18,6 +24,7 @@ import { existsSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
+  open,
   readdir,
   readFile,
   rm,
@@ -45,14 +52,16 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { DuckDBInstance } from "@duckdb/node-api";
+import { marshall } from "@aws-sdk/util-dynamodb";
 import { TABLE_SCHEMA } from "./lib/ensure-infra.mjs";
 
 const { values: args } = parseArgs({
   options: {
-    sites: { type: "string", default: "500" },
+    sites: { type: "string", default: "24" },
     seed: { type: "string", default: "410" },
     out: { type: "string" },
     keep: { type: "boolean", default: false },
+    "via-dynamodb": { type: "boolean", default: false },
   },
 });
 
@@ -344,6 +353,58 @@ async function exportTable(exportId) {
 }
 
 /**
+ * Write the generated items as a full PITR export without DynamoDB, in parts
+ * small enough to stay under V8's string limit.
+ * @param {string} exportId
+ * @param {Record<string, any>[]} items
+ * @returns {Promise<{ summaryKey: string, count: number }>}
+ */
+async function exportItems(exportId, items) {
+  const base = `raw/AWSDynamoDB/${exportId}`;
+  const perPart = 50_000;
+  const files = [];
+  for (let start = 0; start < items.length; start += perPart) {
+    const lines = items.slice(start, start + perPart).map((item) =>
+      JSON.stringify({
+        Item: marshall(item, {
+          removeUndefinedValues: true,
+          convertClassInstanceToMap: true,
+        }),
+      }),
+    );
+    const key = `${base}/data/part-${files.length}.json.gz`;
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: key,
+        Body: gzipSync(lines.join("\n")),
+      }),
+    );
+    files.push({ dataFileS3Key: key, itemCount: lines.length });
+  }
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: `${base}/manifest-files.json`,
+      Body: files.map((f) => JSON.stringify(f)).join("\n"),
+    }),
+  );
+  const summaryKey = `${base}/manifest-summary.json`;
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: summaryKey,
+      Body: JSON.stringify({
+        exportType: "FULL_EXPORT",
+        itemCount: items.length,
+        manifestFilesS3Key: `${base}/manifest-files.json`,
+      }),
+    }),
+  );
+  return { summaryKey, count: items.length };
+}
+
+/**
  * @param {string} prefix
  * @param {string} dir
  */
@@ -387,12 +448,18 @@ try {
   console.log(
     `[insights-data] ${generated.items.length} items, ${Object.keys(generated.answers.profiles).length} Sites, ${generated.startDay} to ${generated.evaluatedAt}`,
   );
-  await step("loaded into DynamoDB Local", () => load(generated.items));
-
   const exportId = `synthetic-${args.seed}`;
-  const { summaryKey, count } = await step("exported the table to MinIO", () =>
-    exportTable(exportId),
-  );
+  let exported;
+  if (args["via-dynamodb"]) {
+    await step("loaded into DynamoDB Local", () => load(generated.items));
+    exported = await step("exported the table to MinIO", () =>
+      exportTable(exportId),
+    );
+  } else
+    exported = await step("wrote the export to MinIO", () =>
+      exportItems(exportId, generated.items),
+    );
+  const { summaryKey, count } = exported;
   // A lost or overwritten item may not move any total, so count them too.
   if (count !== generated.items.length)
     throw new Error(
@@ -467,10 +534,14 @@ try {
     JSON.stringify(generated.answers, null, 2),
   );
   // The local API loads these, so record panels show photos and notes.
-  await writeFile(
-    join(outDir, "records.json"),
-    JSON.stringify(recordRows(generated.items)),
-  );
+  // One row per line: the whole file as one string passes V8's limit at 500 Sites.
+  const records = await open(join(outDir, "records.jsonl"), "w");
+  try {
+    for (const row of recordRows(generated.items))
+      await records.write(`${JSON.stringify(row)}\n`);
+  } finally {
+    await records.close();
+  }
   await writeFile(
     join(outDir, "check.json"),
     JSON.stringify({ ...result, manifest: projection.manifest }, null, 2),
