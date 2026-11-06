@@ -1,9 +1,8 @@
-// Overview's Generate report and Raw data's Export CSV share one result bar
-// and one flow: the button shows progress, then a small dialog gives the file.
+// One result bar and job flow for every Insights page that makes a file, so
+// each shows progress the same way, then a small dialog gives the file.
 import { hasKey, t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
 import { codeKey } from "./insights.templates.js";
-import { linkLeft } from "./report-job.js";
 
 /** @typedef {import("./report-job.js").ReportState} ReportState */
 /** @typedef {ReturnType<typeof import("./report-job.js").createReportJobs>} ReportJobs */
@@ -39,7 +38,7 @@ export function resultBarView({ start, end }) {
  * @param {string} [kind] a .btn-* class
  */
 export function jobButtonView(id, label, kind = "btn-primary") {
-  return `<span class="insights__why-wrap"><button type="button" class="${kind}" id="${id}" aria-disabled="true" aria-describedby="${id}-why">${escapeHtml(label)}</button><span role="tooltip" class="insights__why" id="${id}-why"></span></span>`;
+  return `<span class="insights__why-wrap"><button type="button" class="${kind}" id="${id}" aria-disabled="true" aria-describedby="${id}-why">${escapeHtml(label)}</button><span role="tooltip" class="insights__why" id="${id}-why"></span><span role="status" class="visually-hidden" id="${id}-status" data-job-status></span></span>`;
 }
 
 /**
@@ -86,10 +85,13 @@ export class JobAction {
     this.jobs = jobs;
     this.words = words;
     this.dialogMarkup = "";
+    // Capture runs before the page's own click handlers on the same host.
+    host.addEventListener("click", this.blocked, true);
     host.addEventListener("click", this.clicked);
   }
 
   destroy() {
+    this.host.removeEventListener("click", this.blocked, true);
     this.host.removeEventListener("click", this.clicked);
     this.dialog()?.remove();
   }
@@ -105,19 +107,35 @@ export class JobAction {
     return this.host.querySelector(`#${this.id}-done`);
   }
 
-  /** Pressing an aria-disabled button still fires click, so pages ask first. */
   off() {
     return this.button()?.getAttribute("aria-disabled") === "true";
   }
+
+  /**
+   * An aria-disabled button still fires click, so the click stops here.
+   * @param {MouseEvent} event
+   */
+  blocked = (event) => {
+    const button = this.button();
+    if (!button || !this.off()) return;
+    if (!button.contains(/** @type {Node} */ (event.target))) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
 
   /** @param {{ label: string, off: boolean, why: string }} view why the button is off, or "" */
   draw({ label, off, why }) {
     const job = this.jobs.current;
     const busy = busyOf(job);
+    // Polling goes on, so the spinner stays; the words say reads are failing.
+    const stuck = busy && !!job?.error;
+    const busyWords = t(
+      stuck ? "admin.insights.job.cantCheck" : this.words.busy,
+    );
     const button = this.button();
     if (button) {
       const markup = busy
-        ? `<wa-spinner aria-hidden="true"></wa-spinner> ${escapeHtml(t(this.words.busy))}`
+        ? `<wa-spinner aria-hidden="true"></wa-spinner> ${escapeHtml(busyWords)}`
         : escapeHtml(label);
       // Same words, same nodes, so a status poll doesn't restart the spinner.
       if (button.dataset.markup !== markup) {
@@ -128,13 +146,20 @@ export class JobAction {
     }
     const tip = this.host.querySelector(`#${this.id}-why`);
     if (tip) tip.textContent = busy ? "" : why;
+    const status = this.host.querySelector(`#${this.id}-status`);
+    const said = stuck ? busyWords : "";
+    if (status && status.textContent !== said) status.textContent = said;
     this.drawDialog(job);
   }
 
   /** @param {ReportState | null} job */
   drawDialog(job) {
     let dialog = this.dialog();
-    if (!job || busyOf(job)) return;
+    if (!job || busyOf(job)) {
+      // A dialog for an earlier run would retry or dismiss the new one.
+      if (dialog) this.dropDialog(dialog);
+      return;
+    }
     const markup = jobDoneView(this.id, job, this.words);
     if (dialog && markup === this.dialogMarkup) return;
     this.dialogMarkup = markup;
@@ -159,6 +184,15 @@ export class JobAction {
     dialog.showModal();
   }
 
+  /** @param {HTMLDialogElement} dialog */
+  dropDialog(dialog) {
+    const had = dialog.contains(document.activeElement);
+    dialog.removeEventListener("close", this.closed);
+    dialog.remove();
+    this.dialogMarkup = "";
+    if (had) this.button()?.focus();
+  }
+
   /** @param {Event} event */
   closed = (event) => {
     const dialog = /** @type {HTMLDialogElement} */ (event.target);
@@ -176,21 +210,16 @@ export class JobAction {
       `#${this.id}-download`,
     );
     if (!link) return;
-    if (this.linkFresh()) {
+    if (this.jobs.linkFresh()) {
       this.dialog()?.close("download");
       return;
     }
     // A signed link lasts minutes; an old one would fail, so get a new one first.
     event.preventDefault();
     await this.jobs.refresh();
-    if (this.linkFresh())
+    if (this.jobs.linkFresh())
       /** @type {HTMLElement | null} */ (
         this.host.querySelector(`#${this.id}-download`)
       )?.click();
   };
-
-  linkFresh() {
-    const job = this.jobs.current;
-    return !!job?.job?.downloadUrl && linkLeft(job, Date.now()) > 0;
-  }
 }

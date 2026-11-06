@@ -1,6 +1,11 @@
-import { test } from "vitest";
+import { test, vi } from "vitest";
 import assert from "node:assert/strict";
-import { LINK_MS, createReportJobs, linkLeft } from "./report-job.js";
+import {
+  LINK_MS,
+  MAX_FOLLOW_MS,
+  createReportJobs,
+  linkLeft,
+} from "./report-job.js";
 
 /** @param {string} state @param {Record<string, unknown>} [extra] */
 const job = (state, extra = {}) => ({
@@ -200,6 +205,34 @@ async function refreshFailing(code) {
   return jobs.current;
 }
 
+test("a fresh read with no link says so, so Download isn't left doing nothing", async () => {
+  const { api } = fakeApi(["succeeded"]);
+  const jobs = createReportJobs({ api, wait: noWait });
+  await jobs.start(["s1"], {});
+  api.getReportJob = async () => ({
+    job: job("succeeded", { downloadUrl: null }),
+  });
+  await jobs.refresh();
+  assert.deepEqual(
+    [jobs.current?.phase, jobs.current?.error],
+    ["succeeded", "link_missing"],
+  );
+});
+
+test("a link lasts as long as the server says, less a minute", async () => {
+  const { api } = fakeApi([]);
+  api.getReportJob = async () => ({
+    job: job("succeeded", { downloadSeconds: 120 }),
+  });
+  let clock = 5_000;
+  const jobs = createReportJobs({ api, wait: noWait, now: () => clock });
+  await jobs.start(["s1"], {});
+  assert.equal(linkLeft(jobs.current, clock), 60_000);
+  assert.equal(jobs.linkFresh(), true);
+  clock += 60_000;
+  assert.equal(jobs.linkFresh(), false);
+});
+
 test("a fresh link that can't be fetched says so and can be tried again", async () => {
   const state = await refreshFailing("network");
   assert.deepEqual([state?.phase, state?.error], ["succeeded", "network"]);
@@ -254,14 +287,17 @@ test("a fresh link from one try isn't undone by an older try failing", async () 
   );
 });
 
-test("Try again sends the same ask as the job that failed, with a new key", async () => {
+test("Try again sends the same ask and key, so a job made before a lost reply isn't made twice", async () => {
   let fail = true;
   const { api, calls } = fakeApi(["succeeded"]);
+  /** @type {string[]} */
+  const keys = [];
   const jobs = createReportJobs({
     api: {
       ...api,
       async createInsightsReport(body, key) {
-        if (fail) throw new Error("jobs_unavailable");
+        keys.push(key);
+        if (fail) throw new Error("request_timeout");
         return api.createInsightsReport(body, key);
       },
     },
@@ -277,6 +313,154 @@ test("Try again sends the same ask as the job that failed, with a new key", asyn
     month: "2026-10",
   });
   assert.equal(jobs.current?.count, 1);
+  assert.equal(keys.length, 2);
+  assert.equal(keys[1], keys[0]);
+});
+
+test("Try again on a cancelled job asks with a new key, since the old one answers cancelled", async () => {
+  const { api, calls } = fakeApi(["cancelled", "succeeded"]);
+  const jobs = createReportJobs({ api, wait: noWait });
+  await jobs.start(["s1"], {});
+  assert.equal(jobs.current?.phase, "cancelled");
+  await jobs.retry();
+  const keys = calls.filter((c) => c.name === "create").map((c) => c.args[1]);
+  assert.equal(new Set(keys).size, 2);
+});
+
+test("a key is made without randomUUID, which plain-http pages lack", async () => {
+  const { api, calls } = fakeApi(["succeeded"]);
+  vi.stubGlobal("crypto", {
+    getRandomValues: (/** @type {Uint8Array} */ bytes) => bytes.fill(171),
+  });
+  const jobs = createReportJobs({ api, wait: noWait });
+  await jobs.start(["s1"], {});
+  assert.equal(jobs.current?.phase, "succeeded");
+  assert.match(String(calls[0].args[1]), /^[A-Za-z0-9_-]{8,128}$/);
+});
+
+test("a status read that times out keeps its code, not its sentence", async () => {
+  const { api } = fakeApi(["succeeded"]);
+  const read = api.getReportJob;
+  let reads = 0;
+  api.getReportJob = async (id) => {
+    if (++reads <= 3)
+      throw Object.assign(new Error("It took too long to answer."), {
+        code: "request_timeout",
+      });
+    return read(id);
+  };
+  const jobs = createReportJobs({ api, wait: noWait });
+  /** @type {string[]} */
+  const errors = [];
+  jobs.subscribe(() => errors.push(jobs.current?.error ?? ""));
+  await jobs.start(["s1"], {});
+  assert.deepEqual(errors, ["", "", "request_timeout", ""]);
+});
+
+for (const status of [400, 403, 404])
+  test(`a status read refused with ${status} stops polling at once`, async () => {
+    const { api, calls } = fakeApi([]);
+    api.getReportJob = async (id) => {
+      calls.push({ name: "get", args: [id] });
+      throw Object.assign(new Error("request_blocked"), { status });
+    };
+    let clock = 0;
+    const jobs = createReportJobs({
+      api,
+      now: () => clock,
+      wait: async (ms) => void (clock += ms),
+    });
+    await jobs.start(["s1"], {});
+    assert.deepEqual(
+      [jobs.current?.phase, jobs.current?.error],
+      ["failed", "request_blocked"],
+    );
+    assert.equal(calls.filter((c) => c.name === "get").length, 1);
+  });
+
+for (const status of [408, 429, 503])
+  test(`a status read refused with ${status} is asked again`, async () => {
+    const { api } = fakeApi(["succeeded"]);
+    const read = api.getReportJob;
+    let reads = 0;
+    api.getReportJob = async (id) => {
+      if (++reads === 1) throw Object.assign(new Error("busy"), { status });
+      return read(id);
+    };
+    const jobs = createReportJobs({ api, wait: noWait });
+    await jobs.start(["s1"], {});
+    assert.equal(jobs.current?.phase, "succeeded");
+  });
+
+test("a job that never ends stops being followed after the server's own limits", async () => {
+  const { api, calls } = fakeApi([]);
+  let clock = 0;
+  api.getReportJob = async (id) => {
+    calls.push({ name: "get", args: [id] });
+    // Long past the limit, so following it that far is the failure.
+    return { job: job(clock > 2 * MAX_FOLLOW_MS ? "succeeded" : "queued") };
+  };
+  const jobs = createReportJobs({
+    api,
+    now: () => clock,
+    wait: async (ms) => {
+      clock += ms;
+    },
+  });
+  await jobs.start(["s1"], {});
+  assert.deepEqual(
+    [jobs.current?.phase, jobs.current?.error],
+    ["failed", "job_timed_out"],
+  );
+  assert.ok(clock > MAX_FOLLOW_MS);
+  const reads = calls.filter((c) => c.name === "get").length;
+  assert.equal(reads, Math.ceil(MAX_FOLLOW_MS / 2000) + 1);
+});
+
+test("a hidden tab doesn't poll until it's shown", async () => {
+  const { api, calls } = fakeApi(["succeeded"]);
+  /** @type {() => void} */
+  let show = () => {};
+  const jobs = createReportJobs({
+    api,
+    wait: noWait,
+    visible: () => new Promise((resolve) => (show = () => resolve(undefined))),
+  });
+  const started = jobs.start(["s1"], {});
+  await vi.waitFor(() => assert.equal(jobs.current?.phase, "queued"));
+  assert.equal(calls.filter((c) => c.name === "get").length, 0);
+  show();
+  await started;
+  assert.equal(jobs.current?.phase, "succeeded");
+});
+
+test("a poll that lands after the job was dismissed changes nothing", async () => {
+  const { api, calls } = fakeApi(["succeeded"]);
+  /** @type {() => void} */
+  let release = () => {};
+  const jobs = createReportJobs({
+    api,
+    wait: () => new Promise((resolve) => (release = () => resolve())),
+  });
+  const started = jobs.start(["s1"], {});
+  await vi.waitFor(() => assert.equal(jobs.current?.phase, "queued"));
+  jobs.dismiss();
+  release();
+  await started;
+  assert.equal(jobs.current, null);
+  assert.equal(calls.filter((c) => c.name === "get").length, 0);
+});
+
+test("a second report started before the first answers shows its own Site count", async () => {
+  const { api } = fakeApi([]);
+  const jobs = createReportJobs({
+    api,
+    create: () => new Promise(() => {}),
+    wait: noWait,
+  });
+  void jobs.start(["s1"], {});
+  void jobs.start(["s1", "s2"], {});
+  assert.deepEqual([jobs.current?.phase, jobs.current?.count], ["starting", 2]);
 });
 
 test("a dismissed job is gone, so its dialog isn't shown again", async () => {
