@@ -596,7 +596,7 @@ export const adminApi = {
       body: JSON.stringify({ sql }),
       signal,
     }),
-  // Insights (plan §6): fixed reporting endpoints on the analytics Lambda.
+  // Insights: fixed reporting endpoints on the analytics Lambda.
   /** @param {Record<string, string>} params @param {AbortSignal} [signal] */
   reportingOverview: (params, signal) =>
     adminFetch(`/admin/v1/reporting/overview${queryOf(params)}`, { signal }),

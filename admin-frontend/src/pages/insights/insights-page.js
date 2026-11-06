@@ -1,4 +1,4 @@
-// The Insights pages. Small, since Manage loads it; the page shells come later.
+// The Insights pages. Small, since Manage loads it; the page shells download on first visit.
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { appMessageError } from "../../admin-error-messages.js";
 import { getAdminConfig } from "../../config.js";
@@ -41,7 +41,7 @@ export class AdminInsightsPage extends HTMLElement {
     this.removeEventListener("insights-url", this.urlChanged);
   }
 
-  // The app's guards read the new URL, and the tabs carry its period so switching pages keeps it.
+  // <admin-app> notes the new URL for Back and tab memory; the tabs carry its period, so switching pages keeps it.
   urlChanged = () => {
     const query = carriedQuery(location.search);
     for (const link of this.querySelectorAll(
