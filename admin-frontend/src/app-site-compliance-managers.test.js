@@ -6,10 +6,10 @@ import {
   click,
   fill,
   missing,
-  mountAdmin,
   toastText,
   unhandledRejection,
 } from "../test-support/admin-dom.js";
+import { mountAdmin } from "../test-support/app-mount.js";
 import {
   complianceData,
   oversightPath,

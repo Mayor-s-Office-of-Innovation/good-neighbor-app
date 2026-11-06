@@ -6,13 +6,13 @@ import {
   click,
   fill,
   missing,
-  mountAdmin,
   routeTo,
   settle,
   tick,
   userEvent,
   window,
 } from "../test-support/admin-dom.js";
+import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { failTimes } from "../../e2e/admin-tests/directory-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
@@ -582,4 +582,13 @@ test("search lists managers by email and Sites by address", async () => {
   assert.ok(
     $(`${results} a[href="/sites/s8"]`).textContent.includes("Plain Site"),
   );
+});
+
+test("an app moved in the page lists the managers again", async () => {
+  const { app, api } = await mountAdmin("/managers");
+  app.remove();
+  document.body.append(app);
+  await settle();
+  assert.equal(api.calls("GET", /^people$/).length, 2);
+  assert.ok(listText("managers-title").includes("Alex Example"));
 });

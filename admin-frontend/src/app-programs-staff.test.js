@@ -6,10 +6,9 @@ import {
   adminData,
   click,
   fill,
-  mountAdmin,
-  pageError,
+  leavePage,
+  mountPage,
   pageText,
-  routeTo,
   settle,
   submit,
   window,
@@ -18,6 +17,8 @@ import {
 } from "../test-support/admin-dom.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
+import { currentRoute } from "./router.js";
+import "./pages/program/program-page.js";
 
 // pages/program/program.templates.js has no catalog key for this copy, so tests match its English.
 
@@ -25,10 +26,10 @@ const staffRows = () => $$('[aria-labelledby="program-staff-title"] li');
 /** @param {string} name */
 const staffRow = (name) =>
   staffRows().find((row) => row.textContent.includes(name));
-const heading = () => $("admin-app h1").textContent.trim();
+const heading = () => $("admin-program-page h1").textContent.trim();
 // The status badge has no role, label, id or catalog key, so read the English text of the h1's header.
 const programHeader = () =>
-  $("admin-app h1")
+  $("admin-program-page h1")
     .parentElement.parentElement.textContent.replace(/\s+/g, " ")
     .trim();
 
@@ -67,27 +68,52 @@ function programData() {
   return data;
 }
 
+/** The Program page's own reads and saves; any other request fails a page test. */
+const programCalls = [
+  /^GET programs\/[^/]+$/,
+  /^GET sites\/[^/?]+\?roster=1$/,
+  /^PATCH programs\/[^/]+$/,
+  /^(POST|PATCH) programs\/[^/]+\/users(\/[^/]+)?$/,
+];
+
+/** @typedef {Omit<Parameters<typeof mountPage>[2], "calls">} PageOptions */
+
 /**
- * The Program page with one Site whose roster can't be read.
+ * The Program page alone, with one Site whose roster can't be read.
  * @param {string} path
- * @param {Parameters<typeof mountAdmin>[1]} [options]
+ * @param {Partial<PageOptions>} [options]
  */
-function openProgram(path, options = {}) {
-  return mountAdmin(path, {
+function openProgramPage(path, options = {}) {
+  return mountPage("admin-program-page", path, {
+    calls: programCalls,
     data: programData(),
     ...options,
-    setup: (api) => {
+    setup: (/** @type {any} */ api) => {
       api.fail("GET", /^sites\/s3\?roster=1$/, 500, "site_unavailable");
       options.setup?.(api);
     },
   });
 }
 
+/**
+ * What <admin-app> does when the user moves to `path` and keeps this page on screen.
+ * @param {any} page
+ * @param {string} path
+ */
+async function revisit(page, path) {
+  window.history.pushState({}, "", path);
+  if (await page.open(currentRoute())) {
+    page.render();
+    page.focusOnOpen();
+  }
+  await settle();
+}
+
 /** @param {string} id */
 const editForm = (id) => `#edit-program-staff-${id} form`;
 
 test("a Program lists its Sites and active staff with their assignments", async () => {
-  await openProgram("/programs/p1");
+  await openProgramPage("/programs/p1");
   assert.equal(heading(), "Example Program");
   assert.equal(programHeader(), "Example Program Active");
   const sites = $$('[aria-labelledby="program-sites-title"] a');
@@ -115,7 +141,7 @@ test("a Program under review with no Sites or staff shows empty states", async (
   data.sites = data.sites.filter(
     (/** @type {any} */ site) => site.leadProgramId !== "p1",
   );
-  await openProgram("/programs/p1", { role: "compliance-manager", data });
+  await openProgramPage("/programs/p1", { role: "compliance-manager", data });
   assert.equal(programHeader(), "Example Program Needs review");
   assert.match(pageText(), /No sites are assigned to this program\./);
   assert.ok(pageText().includes(t("admin.programs.noStaff")));
@@ -127,7 +153,8 @@ test("staff with no Sites anywhere say so", async () => {
   data.sites = data.sites.filter(
     (/** @type {any} */ site) => site.siteId !== "s3",
   );
-  await mountAdmin("/programs/p1", {
+  await mountPage("admin-program-page", "/programs/p1", {
+    calls: programCalls,
     data,
     setup: (api) =>
       api.on("GET", /^programs\/p1$/, () => ({
@@ -160,7 +187,7 @@ test("staff with no Sites anywhere say so", async () => {
 });
 
 test("a supervisor edits a staff member and the list refreshes", async () => {
-  const { api } = await openProgram("/programs/p1", {
+  const { api } = await openProgramPage("/programs/p1", {
     setup: (api) =>
       api.on("PATCH", /^programs\/p1\/users\/u2$/, (request) => {
         if (request.body.isPrimaryContact)
@@ -198,7 +225,7 @@ test("a supervisor edits a staff member and the list refreshes", async () => {
 });
 
 test("inactive staff stay hidden after a staff edit refreshes the list", async () => {
-  await openProgram("/programs/p1");
+  await openProgramPage("/programs/p1");
   await click("[data-edit-program-staff='u2']");
   await fill(`${editForm("u2")} wa-input[name='staff-first-name']`, "Bailey");
   await click(`${editForm("u2")} button[type='submit']`);
@@ -223,12 +250,12 @@ test("a staff member's Site link keeps a slash in the Site ID inside one path se
       status: "active",
     },
   ];
-  await openProgram("/programs/p1", { data });
+  await openProgramPage("/programs/p1", { data });
   assert.ok(staffRow("Blair").querySelector("a[href='/sites/s%2F9']"));
 });
 
 test("a compliance manager edits staff without changing email or primary contact", async () => {
-  const { api } = await openProgram("/programs/p1", {
+  const { api } = await openProgramPage("/programs/p1", {
     role: "compliance-manager",
   });
   await click("[data-edit-program-staff='u1']");
@@ -252,7 +279,7 @@ test("a compliance manager edits staff without changing email or primary contact
 });
 
 test("a failed staff edit keeps the dialog open with an error, and cancel closes it", async () => {
-  await openProgram("/programs/p1", {
+  await openProgramPage("/programs/p1", {
     setup: (api) =>
       api.fail("PATCH", /^programs\/p1\/users\/u1$/, 409, "person_not_found"),
   });
@@ -270,7 +297,7 @@ test("a failed staff edit keeps the dialog open with an error, and cancel closes
 
 test("a second staff edit submit while the first runs is dropped", async () => {
   const held = gate();
-  const { api } = await openProgram("/programs/p1", {
+  const { api } = await openProgramPage("/programs/p1", {
     setup: (api) =>
       api.on("PATCH", /^programs\/p1\/users\/u1$/, async () => {
         await held.promise;
@@ -287,8 +314,9 @@ test("a second staff edit submit while the first runs is dropped", async () => {
   assert.equal(api.calls("PATCH", /users\/u1$/).length, 1);
 });
 
-test("a staff edit whose refresh fails shows the error", async () => {
-  await openProgram("/programs/p1", {
+test("a staff edit whose refresh fails reports the error", async () => {
+  const { errors } = await openProgramPage("/programs/p1", {
+    recordErrors: true,
     setup: (api) =>
       api.on("PATCH", /^programs\/p1\/users\/u1$/, () => {
         api.fail("GET", /^programs\/p1$/, 503, "program_read_failed");
@@ -298,12 +326,12 @@ test("a staff edit whose refresh fails shows the error", async () => {
   await click("[data-edit-program-staff='u1']");
   await click(`${editForm("u1")} button[type='submit']`);
   // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "program_read_failed");
+  assert.deepEqual(errors, ["program_read_failed"]);
 });
 
 test("a staff refresh that lands after leaving the Program is dropped", async () => {
   const held = gate();
-  await openProgram("/programs/p1", {
+  const { page } = await openProgramPage("/programs/p1", {
     setup: (api) =>
       api.on("PATCH", /^programs\/p1\/users\/u1$/, () => {
         api.on("GET", /^programs\/p1$/, async () => {
@@ -315,7 +343,7 @@ test("a staff refresh that lands after leaving the Program is dropped", async ()
   });
   await click("[data-edit-program-staff='u1']");
   await click(`${editForm("u1")} button[type='submit']`);
-  await routeTo("/programs/p2");
+  await revisit(page, "/programs/p2");
   assert.equal(heading(), "Closed Program");
   held.release();
   await settle();
@@ -323,8 +351,34 @@ test("a staff refresh that lands after leaving the Program is dropped", async ()
   assert.ok(!staffRow("Alex"));
 });
 
+test("a staff refresh that fails after leaving the Program still reports the error", async () => {
+  const held = gate();
+  const { errors } = await openProgramPage("/programs/p1", {
+    recordErrors: true,
+    setup: (api) =>
+      api.on("PATCH", /^programs\/p1\/users\/u1$/, () => {
+        api.on("GET", /^programs\/p1$/, {
+          delay: held.promise,
+          status: 503,
+          json: {
+            error: "program_read_failed",
+            message: "program_read_failed",
+          },
+        });
+        return undefined;
+      }),
+  });
+  await click("[data-edit-program-staff='u1']");
+  await click(`${editForm("u1")} button[type='submit']`);
+  await leavePage("/sites");
+  held.release();
+  await settle();
+  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
+  assert.deepEqual(errors, ["program_read_failed"]);
+});
+
 test("?addStaff=1 opens the add-staff dialog and the new staff member appears", async () => {
-  const { api } = await openProgram("/programs/p1?addStaff=1&tab=staff");
+  const { api } = await openProgramPage("/programs/p1?addStaff=1&tab=staff");
   assert.equal($("#add-program-staff-dialog").open, true);
   assert.equal(
     window.location.pathname + window.location.search,
@@ -354,7 +408,7 @@ test("?addStaff=1 opens the add-staff dialog and the new staff member appears", 
 test("adding staff explains known and unknown failures and guards double submits", async () => {
   const held = gate();
   let calls = 0;
-  await openProgram("/programs/p1?addStaff=1", {
+  await openProgramPage("/programs/p1?addStaff=1", {
     setup: (api) =>
       api.on("POST", /^programs\/p1\/users$/, async () => {
         calls += 1;
@@ -390,8 +444,10 @@ test("adding staff explains known and unknown failures and guards double submits
 });
 
 test("a compliance manager's ?addStaff=1 just opens the Program", async () => {
-  await openProgram("/programs/p1?addStaff=1", { role: "compliance-manager" });
-  assert.ok(focused("admin-app h1"));
+  await openProgramPage("/programs/p1?addStaff=1", {
+    role: "compliance-manager",
+  });
+  assert.ok(focused("admin-program-page h1"));
   // The add-staff branch strips ?addStaff=1, so a kept query means it never ran.
   assert.equal(
     window.location.pathname + window.location.search,
@@ -401,24 +457,28 @@ test("a compliance manager's ?addStaff=1 just opens the Program", async () => {
 
 test("a Program read that finishes after leaving is not shown", async () => {
   const held = gate();
-  const { api } = await mountAdmin("/programs/p1", {
-    data: programData(),
+  const { api, page } = await openProgramPage("/programs/p2", {
     setup: (api) =>
       api.on("GET", /^programs\/p1$/, async (request) => {
         await held.promise;
         return { json: { ...api.reply(request).json, sites: [] } };
       }),
   });
+  window.history.pushState({}, "", "/programs/p1");
+  const late = page.open(currentRoute());
+  await settle();
   assert.equal(api.calls("GET", /^programs\/p1$/).length, 1);
-  await routeTo("/programs/p2");
+  await revisit(page, "/programs/p2");
   assert.equal(heading(), "Closed Program");
   held.release();
+  assert.equal(await late, false);
   await settle();
   assert.equal(heading(), "Closed Program");
 });
 
 test("a Program reply without Sites or staff lists still renders", async () => {
-  await mountAdmin("/programs/p1", {
+  await mountPage("admin-program-page", "/programs/p1", {
+    calls: programCalls,
     data: programData(),
     setup: (api) =>
       api.on("GET", /^programs\/p1$/, {
@@ -430,7 +490,7 @@ test("a Program reply without Sites or staff lists still renders", async () => {
 });
 
 test("a staff refresh reply without staff clears the list", async () => {
-  await openProgram("/programs/p1", {
+  await openProgramPage("/programs/p1", {
     setup: (api) =>
       api.on("PATCH", /^programs\/p1\/users\/u1$/, () => {
         api.on("GET", /^programs\/p1$/, {
@@ -445,8 +505,7 @@ test("a staff refresh reply without staff clears the list", async () => {
 });
 
 test("renaming a Program saves it and makes the manager directory reload", async () => {
-  const { api } = await mountAdmin("/managers", {
-    data: programData(),
+  const { api, catalog } = await openProgramPage("/programs/p1", {
     setup: (api) =>
       api.on("PATCH", /^programs\/p1$/, (request) => {
         const program = api.data.programs.find(
@@ -459,8 +518,7 @@ test("renaming a Program saves it and makes the manager directory reload", async
         return { json: { program: { ...program } } };
       }),
   });
-  const reads = api.calls("GET", /^people$/).length;
-  await routeTo("/programs/p1");
+  catalog.markManagersLoaded(catalog.managersVersion);
   const form = "#program-details-form";
   assert.equal($(`${form} [data-save-button]`).disabled, true);
   await fill(`${form} wa-input[name="program-name"]`, "Renamed Program");
@@ -470,7 +528,179 @@ test("renaming a Program saves it and makes the manager directory reload", async
     "Renamed Program",
   );
   assert.equal(heading(), "Renamed Program");
-  // Manager rows carry the Program name, so the cached directory is stale.
-  await routeTo("/managers");
-  assert.equal(api.calls("GET", /^people$/).length, reads + 1);
+  // Manager rows carry the Program name, so the loaded directory is stale.
+  assert.equal(catalog.managersLoaded, false);
+});
+
+test("leaving a renamed Program after a staff edit asks first, and Discard leaves", async () => {
+  const { page } = await openProgramPage("/programs/p1");
+  // The staff edit redraws only the Program page, so its leave dialog is new markup.
+  await click("[data-edit-program-staff='u2']");
+  await click(`${editForm("u2")} button[type='submit']`);
+  await fill('#program-details-form wa-input[name="program-name"]', "Draft");
+  assert.equal(page.hasUnsavedChanges(), true);
+  const leave = page.confirmLeave();
+  await settle();
+  assert.equal($("#site-unsaved-dialog").open, true);
+  await click('#site-unsaved-dialog button[value="discard"]');
+  assert.equal(await leave, true);
+});
+
+test("Keep editing on the Program page's leave dialog stays", async () => {
+  const { page } = await openProgramPage("/programs/p1");
+  await fill('#program-details-form wa-input[name="program-name"]', "Draft");
+  const leave = page.confirmLeave();
+  await settle();
+  await click('#site-unsaved-dialog button[value="keep"]');
+  assert.equal(await leave, false);
+  assert.equal(page.hasUnsavedChanges(), true);
+});
+
+test("a Program page redraw while the leave dialog is open keeps the user on the page", async () => {
+  const { page } = await openProgramPage("/programs/p1");
+  await fill('#program-details-form wa-input[name="program-name"]', "Draft");
+  const leave = page.confirmLeave();
+  await settle();
+  assert.equal(page.confirmLeave(), leave);
+  page.render();
+  assert.equal(await leave, false);
+});
+
+test("resetting the Program name form clears its unsaved edit", async () => {
+  const { page } = await openProgramPage("/programs/p1");
+  const form = "#program-details-form";
+  await fill(`${form} wa-input[name="program-name"]`, "Draft");
+  assert.equal(page.hasUnsavedChanges(), true);
+  $(form).reset();
+  await settle();
+  assert.equal(page.hasUnsavedChanges(), false);
+  assert.equal($(`${form} [data-save-button]`).disabled, true);
+});
+
+/**
+ * Whether the manager directory must read again after the save.
+ * @param {() => Promise<void>} save
+ */
+async function managersStaleAfter(save) {
+  const { catalog } = await openProgramPage("/programs/p1");
+  catalog.markManagersLoaded(catalog.managersVersion);
+  await save();
+  return !catalog.managersLoaded;
+}
+
+test("editing Program staff makes the manager directory reload", async () => {
+  const stale = await managersStaleAfter(async () => {
+    await click("[data-edit-program-staff='u2']");
+    await fill(`${editForm("u2")} wa-input[name='staff-first-name']`, "Bo");
+    await click(`${editForm("u2")} button[type='submit']`);
+  });
+  assert.equal(stale, true);
+});
+
+test("adding Program staff makes the manager directory reload", async () => {
+  const stale = await managersStaleAfter(async () => {
+    await click("#add-program-staff");
+    for (const [name, value] of [
+      ["staff-first-name", "Riley"],
+      ["staff-last-name", "New"],
+      ["staff-phone", "4155550103"],
+      ["staff-email", "riley@example.org"],
+    ])
+      await fill(`#program-staff-form wa-input[name='${name}']`, value);
+    await click("#program-staff-form button[type='submit']");
+  });
+  assert.equal(stale, true);
+});
+
+test("a failed read of another Program doesn't leave the last one showing", async () => {
+  const { api, page } = await openProgramPage("/programs/p1");
+  api.fail("GET", /^programs\/p2$/, 500, "program_read_failed");
+  await assert.rejects(revisit(page, "/programs/p2"), /program_read_failed/);
+  page.render();
+  assert.ok(missing("[aria-labelledby='program-staff-title']"));
+});
+
+test("a Program read shared with an earlier visit doesn't cancel the add-staff dialog", async () => {
+  const read = gate();
+  const { page } = await openProgramPage("/programs/p2", {
+    setup: (api) =>
+      api.on("GET", /^programs\/p1$/, async () => {
+        await read.promise;
+        return undefined;
+      }),
+  });
+  window.history.pushState({}, "", "/programs/p1?addStaff=1");
+  const earlier = page.open(currentRoute());
+  page.leave();
+  const later = revisit(page, "/programs/p1?addStaff=1");
+  read.release();
+  await later;
+  assert.equal(await earlier, false);
+  assert.equal($("#add-program-staff-dialog").open, true);
+});
+
+/**
+ * Stubbed after the redraws, since each render replaces the dialog.
+ * @param {any} page
+ */
+function countStaffDialogOpens(page) {
+  const opens = { count: 0 };
+  page.querySelector("#add-program-staff-dialog").showModal = () =>
+    (opens.count += 1);
+  return opens;
+}
+
+test("the add-staff button still opens its dialog after the page redraws", async () => {
+  const { page } = await openProgramPage("/programs/p1");
+  page.render();
+  page.render();
+  page.render();
+  await click("#add-program-staff");
+  assert.equal($("#add-program-staff-dialog").open, true);
+});
+
+test("after several redraws one click opens the add-staff dialog once", async () => {
+  const { page } = await openProgramPage("/programs/p1");
+  page.render();
+  page.render();
+  const opens = countStaffDialogOpens(page);
+  await click("#add-program-staff");
+  assert.equal(opens.count, 1);
+});
+
+test("a removed Program page no longer answers its controls", async () => {
+  const { page } = await openProgramPage("/programs/p1");
+  const opens = countStaffDialogOpens(page);
+  const button = $("#add-program-staff");
+  page.remove();
+  await click(button);
+  assert.equal(opens.count, 0);
+});
+
+test("a staff member's phone extension can be added and removed in the edit dialog", async () => {
+  await openProgramPage("/programs/p1");
+  const field = `${editForm("u1")} [data-phone-extension]`;
+  const add = `${editForm("u1")} [data-add-extension]`;
+  assert.equal($(field).hidden, true);
+  await click(add);
+  assert.equal($(field).hidden, false);
+  await fill(`${field} wa-input`, "34");
+  await click(`${field} [data-remove-extension]`);
+  assert.equal($(field).hidden, true);
+  assert.equal($(`${field} wa-input`).value, "");
+  assert.equal($(add).hidden, false);
+});
+
+test("a Program page draws nothing after leave(), even at its own address", async () => {
+  const { page } = await openProgramPage("/programs/p1");
+  page.leave();
+  page.render();
+  assert.equal(page.innerHTML, "");
+});
+
+test("a Program page redrawn after the address changes still draws its own visit", async () => {
+  const { page } = await openProgramPage("/programs/p1");
+  window.history.pushState({}, "", "/sites");
+  page.render();
+  assert.equal(heading(), "Example Program");
 });

@@ -1,4 +1,6 @@
 // AdminApp.bind() adds these again after each render() replaces the HTML.
+import { adminSession } from "../../admin-session.js";
+import { adminCatalog } from "../../admin-catalog.js";
 import { actionFeedback } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
 import { bindAdminInvitationLookup } from "./admin-invitation-lookup.js";
@@ -82,7 +84,7 @@ export function bindAdminUsers(app) {
       button.textContent = "Working…";
       request
         .then(() => {
-          app.programManagersStale = true;
+          adminCatalog.invalidate("programManagers");
           feedback.success();
           app.state.adminUserMessage = "";
           return app.openRoute();
@@ -138,24 +140,18 @@ export function bindAdminUsers(app) {
           ),
         });
         feedback.success();
-        app.state.profile = result.profile;
+        adminSession.setProfile(result.profile);
         const managerId = result.profile.directoryUserId;
         if (managerId) {
           const name = `${result.profile.firstName} ${result.profile.lastName}`;
-          app.state.programManagers = app.state.programManagers.map(
-            (manager) =>
-              manager.userId === managerId
-                ? {
-                    ...manager,
-                    firstName: result.profile.firstName,
-                    lastName: result.profile.lastName,
-                    phone: result.profile.phone,
-                    phoneExtension: result.profile.phoneExtension,
-                    name,
-                  }
-                : manager,
-          );
-          app.state.sites = app.state.sites.map((site) =>
+          adminCatalog.updateProgramManager(managerId, {
+            firstName: result.profile.firstName,
+            lastName: result.profile.lastName,
+            phone: result.profile.phone,
+            phoneExtension: result.profile.phoneExtension,
+            name,
+          });
+          adminCatalog.updateSites((site) =>
             site.oversight?.cityProgramManagerId === managerId
               ? {
                   ...site,

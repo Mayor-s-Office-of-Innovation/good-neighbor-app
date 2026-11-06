@@ -1,4 +1,5 @@
 // main.js adds these to AdminApp, so they can use this.state and render().
+import { adminCatalog } from "../../admin-catalog.js";
 import { actionFeedback } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
 import { attachCreatedEnrollmentUrl } from "../../enrollment-links.js";
@@ -18,7 +19,7 @@ export const providerActions = {
   async loadProviders() {
     try {
       const data = await adminApi.listProviders();
-      this.state.providers = data.providers || [];
+      adminCatalog.setProviders(data.providers || []);
       this.state.error = "";
     } catch (err) {
       this.state.error = err.message;
@@ -38,11 +39,7 @@ export const providerActions = {
       if (!name) return;
       const result = await adminApi.createProvider(String(name));
       feedback.success();
-      this.state.providers = upsertRecord(
-        this.state.providers,
-        result.provider,
-        "providerId",
-      );
+      adminCatalog.addProvider(result.provider);
       if (location.pathname + location.search !== origin) return;
       const params = new URLSearchParams(window.location.search);
       if (params.get("returnTo") === "site-new") {
@@ -71,11 +68,7 @@ export const providerActions = {
         ...this.state.provider,
         ...result.provider,
       };
-      this.state.providers = this.state.providers.map((provider) =>
-        provider.providerId === result.provider.providerId
-          ? { ...provider, ...result.provider }
-          : provider,
-      );
+      adminCatalog.updateProvider(result.provider);
       this.state.siteSaveMessage = "";
       this.render();
     } catch (error) {
@@ -264,7 +257,7 @@ export const providerActions = {
       if (!programId) return;
       await adminApi.assignProgramToProvider(providerId, programId);
       feedback.success();
-      this.state.programs = (await adminApi.listPrograms()).programs || [];
+      adminCatalog.setPrograms((await adminApi.listPrograms()).programs || []);
       this.render();
     } catch (error) {
       feedback.failure(error);
@@ -314,7 +307,6 @@ export const providerActions = {
     this.state.providerManagerEnrollments = managers.enrollments || [];
     this.state.providerManagerGrants = grants.grants || [];
     this.state.providerManagerGrantErrors = {};
-    this.state.program = null;
     this.state.site = null;
     this.state.siteManager = null;
     this.state.siteSaveMessage = "";

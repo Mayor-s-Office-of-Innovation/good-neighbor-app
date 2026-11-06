@@ -1,4 +1,5 @@
 // main.js adds these to AdminApp, so they can use this.state and render().
+import { adminCatalog } from "../../admin-catalog.js";
 import { actionFeedback } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
 import { navigate } from "../../router.js";
@@ -23,7 +24,7 @@ export const adminUserActions = {
         ].map((name) => [name, String(data.get(name) || "").trim()]),
       );
       const result = await adminApi.inviteAdminUser(values);
-      this.programManagersStale = true;
+      adminCatalog.invalidate("programManagers");
       this.state.adminUsers = upsertRecord(
         this.state.adminUsers,
         result.user,
