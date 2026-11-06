@@ -1,3 +1,5 @@
+import { retireEnrollmentLookup } from "./enrollment-retention.js";
+import { withMediaCookies } from "../lib/media-cookie.js";
 import { providerInvitationAuthority } from "../lib/provider-invitation-authority.js";
 import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
 import { enrollmentCodeVerifier } from "./enrollment-codes.js";
@@ -81,12 +83,15 @@ export const redeemEnrollmentGrant = async (event) => {
   const nowIso = now.toISOString();
   if (
     !grant ||
-    grant.tokenHash !== tokenHash ||
+    (code && grant.codeHash ? grant.codeHash : grant.tokenHash) !== tokenHash ||
     !["general", "manager"].includes(grant.accessLevel) ||
-    Boolean(code) !== (grant.deliveryMode === "code")
+    (Boolean(code) !== (grant.deliveryMode === "code") &&
+      !(code && grant.codeHash))
   ) {
     return rejectEnrollment(event, "invalid_credentials");
   }
+  // Both credentials consume the same grant; pin its canonical verifier in the transaction.
+  const grantTokenHash = grant.tokenHash;
   if (grant.status === "redeemed") {
     return rejectEnrollment(event, "already_used", 409, grant);
   }
@@ -103,7 +108,7 @@ export const redeemEnrollmentGrant = async (event) => {
       input,
       grant,
       lookup,
-      tokenHash,
+      tokenHash: grantTokenHash,
       requestedPhysicalDeviceId,
       now,
       nowIso,
@@ -333,7 +338,7 @@ export const redeemEnrollmentGrant = async (event) => {
                 ":pending": "pending",
                 ":redeemed": "redeemed",
                 ":now": nowIso,
-                ":tokenHash": tokenHash,
+                ":tokenHash": grantTokenHash,
                 ":bindingId": bindingId,
                 ":physicalDeviceId": physicalDeviceId,
               },
@@ -448,6 +453,17 @@ export const redeemEnrollmentGrant = async (event) => {
             actor: `physical-device:${physicalDeviceId}`,
             createdAt: nowIso,
           }),
+          ...[grant.tokenHash, grant.codeHash]
+            .filter((hash) => hash && `ENROLLMENT_TOKEN#${hash}` !== lookup.pk)
+            .map((hash) =>
+              retireEnrollmentLookup(
+                tableName,
+                grant,
+                hash,
+                "redeemed",
+                nowIso,
+              ),
+            ),
         ],
       }),
     );
@@ -472,28 +488,31 @@ export const redeemEnrollmentGrant = async (event) => {
       enrolledAt: nowIso,
     });
   }
-  return jsonResponse(201, {
-    physicalDeviceId,
-    bindingId,
-    deviceId: bindingId,
-    site: { siteId, name: site.name },
-    accessLevel,
-    token: access.token,
-    refreshToken: refresh.token,
-    expiresIn: access.expiresIn,
-    refreshExpiresIn: refresh.expiresIn,
-    tokenGeneration: generation,
-    absoluteExpiresAt,
-    bindings: [
-      {
-        bindingId,
-        siteId,
-        siteName: site.name,
-        accessLevel,
-        status: "active",
-      },
-    ],
-  });
+  return withMediaCookies(
+    jsonResponse(201, {
+      physicalDeviceId,
+      bindingId,
+      deviceId: bindingId,
+      site: { siteId, name: site.name },
+      accessLevel,
+      token: access.token,
+      refreshToken: refresh.token,
+      expiresIn: access.expiresIn,
+      refreshExpiresIn: refresh.expiresIn,
+      tokenGeneration: generation,
+      absoluteExpiresAt,
+      bindings: [
+        {
+          bindingId,
+          siteId,
+          siteName: site.name,
+          accessLevel,
+          status: "active",
+        },
+      ],
+    }),
+    siteId,
+  );
 };
 
 /**
@@ -834,28 +853,31 @@ async function redeemProviderEnrollment(context) {
     label,
     enrolledAt: nowIso,
   });
-  return jsonResponse(201, {
-    physicalDeviceId,
-    bindingId: initial.bindingId,
-    deviceId: initial.bindingId,
-    site: { siteId: initial.siteId, name: initial.siteName },
-    provider: { providerId, name: provider.name },
-    siteCount: bindings.length,
-    accessLevel: "manager",
-    token: access.token,
-    refreshToken: refresh.token,
-    expiresIn: access.expiresIn,
-    refreshExpiresIn: refresh.expiresIn,
-    tokenGeneration: 1,
-    absoluteExpiresAt,
-    bindings: bindings.map((entry) => ({
-      bindingId: entry.bindingId,
-      siteId: entry.siteId,
-      siteName: entry.siteName,
+  return withMediaCookies(
+    jsonResponse(201, {
+      physicalDeviceId,
+      bindingId: initial.bindingId,
+      deviceId: initial.bindingId,
+      site: { siteId: initial.siteId, name: initial.siteName },
+      provider: { providerId, name: provider.name },
+      siteCount: bindings.length,
       accessLevel: "manager",
-      status: "active",
-    })),
-  });
+      token: access.token,
+      refreshToken: refresh.token,
+      expiresIn: access.expiresIn,
+      refreshExpiresIn: refresh.expiresIn,
+      tokenGeneration: 1,
+      absoluteExpiresAt,
+      bindings: bindings.map((entry) => ({
+        bindingId: entry.bindingId,
+        siteId: entry.siteId,
+        siteName: entry.siteName,
+        accessLevel: "manager",
+        status: "active",
+      })),
+    }),
+    initial.siteId,
+  );
 }
 
 /**

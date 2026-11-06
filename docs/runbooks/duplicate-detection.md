@@ -345,9 +345,16 @@ only dev opts in on this branch. Before production enablement, choose a measured
 below that stage's effective limit and configure it explicitly. Do not copy dev's 3/s
 setting into a production endpoint still limited to 1/s. Roll out through CI, then
 verify queue age, comparison failures, gateway 429s and first-match/full-search latency.
-The worker needs `UpdateItem` on the `DUP_COMPARISON_PACER` partition only; existing
-`GetItem` permission supports consistent reads after a permit collision. No new table,
-index, secret or cache-version change is required.
+
+The [duplicate worker policy](../../infra/modules/app/duplicates.tf) grants
+`dynamodb:UpdateItem` on the application table for two purposes:
+
+- **Comparison pacing.** Standalone updates require the `DUP_COMPARISON_PACER`
+  partition key. The worker uses `GetItem` for a consistent read after a permit collision.
+- **Link reconciliation.** The worker updates the original task in the same transaction
+  that writes the duplicate link. If reconciliation reports `AccessDeniedException`,
+  check that the deployed role allows `UpdateItem` for `dynamodb:LeadingKeys` matching
+  `SITE#?*` when `dynamodb:EnclosingOperation` is `TransactWriteItems`.
 
 ## Candidate fanout and worker sizing
 

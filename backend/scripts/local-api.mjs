@@ -17,6 +17,7 @@ import { getDuplicateResult } from "../src/handlers/duplicate-results.js";
 import {
   listCareWork,
   createCareWork,
+  deleteCareWork,
   getCareWork,
   presignCarePhoto,
   getCarePhoto,
@@ -41,6 +42,7 @@ import {
   listChecks,
   getCaptureGuidance,
   getCheck,
+  getCheckEvidenceBatch,
 } from "../src/handlers/checks.js";
 import {
   presignUpload,
@@ -349,10 +351,12 @@ const routes = [
     "/v1/checks/{checkId}/artifacts/{artifactId}/duplicates",
     getDuplicateResult,
   ),
+  route("POST", "/v1/checks:evidence", getCheckEvidenceBatch),
   route("GET", "/v1/checks/{checkId}", getCheck),
   route("GET", "/v1/care-work", listCareWork),
   route("POST", "/v1/care-work", createCareWork),
   route("GET", "/v1/care-work/{workId}", getCareWork),
+  route("DELETE", "/v1/care-work/{workId}", deleteCareWork),
   route("POST", "/v1/care-work/{workId}/photos:presign", presignCarePhoto),
   route("GET", "/v1/care-work/{workId}/photos/{photoId}/media", getCarePhoto),
   route("GET", "/v1/complaints", listComplaints),
@@ -794,11 +798,26 @@ const server = createServer(async (req, res) => {
       () => {},
     );
 
-    const { statusCode = 200, headers = {}, body: resBody = "" } = result ?? {};
+    const {
+      statusCode = 200,
+      headers = {},
+      cookies = [],
+      body: resBody = "",
+    } = result ?? {};
+    // HTTP API payload 2.0 carries Set-Cookie values in `cookies`; emit them
+    // the way the gateway does so cookie-bearing routes behave locally too.
     res.writeHead(
       statusCode,
       /** @type {any} */ ({
         ...headers,
+        ...(cookies.length
+          ? {
+              "set-cookie": [
+                ...[headers["set-cookie"] ?? []].flat(),
+                ...cookies,
+              ],
+            }
+          : {}),
         ...LOCAL_CORS_HEADERS,
       }),
     );

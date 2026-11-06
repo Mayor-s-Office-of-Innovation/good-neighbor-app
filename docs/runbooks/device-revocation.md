@@ -94,7 +94,7 @@ suspended with its original reason and timestamp.
 
 ## Home Screen handoff grants
 
-A device running in iOS Safari keeps one pending `SESSION_HANDOFF#` grant
+A device running in an iOS browser (including Safari and Chrome) keeps one pending `SESSION_HANDOFF#` grant
 (`handoffGrantId` on its `DEVICE#` row) so an Add to Home Screen carries the
 session into the installed app. Redemption re-checks the device, its binding,
 the Site generation, and Manager membership exactly like the authorizer, so
@@ -171,3 +171,20 @@ event. A failure returns `409 manager_device_revocation_incomplete` and the coun
 confirmed so far; retry discovers remaining non-revoked bindings. A timeout can
 leave the latest batch's outcome uncertain, so the UI never claims full success
 on a failed request. Batches already completed remain revoked.
+
+## Home Screen installation from iPhone browsers
+
+Safari and third-party iPhone browsers use the same installation handoff. The
+browser prepares its HttpOnly cookie after enrollment and when restoring the app;
+installation copies the cookie into the separate Home Screen storage container.
+IndexedDB credentials are not copied. Browser detection must therefore select the
+`ios` installation path for Chrome on iPhone as well as Safari; desktop/Android
+Chromium retains its native installation prompt.
+
+Icons installed before handoff preparation cannot acquire the cookie retroactively.
+For an existing icon that asks for an access code while the browser works, enroll
+directly inside the Home Screen app with a fresh code, or reinstall after loading
+the signed-in browser with the corrected client. Do not reuse a consumed grant or
+restore a revoked binding. Verify on a real iPhone: enroll in Chrome, add to Home
+Screen, confirm the icon opens signed in, then reopen both contexts and confirm
+that they remain independently usable. Repeat in Safari.

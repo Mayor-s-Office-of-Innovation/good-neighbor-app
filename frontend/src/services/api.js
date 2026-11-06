@@ -832,6 +832,13 @@ export function getCheck(checkId, options = {}) {
   return request("GET", `/v1/checks/${encodeURIComponent(checkId)}`, options);
 }
 
+/** @param {string[]} checkIds
+ * @returns {Promise<{results: Array<{checkId: string, status: number, artifacts?: any[], analyses?: any[]}>}>}
+ */
+export function getCheckEvidenceBatch(checkIds) {
+  return request("POST", "/v1/checks:evidence", { body: { checkIds } });
+}
+
 // ── Public complaints ──────────────────────────────────────────────────────
 
 export function listComplaints() {
@@ -1950,6 +1957,9 @@ export function listCareWork(nextToken = "") {
 }
 export function getCareWork(workId) {
   return request("GET", `/v1/care-work/${encodeURIComponent(workId)}`);
+}
+export function deleteCareWork(workId) {
+  return request("DELETE", `/v1/care-work/${encodeURIComponent(workId)}`);
 }
 export function createCareWork(body, options = {}) {
   return request("POST", "/v1/care-work", {

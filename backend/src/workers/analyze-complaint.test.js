@@ -1,4 +1,4 @@
-import { presignGet } from "../s3.js";
+import { getObjectBytes, presignGet } from "../s3.js";
 import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -192,6 +192,33 @@ describe("complaint permanent analyzer failures", () => {
     );
     await expect(handler(event())).resolves.toBeUndefined();
   });
+});
+
+it("records a rejected photo as failed on the first delivery, without retrying", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  ddbSend
+    .mockResolvedValueOnce({
+      Item: {
+        status: "analyzing",
+        analysisAttemptId: "attempt-1",
+        description: "Noise",
+      },
+    })
+    .mockResolvedValueOnce({
+      Items: [{ name: "photo.jpg", contentType: "image/jpeg", s3Key: "photo" }],
+    })
+    .mockResolvedValueOnce({});
+  // An SVG labeled as a JPEG: the downscale signature check rejects it.
+  vi.mocked(getObjectBytes).mockResolvedValueOnce({
+    bytes: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'),
+  });
+  await expect(handler(event())).resolves.toBeUndefined();
+  expect(extractComplaint).not.toHaveBeenCalled();
+  expect(ddbSend).toHaveBeenCalledTimes(3);
+  const update = ddbSend.mock.calls[2][0].input;
+  expect(update.ExpressionAttributeValues[":failed"]).toBe("analysis_failed");
+  expect(update.ExpressionAttributeValues[":attempt"]).toBe("attempt-1");
+  warn.mockRestore();
 });
 
 it("regenerates evidence URLs on redelivery after a retrieval failure", async () => {

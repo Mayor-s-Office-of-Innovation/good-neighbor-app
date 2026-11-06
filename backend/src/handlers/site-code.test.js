@@ -1,3 +1,4 @@
+import { enrollmentCodeVerifier } from "./enrollment-codes.js";
 import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
 vi.mock("./code-attempt-limit.js", () => ({
   checkCodeAttemptLimit: vi.fn(async () => null),
@@ -5,7 +6,7 @@ vi.mock("./code-attempt-limit.js", () => ({
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
-const send = vi.fn();
+const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 
 vi.mock("../db.js", () => ({
   ddb: { send },
@@ -29,14 +30,30 @@ describe("site-code handler", () => {
   it("recognizes a six-character manager code without redeeming it", async () => {
     vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
     vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
-    send.mockResolvedValueOnce({ Item: { grantId: "grant-1" } });
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          grantId: "grant-1",
+          grantPk: "SITE#s",
+          grantSk: "STAFF_GRANT#g",
+          expiresAt: 4102444800,
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          grantId: "grant-1",
+          status: "pending",
+          codeHash: await enrollmentCodeVerifier("0AB123"),
+          expiresAt: "2099-01-01T00:00:00Z",
+        },
+      });
     const response = await callHandler({ code: "0AB123" });
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(response.body)).toEqual({
       code: "0AB123",
       enrollment: true,
     });
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
   });
 
@@ -195,4 +212,126 @@ it("does not look up codes when the rate-limit store fails", async () => {
   vi.mocked(checkCodeAttemptLimit).mockRejectedValueOnce(error);
   await expect(callHandler({ code: "a1b-2c3" })).rejects.toBe(error);
   expect(send).not.toHaveBeenCalled();
+});
+
+describe("terminal enrollment code lookup", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    send.mockReset();
+  });
+  it.each([
+    ["redeemed", "2099-01-01T00:00:00Z", "enrollment_already_used"],
+    ["cancelled", "2099-01-01T00:00:00Z", "enrollment_cancelled"],
+    ["pending", "2000-01-01T00:00:00Z", "enrollment_expired"],
+  ])(
+    "rejects %s codes at the probe and bounds historical lookup retention",
+    async (status, expiresAt, error) => {
+      vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+      vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
+      const codeHash = await enrollmentCodeVerifier("ABC234");
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            pk: `ENROLLMENT_TOKEN#${codeHash}`,
+            grantId: "g",
+            grantPk: "SITE#s",
+            grantSk: "STAFF_GRANT#g",
+            expiresAt,
+          },
+        })
+        .mockResolvedValueOnce({
+          Item: {
+            grantId: "g",
+            codeHash,
+            status,
+            expiresAt,
+            redeemedAt:
+              status === "redeemed" ? "2026-11-05T01:00:00Z" : undefined,
+            cancelledAt:
+              status === "cancelled" ? "2026-11-05T02:00:00Z" : undefined,
+          },
+        })
+        .mockResolvedValueOnce({});
+      const result = await callHandler({ code: "ABC234" });
+      expect(result.statusCode).toBe(410);
+      expect(JSON.parse(result.body).error).toBe(error);
+      const values = send.mock.calls[2][0].input.ExpressionAttributeValues;
+      const at =
+        status === "redeemed"
+          ? "2026-11-05T01:00:00Z"
+          : status === "cancelled"
+            ? "2026-11-05T02:00:00Z"
+            : expiresAt;
+      expect(values[":ttl"]).toBe(
+        Math.floor(Date.parse(at) / 1000) + 30 * 86400,
+      );
+    },
+  );
+});
+
+describe("legacy enrollment-code compatibility", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    send.mockReset();
+  });
+  it.each(["SITE#s", "PROVIDER#p"])(
+    "still recognizes a single-code invitation under %s",
+    async (grantPk) => {
+      vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+      vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
+      const tokenHash = await enrollmentCodeVerifier("ABC234");
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            grantId: "g",
+            grantPk,
+            grantSk: "GRANT#g",
+            expiresAt: 4102444800,
+          },
+        })
+        .mockResolvedValueOnce({
+          Item: {
+            grantId: "g",
+            deliveryMode: "code",
+            tokenHash,
+            status: "pending",
+            expiresAt: "2099-01-01T00:00:00Z",
+          },
+        });
+      const result = await callHandler({ code: "ABC234" });
+      expect(result.statusCode).toBe(200);
+      expect(send).toHaveBeenCalledTimes(2);
+    },
+  );
+  it("tolerates a concurrent retirement during historical TTL repair", async () => {
+    vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+    vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
+    const codeHash = await enrollmentCodeVerifier("ABC234");
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          grantId: "g",
+          grantPk: "SITE#s",
+          grantSk: "GRANT#g",
+          expiresAt: "2099-01-01T00:00:00Z",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          grantId: "g",
+          codeHash,
+          status: "pending",
+          expiresAt: "2099-01-01T00:00:00Z",
+        },
+      })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("retired concurrently"), {
+          name: "ConditionalCheckFailedException",
+        }),
+      );
+    expect((await callHandler({ code: "ABC234" })).statusCode).toBe(200);
+    expect(send.mock.calls[2][0].input.ConditionExpression).toBe(
+      "grantId = :id AND expiresAt = :observed",
+    );
+  });
 });

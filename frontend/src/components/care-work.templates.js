@@ -1,13 +1,12 @@
 import { captureControls } from "./capture-controls.templates.js";
 import { escapeHtml as e, escapeAttr as a, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
-import { formatTime } from "../i18n/dates.js";
+import { formatMonthDay, formatTime } from "../i18n/dates.js";
 import { formatPhotoDateTime } from "../domain/photo-lightbox.js";
 import {
   CARE_WORK_TYPES,
   careTitle,
   careKindLabel,
-  groupCareWork,
 } from "../domain/care-work.js";
 
 export function careHeader(title, close = false) {
@@ -31,91 +30,130 @@ export function careHeader(title, close = false) {
 export function careList(items, loading = false, offline = false) {
   return html`${careHeader(t("care.title"), true)}
     <p class="care-subtitle">${e(t("care.subtitle"))}</p>
-    <hr class="splash-rule" />
     <button type="button" class="btn-ink care-cta" data-new>
-      ${e(t("care.new"))}
+      <wa-icon name="plus" aria-hidden="true"></wa-icon>${e(t("care.new"))}
     </button>
+    <div class="care-past-head">
+      <h2 class="care-past-title">${e(t("care.pastWork"))}</h2>
+      ${!loading && items.length
+        ? `<span class="care-past-count">${e(t("common.entries", { count: items.length }))}</span>`
+        : ""}
+    </div>
     <div class="care-days" aria-busy="${loading}">
       ${loading
         ? `<p role="status">${e(t("care.loading"))}</p>`
         : items.length
-          ? groupCareWork(items)
-              .map(
-                (group) =>
-                  html`<section class="care-day">
-                    <h2>
-                      ${e(group.label)}<span
-                        aria-label="${a(
-                          t("care.count", { count: group.items.length }),
-                        )}"
-                        >${group.items.length}</span
+          ? html`<ul class="care-list">
+              ${[...items]
+                .sort(
+                  (x, y) => Date.parse(y.createdAt) - Date.parse(x.createdAt),
+                )
+                .map(
+                  (item) =>
+                    html`<li class="care-row-item">
+                      <button
+                        type="button"
+                        class="btn-care care-row"
+                        ${item.status
+                          ? "disabled"
+                          : `data-work="${a(item.workId)}"`}
                       >
-                    </h2>
-                    <ul>
-                      ${group.items
-                        .map(
-                          (item) =>
-                            html`<li>
-                              <div class="care-row-shell">
-                                <button
-                                  type="button"
-                                  class="btn-care care-row"
-                                  ${item.status
-                                    ? "disabled"
-                                    : `data-work="${a(item.workId)}"`}
-                                >
-                                  <strong>${e(careTitle(item))}</strong
-                                  ><time datetime="${a(item.createdAt)}"
-                                    >${e(formatTime(item.createdAt))}</time
-                                  >
-                                </button>
-                                ${item.status
-                                  ? html`<span
-                                      class="care-row__status"
-                                      role="status"
-                                    >
-                                      ${item.status !== "failed" && !offline
-                                        ? '<wa-spinner aria-hidden="true"></wa-spinner>'
-                                        : ""}
-                                      ${e(
-                                        t(
-                                          item.status === "failed"
-                                            ? "care.needsRetry"
-                                            : offline
-                                              ? "card.recovery.offline"
-                                              : "care.savingShort",
-                                        ),
-                                      )}
-                                    </span>`
-                                  : ""}
-                              </div>
-                              ${item.status === "failed"
-                                ? html`<button
-                                    type="button"
-                                    class="btn-outline"
-                                    data-retry-work="${a(item.workId)}"
-                                  >
-                                    ${e(t("care.retry"))}
-                                  </button>`
+                        <strong>${e(careTitle(item))}</strong
+                        ><time datetime="${a(item.createdAt)}"
+                          >${e(
+                            [
+                              formatMonthDay(item.createdAt),
+                              formatTime(item.createdAt),
+                            ]
+                              .filter(Boolean)
+                              .join(" · "),
+                          )}</time
+                        >
+                      </button>
+                      <div class="care-row__actions">
+                        ${item.status
+                          ? html`<span class="care-row__status" role="status">
+                              ${item.status !== "failed" && !offline
+                                ? '<wa-spinner aria-hidden="true"></wa-spinner>'
                                 : ""}
-                              ${item.status === "failed" && item.editable
-                                ? html`<button
-                                    type="button"
-                                    class="btn-outline"
-                                    data-edit-work="${a(item.workId)}"
-                                  >
-                                    ${e(t("care.editRetry"))}
-                                  </button>`
-                                : ""}
-                            </li>`,
-                        )
-                        .join("")}
-                    </ul>
-                  </section>`,
-              )
-              .join("")
+                              ${e(
+                                t(
+                                  item.status === "failed"
+                                    ? "care.needsRetry"
+                                    : offline
+                                      ? "card.recovery.offline"
+                                      : "care.savingShort",
+                                ),
+                              )}
+                            </span>`
+                          : ""}
+                        ${item.status === "failed"
+                          ? html`<button
+                              type="button"
+                              class="btn-outline btn-outline--sm"
+                              data-retry-work="${a(item.workId)}"
+                            >
+                              ${e(t("care.retry"))}
+                            </button>`
+                          : ""}
+                        ${item.status === "failed" && item.editable
+                          ? html`<button
+                              type="button"
+                              class="btn-outline btn-outline--sm"
+                              data-edit-work="${a(item.workId)}"
+                            >
+                              ${e(t("care.editRetry"))}
+                            </button>`
+                          : ""}
+                        ${item.status
+                          ? ""
+                          : html`<button
+                              type="button"
+                              class="care-row__delete"
+                              data-delete-work="${a(item.workId)}"
+                              aria-label="${a(
+                                t("care.delete.aria", {
+                                  label: careTitle(item),
+                                }),
+                              )}"
+                            >
+                              <wa-icon
+                                name="trash"
+                                aria-hidden="true"
+                              ></wa-icon>
+                            </button>`}
+                      </div>
+                    </li>`,
+                )
+                .join("")}
+            </ul>`
           : `<p data-empty>${e(t("care.empty"))}</p>`}
-    </div>`;
+    </div>
+    <dialog
+      id="care-delete"
+      class="places-modal"
+      aria-labelledby="care-delete-title"
+    >
+      <form method="dialog" class="places-modal__card">
+        <div>
+          <h2 id="care-delete-title">${e(t("care.delete.title"))}</h2>
+          <p>${e(t("care.delete.text"))}</p>
+        </div>
+        <div
+          class="app-error app-error--panel"
+          data-delete-error
+          role="alert"
+          hidden
+        ></div>
+        <div class="places-modal__actions">
+          <button class="btn-ink" id="care-delete-confirm" type="button">
+            ${e(t("care.delete.confirm"))}</button
+          ><button class="btn-outline" type="submit">
+            ${e(t("common.cancel"))}
+          </button>
+        </div>
+      </form>
+    </dialog>`;
 }
 export function careOptions() {
   return html`${careHeader(t("care.choose"))}

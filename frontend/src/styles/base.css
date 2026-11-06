@@ -171,6 +171,39 @@ html[data-route-transition="dismiss"]::view-transition-new(root) {
   animation: none;
 }
 
+/* Fixed-frame sheets (care, complaints). The sheet frame — background,
+   26px corners, shadow — is painted by #view and belongs to the root
+   snapshot; the screen inside is its own group (sheet-content). Inner
+   navigation freezes the root (frame and backdrop stand still) and slides
+   only the content; rise/dismiss animate frame and content on the same
+   curve so they read as one sheet. */
+html[data-route-transition="sheet-push"]::view-transition-old(root),
+html[data-route-transition="sheet-push"]::view-transition-new(root),
+html[data-route-transition="sheet-pop"]::view-transition-old(root),
+html[data-route-transition="sheet-pop"]::view-transition-new(root) {
+  animation: none;
+}
+html[data-route-transition="sheet-push"]::view-transition-old(sheet-content) {
+  animation: 220ms ease-out both route-fade-out;
+}
+html[data-route-transition="sheet-push"]::view-transition-new(sheet-content) {
+  animation: 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both route-slide-in-right;
+}
+html[data-route-transition="sheet-pop"]::view-transition-old(sheet-content) {
+  z-index: 1;
+  animation: 200ms cubic-bezier(0.4, 0, 1, 1) both route-slide-out-right;
+}
+html[data-route-transition="sheet-pop"]::view-transition-new(sheet-content) {
+  animation: none;
+}
+html[data-route-transition="rise"]::view-transition-new(sheet-content) {
+  animation: 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both route-rise;
+}
+html[data-route-transition="dismiss"]::view-transition-old(sheet-content) {
+  z-index: 1;
+  animation: 200ms ease-in both route-dismiss;
+}
+
 /* Respect reduced-motion globally: kill non-essential transitions/animation.
    Policy and the list of sites this rule can't reach: docs/frontend-design-system.md
    "Motion". */
@@ -684,6 +717,24 @@ button[data-loading] [data-loading-label] {
 .btn-outline:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
+}
+
+/* Yes / No pair (components/yes-no-choice.js). The picked answer is .btn-ink,
+   the other .btn-outline. Callers can override the layout (e.g. a 2-col grid). */
+.yes-no-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* Keep both states the same size so picking an answer doesn't nudge the
+   buttons: .btn-ink has no border and a 1.1 line-height, .btn-outline has a
+   1px border and inherits the page line-height. */
+.yes-no-choice .btn-ink {
+  border: 1px solid transparent;
+}
+.yes-no-choice .btn-outline {
+  line-height: 1.1;
 }
 
 /* Blue pill — the escalation action ("Filed 311 ticket"). Blue marks the city

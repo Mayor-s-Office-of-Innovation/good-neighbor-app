@@ -527,3 +527,16 @@ processes it starts. It requires a loopback `AWS_ENDPOINT_URL_S3` for MinIO and
 refuses unrelated or ambiguous tunnels. It does not edit `.env.local`, change
 ordinary local development, or affect deployed dev/prod. Restart this command
 if the tunnel URL changes. Keep the tunnel and frontend running while testing.
+
+### Repair local MOICHL Manage access
+
+After enrolling a local City Hall manager with `MOICHL`, run
+`npm run local:seed:manager -w backend` to add canonical membership, binding,
+and physical-device records for active legacy City Hall manager devices. Reopen
+Manage access afterward. The repair requires localhost emulators and a
+`gnp-local-*` table; it preserves session generations and skips existing canonical
+bindings and revoked/suspended devices. It also backfills the Site email assignment
+and global recovery-directory pointer for existing active fixture memberships,
+refusing conflicting identities. Existing active memberships are repaired even
+when every device is revoked; device status and session generations remain
+unchanged. It does not reset login-code usage.

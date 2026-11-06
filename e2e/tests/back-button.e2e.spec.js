@@ -79,12 +79,12 @@ test.describe("back button handling", () => {
   }) => {
     await page.locator("#home-settings").click();
     await page
-      .getByRole("menuitem", { name: t("today.settings.attributions") })
+      .getByRole("menuitem", { name: t("today.settings.logout") })
       .click();
-    const attributions = page.locator("#attributions-dialog");
+    const attributions = page.locator("#logout-dialog");
     await expect(attributions).toBeVisible();
     // The dialog sub-state is visible in the URL as a short-lived hash.
-    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?#attributions$/);
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?#logout$/);
 
     // System back: the sentinel unwinds, the dialog closes, the hash is gone.
     await page.evaluate(() => window.history.back());
@@ -96,15 +96,15 @@ test.describe("back button handling", () => {
   test("refresh mid-dialog does not re-open the dialog", async ({ page }) => {
     await page.locator("#home-settings").click();
     await page
-      .getByRole("menuitem", { name: t("today.settings.attributions") })
+      .getByRole("menuitem", { name: t("today.settings.logout") })
       .click();
-    await expect(page.locator("#attributions-dialog")).toBeVisible();
+    await expect(page.locator("#logout-dialog")).toBeVisible();
 
     await page.reload();
 
     // The view restores from the URL; the dialog state is live-only and
     // stays closed — no decision or sheet is resurrected by a refresh.
-    await expect(page.locator("#attributions-dialog")).not.toBeVisible({
+    await expect(page.locator("#logout-dialog")).not.toBeVisible({
       timeout: 5_000,
     });
     await expect(page.locator("#start-check")).toBeVisible();

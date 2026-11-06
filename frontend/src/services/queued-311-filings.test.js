@@ -2,6 +2,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({ getTaskDetails: vi.fn() }));
 vi.mock("./api.js", () => api);
 import { watchQueued311Filings } from "./queued-311-filings.js";
+import { ApiError, ReauthRequiredError } from "./api-error.js";
 
 /**
  * @param {string} taskId
@@ -96,6 +97,41 @@ it("keeps going after errors", async () => {
   expect(onSettled).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(15_000);
   expect(onSettled).toHaveBeenCalledTimes(1);
+  stop();
+});
+
+it.each([new ReauthRequiredError()])(
+  "stops polling after session recovery has failed: %s",
+  async (error) => {
+    api.getTaskDetails.mockRejectedValue(error);
+    const doc = stubDocument();
+    const onSettled = vi.fn();
+    watchQueued311Filings(["one"], onSettled);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(api.getTaskDetails).toHaveBeenCalledOnce();
+    expect(doc.listeners.size).toBe(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(api.getTaskDetails).toHaveBeenCalledOnce();
+    expect(onSettled).not.toHaveBeenCalled();
+    // A fresh authenticated view can watch the same pending task again.
+    api.getTaskDetails.mockResolvedValue(task("one", "submitted"));
+    watchQueued311Filings(["one"], onSettled);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(onSettled).toHaveBeenCalledOnce();
+  },
+);
+
+it("continues polling after a recoverable token-rotation 401", async () => {
+  api.getTaskDetails
+    .mockRejectedValueOnce(new ApiError("superseded token", { status: 401 }))
+    .mockResolvedValue(task("one", "submitted"));
+  const onSettled = vi.fn();
+  const stop = watchQueued311Filings(["one"], onSettled);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(onSettled).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(15000);
+  expect(onSettled).toHaveBeenCalledOnce();
+  expect(api.getTaskDetails).toHaveBeenCalledTimes(2);
   stop();
 });
 

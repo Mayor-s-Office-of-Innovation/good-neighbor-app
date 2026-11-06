@@ -520,88 +520,110 @@ describe("Manager enrollment redemption", () => {
     });
   });
 
-  it("redeems a staff grant only while its Manager binding and membership remain active", async () => {
-    const token = "staff-one-time-secret";
-    const tokenHash = /^[A-Z0-9]{6}$/.test(token)
-      ? await enrollmentCodeVerifier(token)
-      : await sha256(token);
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          pk: `ENROLLMENT_TOKEN#${tokenHash}`,
-          sk: "#META",
-          grantId: "staff-grant-1",
-          grantPk: "SITE#site-1",
-          grantSk: "STAFF_GRANT#time#staff-grant-1",
-        },
-      })
-      .mockResolvedValueOnce({
-        Item: {
-          pk: "SITE#site-1",
-          sk: "STAFF_GRANT#time#staff-grant-1",
-          grantId: "staff-grant-1",
-          siteId: "site-1",
-          accessLevel: "general",
-          label: "Night team tablet",
-          issuedByBindingId: "manager-1",
-          issuerMembershipId: "membership-1",
-          issuerMembershipGeneration: 2,
-          status: "pending",
-          tokenHash,
-          expiresAt: "2099-01-01T00:00:00.000Z",
-        },
-      })
-      .mockResolvedValueOnce({
-        Item: {
-          siteId: "site-1",
-          name: "Site One",
-          status: "active",
-          siteCredentialGeneration: 4,
-        },
-      })
-      .mockResolvedValueOnce({
-        Item: {
-          pk: "SITE#site-1",
-          sk: "DEVICE_BINDING#manager-1",
-          status: "active",
-          accessLevel: "manager",
-        },
-      })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({
-        Item: {
-          pk: "SITE#site-1",
-          sk: "MANAGER_MEMBERSHIP#membership-1",
-          status: "active",
-          generation: 2,
-        },
-      })
-      .mockResolvedValueOnce({});
+  it.each(["link", "code"])(
+    "redeems a staff grant with either credential (%s)",
+    async (method) => {
+      const token = "staff-one-time-secret";
+      const tokenHash = /^[A-Z0-9]{6}$/.test(token)
+        ? await enrollmentCodeVerifier(token)
+        : await sha256(token);
+      const codeHash = await enrollmentCodeVerifier("ABC234");
+      const lookupHash = method === "code" ? codeHash : tokenHash;
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            pk: `ENROLLMENT_TOKEN#${lookupHash}`,
+            sk: "#META",
+            grantId: "staff-grant-1",
+            grantPk: "SITE#site-1",
+            grantSk: "STAFF_GRANT#time#staff-grant-1",
+          },
+        })
+        .mockResolvedValueOnce({
+          Item: {
+            pk: "SITE#site-1",
+            sk: "STAFF_GRANT#time#staff-grant-1",
+            grantId: "staff-grant-1",
+            siteId: "site-1",
+            accessLevel: "general",
+            label: "Night team tablet",
+            issuedByBindingId: "manager-1",
+            issuerMembershipId: "membership-1",
+            issuerMembershipGeneration: 2,
+            status: "pending",
+            tokenHash,
+            codeHash,
+            expiresAt: "2099-01-01T00:00:00.000Z",
+          },
+        })
+        .mockResolvedValueOnce({
+          Item: {
+            siteId: "site-1",
+            name: "Site One",
+            status: "active",
+            siteCredentialGeneration: 4,
+          },
+        })
+        .mockResolvedValueOnce({
+          Item: {
+            pk: "SITE#site-1",
+            sk: "DEVICE_BINDING#manager-1",
+            status: "active",
+            accessLevel: "manager",
+          },
+        })
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({
+          Item: {
+            pk: "SITE#site-1",
+            sk: "MANAGER_MEMBERSHIP#membership-1",
+            status: "active",
+            generation: 2,
+          },
+        })
+        .mockResolvedValueOnce({});
 
-    const response = await call(
-      event({
-        grantId: "staff-grant-1",
-        token,
+      const response = await call(
+        event({
+          grantId: "staff-grant-1",
+          ...(method === "code" ? { code: "ABC234" } : { token }),
+          physicalDeviceId: "physical_device_2",
+        }),
+      );
+      expect(response.statusCode).toBe(201);
+      expect(JSON.parse(String(response.body))).toMatchObject({
         physicalDeviceId: "physical_device_2",
-      }),
-    );
-    expect(response.statusCode).toBe(201);
-    expect(JSON.parse(String(response.body))).toMatchObject({
-      physicalDeviceId: "physical_device_2",
-      accessLevel: "general",
-    });
-    const transaction = send.mock.calls[6][0];
-    expect(transaction.input.TransactItems).toHaveLength(9);
-    expect(transaction.input.TransactItems[5].Put.Item).toMatchObject({
-      accessLevel: "general",
-      label: "Night team tablet",
-    });
-    // Redemption no longer requires a singleton marker, so other pending
-    // grants from this issuer cannot block this enrollment.
-    expect(JSON.stringify(transaction.input)).not.toContain(
-      "ACTIVE_STAFF_GRANT",
-    );
-  });
+        accessLevel: "general",
+      });
+      const transaction = send.mock.calls[6][0];
+      expect(transaction.input.TransactItems).toHaveLength(10);
+      expect(
+        transaction.input.TransactItems[0].Update.ExpressionAttributeValues[
+          ":tokenHash"
+        ],
+      ).toBe(tokenHash);
+      const retired = transaction.input.TransactItems.at(-1).Update;
+      expect(retired.Key.pk).toBe(
+        `ENROLLMENT_TOKEN#${method === "code" ? tokenHash : codeHash}`,
+      );
+      expect(retired.ExpressionAttributeValues[":status"]).toBe("redeemed");
+      expect(
+        retired.ExpressionAttributeValues[":retention"] -
+          Math.floor(
+            Date.parse(retired.ExpressionAttributeValues[":at"]) / 1000,
+          ),
+      ).toBe(30 * 86400);
+      expect(transaction.input.TransactItems[5].Put.Item).toMatchObject({
+        accessLevel: "general",
+        label: "Night team tablet",
+      });
+      // Redemption no longer requires a singleton marker, so other pending
+      // grants from this issuer cannot block this enrollment.
+      expect(JSON.stringify(transaction.input)).not.toContain(
+        "ACTIVE_STAFF_GRANT",
+      );
+    },
+  );
 });
 
 /**

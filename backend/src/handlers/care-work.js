@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  DeleteCommand,
   GetCommand,
   QueryCommand,
   TransactWriteCommand,
@@ -9,6 +10,7 @@ import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveActorId, deriveSiteId } from "../lib/principal.js";
 import {
+  deleteObject,
   getObjectBytes,
   headObject,
   presignGet,
@@ -315,6 +317,7 @@ export async function createCareWork(event) {
     .update(JSON.stringify({ kind, note, photoIds, actor }))
     .digest("hex");
   const existing = await read(logKey(siteId, workId));
+  if (existing?.status) return jsonResponse(410, { error: "work_deleted" });
   if (existing && existing.expiresAt <= Date.now() / 1000)
     return jsonResponse(410, { error: "work_expired" });
   if (existing)
@@ -433,7 +436,20 @@ export async function createCareWork(event) {
   } catch (error) {
     if (!conditionalFailure(error)) throw error;
     const saved = await read(logKey(siteId, workId));
-    if (saved?.fingerprint === fingerprint)
+    if (saved?.status) {
+      // A competing initial create may have finished decoding after deletion.
+      // Its failed commit must not leave newly written derivatives behind.
+      await Promise.all(
+        photos.flatMap((photo) => {
+          const raw = objectKey(siteId, workId, photo.photoId);
+          return [raw, `${raw}.jpg`, thumbnailKeyFor(`${raw}.jpg`)].map((key) =>
+            deleteObject({ bucket: uploadBucket, key }),
+          );
+        }),
+      );
+      return jsonResponse(410, { error: "work_deleted" });
+    }
+    if (saved?.fingerprint === fingerprint && !saved.status)
       return jsonResponse(200, { work: publicLog(saved) });
     return jsonResponse(409, { error: "work_not_saved" });
   }
@@ -471,8 +487,14 @@ export async function listCareWork(event) {
       TableName: getConfig().dynamoTable,
       IndexName: GSI1_NAME,
       KeyConditionExpression: "gsi1pk = :pk",
-      FilterExpression: "expiresAt > :now",
-      ExpressionAttributeValues: { ":pk": partition, ":now": now },
+      FilterExpression:
+        "expiresAt > :now AND (attribute_not_exists(#status) OR #status <> :deleted)",
+      ExpressionAttributeNames: { "#status": "status" },
+      ExpressionAttributeValues: {
+        ":pk": partition,
+        ":now": now,
+        ":deleted": "deleted",
+      },
       ScanIndexForward: false,
       Limit: 50,
       ExclusiveStartKey: cursor,
@@ -495,7 +517,7 @@ export async function getCareWork(event) {
   if (!UUID.test(workId || ""))
     return jsonResponse(400, { error: "invalid_work_id" });
   const item = await read(logKey(siteId, workId));
-  if (!item || item.expiresAt <= Date.now() / 1000)
+  if (!item || item.status || item.expiresAt <= Date.now() / 1000)
     return jsonResponse(404, { error: "work_not_found" });
   return jsonResponse(200, { work: publicLog(item) });
 }
@@ -509,7 +531,7 @@ export async function getCarePhoto(event) {
   if (!UUID.test(workId || "") || !UUID.test(photoId || ""))
     return jsonResponse(400, { error: "invalid_photo" });
   const item = await read(logKey(siteId, workId));
-  if (!item || item.expiresAt <= Date.now() / 1000)
+  if (!item || item.status || item.expiresAt <= Date.now() / 1000)
     return jsonResponse(404, { error: "work_not_found" });
   const photo = item.photos.find(
     (/** @type {any} */ entry) => entry.photoId === photoId,
@@ -543,4 +565,127 @@ export async function getCarePhoto(event) {
       : undefined,
   ]);
   return jsonResponse(200, { downloadUrl, thumbnailUrl });
+}
+
+/** Site-team deletion, like complaints: lock, remove media, then finish.
+ * A minimal tombstone prevents delayed offline creates from resurrecting the UUID.
+ * @param {any} event
+ */
+export async function deleteCareWork(event) {
+  const siteId = deriveSiteId(event);
+  const workId = event.pathParameters?.workId;
+  if (!UUID.test(workId || ""))
+    return jsonResponse(400, { error: "invalid_work_id" });
+  const key = logKey(siteId, workId);
+  const item = await read(key);
+  if (!item) return jsonResponse(404, { error: "work_not_found" });
+  if (item.status === "deleted")
+    return jsonResponse(200, { status: "deleted" });
+  const { dynamoTable: tableName, uploadBucket } = getConfig();
+  if (item.status !== "deleting") {
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Update: {
+                TableName: tableName,
+                Key: key,
+                UpdateExpression: "SET #status = :deleting",
+                ConditionExpression:
+                  "attribute_exists(pk) AND attribute_not_exists(#status)",
+                ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: { ":deleting": "deleting" },
+              },
+            },
+            {
+              Delete: {
+                TableName: tableName,
+                Key: {
+                  pk: `STATUS#${siteId}`,
+                  sk: `${item.createdAt}#actions#${workId}`,
+                },
+              },
+            },
+          ],
+        }),
+      );
+    } catch (error) {
+      if (!conditionalFailure(error)) throw error;
+      return jsonResponse(409, { error: "work_not_deletable" });
+    }
+  }
+  // Include unused reservations, not just photos selected for submission.
+  const reservations = [];
+  /** @type {Record<string, any> | undefined} */
+  let cursor;
+  do {
+    const page = await ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        ConsistentRead: true,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": key.pk,
+          ":prefix": `CARE_UPLOAD#${workId}#`,
+        },
+        ExclusiveStartKey: cursor,
+      }),
+    );
+    reservations.push(...(page.Items || []));
+    cursor = page.LastEvaluatedKey;
+  } while (cursor);
+  const ids = new Set([
+    ...(item.photos || []).map((/** @type {any} */ photo) => photo.photoId),
+    ...reservations.map((row) =>
+      String(row.sk).slice(`CARE_UPLOAD#${workId}#`.length),
+    ),
+  ]);
+  for (const photoId of ids) {
+    if (!UUID.test(photoId)) continue;
+    const raw = objectKey(siteId, workId, photoId);
+    // Derive every key from the authorized Site; never follow stored pointers.
+    await Promise.all(
+      [raw, `${raw}.jpg`, thumbnailKeyFor(`${raw}.jpg`)].map((key) =>
+        deleteObject({ bucket: uploadBucket, key }),
+      ),
+    );
+  }
+  for (const row of reservations)
+    await ddb.send(
+      new DeleteCommand({
+        TableName: tableName,
+        Key: { pk: row.pk, sk: row.sk },
+      }),
+    );
+  await ddb.send(
+    new TransactWriteCommand({
+      TransactItems: [
+        {
+          Put: {
+            TableName: tableName,
+            Item: {
+              ...key,
+              type: "careWork",
+              status: "deleted",
+              expiresAt: Math.floor(Date.now() / 1000) + 365 * DAY,
+            },
+            ConditionExpression: "#status IN (:deleting, :deleted)",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":deleting": "deleting",
+              ":deleted": "deleted",
+            },
+          },
+        },
+        {
+          Delete: {
+            TableName: tableName,
+            Key: { pk: key.pk, sk: `CARE_QUOTA#${workId}` },
+          },
+        },
+      ],
+    }),
+  );
+  return jsonResponse(200, { status: "deleted" });
 }

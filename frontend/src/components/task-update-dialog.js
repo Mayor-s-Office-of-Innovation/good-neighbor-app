@@ -32,6 +32,7 @@ import {
   taskUpdateNoteEditor,
   taskUpdateTimeline,
 } from "./task-update-dialog.templates.js";
+import { bindYesNoChoice } from "./yes-no-choice.js";
 
 // While a City note is still sending, re-check its status this often, for up
 // to this many times (about two minutes); after that, the next open shows it.
@@ -575,16 +576,13 @@ export class TaskUpdateDialog extends HTMLElement {
         ?.addEventListener("click", action);
     onClick("cancel-save", () => this._saveController?.abort());
     onClick("retry-timeline", () => void this._load(this._retryToken));
-    root.querySelectorAll("[data-city-help]").forEach((element) => {
-      const button = /** @type {HTMLButtonElement} */ (element);
-      button.addEventListener("click", () => {
-        if (this._busy) return;
-        this._cityHelpNeeded = button.dataset.cityHelp === "yes";
-        this._render();
-        /** @type {HTMLButtonElement | null} */ (
-          this.querySelector(`[data-city-help="${button.dataset.cityHelp}"]`)
-        )?.focus();
-      });
+    bindYesNoChoice(root, "city-help", (value, button) => {
+      if (this._busy) return false;
+      this._cityHelpNeeded = value;
+      this._render();
+      /** @type {HTMLButtonElement | null} */ (
+        this.querySelector(`[data-city-help="${button.dataset.cityHelp}"]`)
+      )?.focus();
     });
     root.querySelectorAll("[data-mode]").forEach((element) => {
       const button = /** @type {HTMLButtonElement} */ (element);

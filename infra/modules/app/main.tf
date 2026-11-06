@@ -134,9 +134,11 @@ resource "aws_kms_key" "app" {
         Resource = "*"
       },
       {
-        # CloudFront OAC reads SSE-KMS objects from the frontend bucket; without
-        # this the distributions return AccessDenied on every object. Scoped to
-        # this env's distributions via SourceArn.
+        # CloudFront OAC reads SSE-KMS objects from the frontend bucket (and,
+        # with media cookies on, check media from the uploads bucket, which
+        # uses this same key; see media.tf); without this the distributions
+        # return AccessDenied on every object. Scoped to this env's
+        # distributions via SourceArn.
         Sid    = "AllowCloudFrontDecryptFrontend"
         Effect = "Allow"
         Principal = {
@@ -401,6 +403,9 @@ resource "aws_s3_bucket_public_access_block" "uploads" {
   restrict_public_buckets = true
 }
 
+# TLS-only for everyone, plus (when media cookies are enabled, media.tf) read
+# access for the frontend distribution's OAC limited to the check prefix, so
+# care-work and anything else in this bucket stays unreachable through the edge.
 data "aws_iam_policy_document" "uploads_tls_only" {
   statement {
     sid     = "DenyInsecureTransport"
@@ -420,6 +425,27 @@ data "aws_iam_policy_document" "uploads_tls_only" {
       test     = "Bool"
       variable = "aws:SecureTransport"
       values   = ["false"]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = local.media_cookies_enabled ? [1] : []
+    content {
+      sid       = "AllowCloudFrontServiceGetCheckMedia"
+      effect    = "Allow"
+      actions   = ["s3:GetObject"]
+      resources = ["${aws_s3_bucket.uploads.arn}/checks/*"]
+
+      principals {
+        type        = "Service"
+        identifiers = ["cloudfront.amazonaws.com"]
+      }
+
+      condition {
+        test     = "StringEquals"
+        variable = "AWS:SourceArn"
+        values   = [aws_cloudfront_distribution.frontend.arn]
+      }
     }
   }
 }

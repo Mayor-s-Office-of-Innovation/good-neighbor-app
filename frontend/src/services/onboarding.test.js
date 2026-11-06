@@ -280,3 +280,25 @@ it.each(["lookup", "setup request", "recovery"])(
     }
   },
 );
+
+describe("retained enrollment-code errors", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it.each([
+    ["enrollment_already_used", "used"],
+    ["enrollment_cancelled", "cancelled"],
+    ["enrollment_expired", "expired"],
+  ])("preserves %s feedback from the login probe", async (error, reason) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        status: 410,
+        ok: false,
+        json: async () => ({ error }),
+      }),
+    );
+    await expect(validateSetupCode("ABC234")).resolves.toEqual({
+      ok: false,
+      reason,
+    });
+  });
+});

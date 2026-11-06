@@ -3,7 +3,7 @@
   when services/install-prompt.js says an offer is due, mounted once per shell
   render above <main>, and shown on the home hub (/today) only so it never
   sits on top of a check or report flow. Chromium gets an Install button that
-  replays the held beforeinstallprompt; iOS Safari gets the Share-sheet
+  replays the held beforeinstallprompt; iOS browsers get the Share-sheet
   instruction. Either close path records a dismissal (two-week snooze).
 */
 import { currentRoute, onRouteChange } from "../router.js";

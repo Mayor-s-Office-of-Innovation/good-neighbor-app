@@ -504,8 +504,10 @@
 }
 
 .reports__top {
-  justify-content: flex-end;
-  margin-bottom: 0;
+  /* Back (to the settings menu) is the only exit. One rhythm after the
+     back row on every settings destination: 2rem. */
+  justify-content: flex-start;
+  margin-bottom: 2rem;
 }
 
 /* The design draws no rule under the tab row. */
@@ -1160,4 +1162,20 @@ html.wa-dark .reports-legend__dot--responded {
 .reports-counts .reports-legend__dot--current {
   background: var(--wa-color-brand-40, #0053c0);
   border-color: var(--wa-color-brand-40, #0053c0);
+}
+
+/* Full-bleed screen: the report bodies carry their own gutters. */
+.app--chromeless .app__main:has(> reports-view) {
+  padding: 0;
+}
+
+.home.reports {
+  padding-top: max(1rem, env(safe-area-inset-top));
+}
+
+/* All settings destinations share one surface (like Site information). */
+reports-view {
+  display: block;
+  min-height: 100dvh;
+  background: var(--surface);
 }

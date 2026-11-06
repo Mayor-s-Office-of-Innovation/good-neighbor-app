@@ -35,7 +35,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("support-view h1")).toHaveText(t("support.title"));
 });
 
-test("Ask requires 20 trimmed characters and resets to guidance after sending", async ({
+test("Ask requires 20 trimmed characters and clears validation after sending", async ({
   page,
 }) => {
   let requests = 0;
@@ -49,22 +49,21 @@ test("Ask requires 20 trimmed characters and resets to guidance after sending", 
   const send = page.locator("[data-send]");
   const hint = page.locator("[data-question-hint]");
   await expect(send).toBeDisabled();
-  await expect(hint).toHaveText(t("support.questionHint"));
-  await expect(hint).not.toHaveClass(/support__question-error/);
+  await expect(hint).toBeHidden();
   await field.fill("  " + "a".repeat(19) + "  ");
   await expect(send).toBeDisabled();
-  await expect(hint).toHaveText(t("support.questionTooShort"));
-  await expect(hint).toHaveClass(/support__question-error/);
+  await expect(hint).toHaveText(t("support.questionHint"));
+  await expect(hint).toBeVisible();
   expect(requests).toBe(0);
   await field.fill("a".repeat(20));
   await expect(send).toBeEnabled();
-  await expect(hint).not.toHaveClass(/support__question-error/);
+  await expect(hint).toBeHidden();
   await send.click();
   await expect(page.locator(".support__turn")).toHaveCount(1);
   expect(requests).toBe(1);
   await expect(field).toHaveValue("");
   await expect(send).toBeDisabled();
-  await expect(hint).toHaveText(t("support.questionHint"));
+  await expect(hint).toBeHidden();
 });
 
 test("Help is a screen in the navigation stack and clears on leaving", async ({
@@ -78,7 +77,7 @@ test("Help is a screen in the navigation stack and clears on leaving", async ({
   await page.locator("support-view textarea").fill("How do I finish my check?");
   await page.locator("[data-send]").click();
   await expect(page.locator(".support__turn")).toHaveCount(1);
-  await page.locator("support-view [data-back]").click();
+  await page.locator("support-view [data-menu-back]").click();
   await expect(page.locator("today-view")).toBeVisible();
   await expect(page.locator("support-view")).toHaveCount(0);
   await page.goForward();
@@ -88,7 +87,7 @@ test("Help is a screen in the navigation stack and clears on leaving", async ({
   await expect(page.locator("today-view")).toBeVisible();
 });
 
-test("responses cite sources, collapse, delete and clear", async ({ page }) => {
+test("responses cite sources, collapse and clear", async ({ page }) => {
   await page.route("**/v1/support", (route) =>
     route.fulfill({
       json: {
@@ -114,8 +113,8 @@ test("responses cite sources, collapse, delete and clear", async ({ page }) => {
   }
   const first = page.locator(".support__turn").first();
   await expect(first.locator("script")).toHaveCount(0);
-  await first.locator("details details summary").click();
-  await expect(first.locator("details details p")).toBeVisible();
+  await first.locator(".support__source summary").click();
+  await expect(first.locator(".support__source p")).toBeVisible();
   const sourceSpacing = await first
     .locator(".support__source summary")
     .evaluate((el) => {
@@ -134,12 +133,13 @@ test("responses cite sources, collapse, delete and clear", async ({ page }) => {
   await page.screenshot({
     path: test.info().outputPath("support-source-spacing.png"),
   });
-  await first.locator("summary").first().click();
-  await expect(first.locator("p").first()).toBeHidden();
-  await first.locator("summary").first().press("Enter");
-  await expect(first.locator("p").first()).toBeVisible();
-  await first.locator("[data-delete-response]").click();
-  await expect(page.locator(".support__turn")).toHaveCount(1);
+  const toggle = first.locator(".support__sources-toggle");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(first.locator(".support__sources")).toBeHidden();
+  await toggle.press("Enter");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(first.locator(".support__source p")).toBeVisible();
   await page.locator("[data-clear]").click();
   await expect(page.locator(".support__turn")).toHaveCount(0);
   await expect(page.locator("support-view textarea")).toBeFocused();
@@ -191,7 +191,7 @@ test("leaving aborts pending answers and prevents stale updates", async ({
   await page.locator("[data-send]").click();
   await expect.poll(() => count).toBe(1);
   await expect(page.locator("[data-send]")).toBeDisabled();
-  await page.locator("support-view [data-back]").click();
+  await page.locator("support-view [data-menu-back]").click();
   await expect(page.locator("support-view")).toHaveCount(0);
   release?.();
   await page.goForward();
@@ -208,8 +208,10 @@ test("fits desktop and mobile and passes accessibility", async ({ page }) => {
         .evaluate((el) => el.scrollWidth <= el.clientWidth),
     ).toBe(true);
   }
-  await page.locator("support-view [data-back]").focus();
+  await page.locator("support-view [data-menu-back]").focus();
   await page.keyboard.press("Tab");
+  await expect(page.locator("[data-starter]").first()).toBeFocused();
+  for (let i = 0; i < 3; i++) await page.keyboard.press("Tab");
   await expect(page.locator("support-view textarea")).toBeFocused();
   const results = await new AxeBuilder({ page })
     .include("support-view")
@@ -234,51 +236,65 @@ test("direct Help loads and refreshes work, with Home as the Back fallback", asy
   await expect(direct.locator("support-view h1")).toHaveText(
     t("support.title"),
   );
-  await direct.locator("support-view [data-back]").click();
+  await direct.locator("support-view [data-menu-back]").click();
   await expect(direct).toHaveURL(/\/today$/);
   await expect(direct.locator("today-view")).toBeVisible();
   await direct.close();
 });
 
-test("clears only the question draft and returns keyboard focus to it", async ({
+test("starters submit once and return when the conversation is cleared", async ({
   page,
 }) => {
-  let supportRequests = 0;
+  /** @type {string[]} */
+  const questions = [];
   await page.route("**/v1/support", (route) => {
-    supportRequests += 1;
+    questions.push(route.request().postDataJSON().question);
     return route.fulfill({ json: { outcome: "unknown" } });
   });
-  const question = page.locator("support-view textarea");
-  await question.fill("Synthetic saved question");
-  await page.locator("[data-send]").click();
-  await expect(page.locator(".support__turn")).toHaveCount(1);
-  expect(supportRequests).toBe(1);
-  await expect(page.locator(".support__turn")).toContainText(
-    t("support.unknown"),
-  );
-  await question.fill("Synthetic unsent draft");
-  await page.locator("[data-clear-question]").focus();
+  const starters = page.locator("[data-starters]");
+  const first = page.locator("[data-starter]").first();
+  const question = (await first.locator("span").textContent())?.trim() || "";
+  await first.focus();
   await page.keyboard.press("Enter");
-  await expect(question).toHaveValue("");
-  await expect(question).toBeFocused();
-  await expect(page.locator("[data-clear-question]")).toBeHidden();
   await expect(page.locator(".support__turn")).toHaveCount(1);
-  await expect(page.locator("[data-send]")).toBeDisabled();
-  await expect(page.locator("[data-question-hint]")).toHaveText(
-    t("support.questionHint"),
-  );
-  await question.fill("Too short");
-  await expect(page.locator("[data-question-hint]")).toHaveText(
-    t("support.questionTooShort"),
-  );
-  await page.locator("[data-clear-question]").click();
-  await expect(question).toHaveValue("");
-  await expect(question).toBeFocused();
-  await expect(page.locator("[data-question-hint]")).toHaveText(
-    t("support.questionHint"),
-  );
-  await expect(page.locator("[data-send]")).toBeDisabled();
-  await question.fill("Synthetic valid question after clearing");
-  await expect(page.locator("[data-send]")).toBeEnabled();
-  expect(supportRequests).toBe(1);
+  expect(questions).toEqual([question]);
+  await expect(starters).toBeHidden();
+  await expect(page.locator("support-view textarea")).toHaveValue("");
+  await page.locator("[data-clear]").click();
+  await expect(page.locator(".support__turn")).toHaveCount(0);
+  await expect(starters).toBeVisible();
+  await expect(page.locator("support-view textarea")).toBeFocused();
 });
+
+for (const [id, label] of [
+  ["FAQ-13", "support.sourceFaq"],
+  ["GUIDE-01", "support.sourceGuide"],
+  ["POLICY-04", "support.sourceDoc"],
+]) {
+  test(`labels ${id} with its source document`, async ({ page }) => {
+    await page.route("**/v1/support", (route) =>
+      route.fulfill({
+        json: {
+          outcome: "answered",
+          answer: "Synthetic answer.",
+          sources: [
+            { id, title: "Synthetic source", text: "Synthetic excerpt." },
+          ],
+        },
+      }),
+    );
+    await page.locator("[data-starter]").first().click();
+    await expect(page.locator(".support__source-doc")).toHaveText(
+      t(label, { id }),
+    );
+    await page
+      .locator("support-view textarea")
+      .fill("An unsent question draft");
+    await page.locator("[data-clear]").click();
+    await expect(page.locator(".support__turn")).toHaveCount(0);
+    await expect(page.locator("[data-starters]")).toBeVisible();
+    await expect(page.locator("support-view textarea")).toHaveValue(
+      "An unsent question draft",
+    );
+  });
+}

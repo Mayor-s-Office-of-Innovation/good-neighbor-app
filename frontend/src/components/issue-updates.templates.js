@@ -8,6 +8,7 @@ import {
   formatPacificDateTime,
 } from "../domain/task-updates.js";
 import { artifactPhoto } from "./artifact-photo.templates.js";
+import { yesNoChoice } from "./yes-no-choice.js";
 import "./status-ticker.css";
 
 /** @param {string} type */
@@ -194,26 +195,14 @@ export function cityHelpQuestion(needed, disabled = false) {
     aria-labelledby="city-help-title"
   >
     <h3 id="city-help-title">${escapeHtml(t("taskUpdate.cityHelp.title"))}</h3>
-    <div class="task-update__actions">
-      <button
-        type="button"
-        class="btn-ink"
-        data-city-help="yes"
-        aria-pressed="${needed === true}"
-        ${disabled ? "disabled" : ""}
-      >
-        ${escapeHtml(t("taskUpdate.cityHelp.yes"))}
-      </button>
-      <button
-        type="button"
-        class="btn-outline"
-        data-city-help="no"
-        aria-pressed="${needed === false}"
-        ${disabled ? "disabled" : ""}
-      >
-        ${escapeHtml(t("taskUpdate.cityHelp.no"))}
-      </button>
-    </div>
+    ${yesNoChoice({
+      name: "city-help",
+      value: needed,
+      yesLabel: t("taskUpdate.cityHelp.yes"),
+      noLabel: t("taskUpdate.cityHelp.no"),
+      disabled,
+      className: "task-update__actions",
+    })}
   </section>`;
 }
 

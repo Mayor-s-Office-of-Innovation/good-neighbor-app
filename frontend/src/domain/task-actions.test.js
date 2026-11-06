@@ -12,6 +12,27 @@ import {
 } from "./task-actions.js";
 
 describe("task action helpers", () => {
+  it("directs historical classification failures to 311 without offering resubmission", () => {
+    const task = {
+      status: "in_progress",
+      inProgressActionKind: "311_filed",
+      appActionStatus: "failed",
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          status: "failed",
+          reason: "insufficient_classifier_information",
+        },
+      ],
+    };
+    expect(filing311FailureMessage(task)).toBe(
+      t("taskAction.failure.cannotFile"),
+    );
+    expect(canRetry311Filing(task)).toBe(false);
+    expect(appActionFailureMessage({ ...task, status: "open" })).toBe(
+      t("taskAction.failure.cannotFile"),
+    );
+  });
   it.each(["completed", "in_progress"])(
     "does not report a saved %s action as failed because of background 311 results",
     (status) => {

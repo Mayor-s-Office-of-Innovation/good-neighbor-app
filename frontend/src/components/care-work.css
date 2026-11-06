@@ -1,9 +1,56 @@
-care-work-view {
-  display: block;
-}
-.app--chromeless .app__main:has(> care-work-view) {
+/* Bottom-sheet presentation (care + complaints): the sheet stops ~90% of
+   the way up, top corners 26px, app background visible above — the peek
+   tells users the screen closes.
+
+   Layering: the FRAME (surface, corners, shadow) lives on #view, the route
+   container that persists across navigations — so moving between pages
+   inside the sheet never remounts or repaints it. The screen element inside
+   is the CONTENT layer, named sheet-content for the router's View
+   Transitions: it rises/dismisses with the frame and pushes/pops
+   horizontally within it (see router.js FRAMED_SHEET_ROUTES and the
+   sheet-push/sheet-pop rules in base.css). */
+.app__main:has(> care-work-view),
+.app__main:has(> complaint-view) {
+  position: fixed;
+  inset: max(env(safe-area-inset-top), 10dvh) 0 0;
+  z-index: 10;
+  overflow: hidden; /* clips scrolling content at the rounded corners */
   padding: 0;
-  padding-block-start: max(1rem, env(safe-area-inset-top));
+  background: var(--surface);
+  border-radius: 26px 26px 0 0;
+  box-shadow: var(--shadow-lift);
+}
+care-work-view,
+complaint-view {
+  display: block;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--surface); /* opaque snapshot, so push/pop never ghost */
+  view-transition-name: sheet-content;
+}
+/* On the list screens the header (title, subtitle, record CTA, past head)
+   freezes: the sheet stops scrolling as a whole and only the list pane
+   scrolls. The other care/complaint screens keep whole-sheet scrolling. */
+care-work-view:has(.care-days),
+complaint-view:has(.complaints__list) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+complaint-view:has(.complaints__list) .complaints {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
+.care-days,
+.complaints__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .care-work {
   box-sizing: border-box;
@@ -54,25 +101,75 @@ care-work-view {
   width: 100%;
   min-height: 44px;
 }
-.care-days {
-  margin-top: 32px;
-}
-.care-day + .care-day {
-  margin-top: 32px;
-}
-.care-day h2 {
+/* ---- Shared "past items" vocabulary (care + complaints). One block styles
+   both screens so type and spacing cannot drift apart: section head with an
+   entry count, then divider rows (not cards). Complaint selectors are scoped
+   under .complaints so these win over complaint-view.css regardless of
+   import order. ---- */
+.care-past-head {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 16px;
-  margin: 0 0 12px;
-  font-size: 0.875rem;
-  color: var(--text-secondary);
+  gap: 1rem;
+  margin: 28px 0 0;
+}
+.care-past-title {
+  margin: 0;
+  font-size: var(--wa-font-size-l, 1.25rem);
   font-weight: 600;
+  line-height: 1.2;
 }
-.care-day h2 span {
-  font-weight: 400;
+.care-past-count {
+  font-size: var(--wa-font-size-s, 0.875rem);
+  color: var(--text-secondary);
 }
-.care-day ul,
+.care-row-item,
+.complaints .complaint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0;
+  padding: 1.25rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.care-row-item + .care-row-item,
+.complaints .complaint-row + .complaint-row {
+  border-top: 1px solid var(--c-line);
+}
+.care-row strong,
+.complaints .complaint-row h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.care-row time,
+.complaints .complaint-row p {
+  margin: 0;
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+/* The log CTAs carry a leading plus on both screens. */
+.care-cta,
+.complaints__new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+.care-cta wa-icon,
+.complaints__new wa-icon {
+  font-size: 0.9em;
+}
+.care-days,
+.complaints__list {
+  margin-top: 16px;
+}
+.care-list,
 .care-thumbnails {
   list-style: none;
   margin: 0;
@@ -80,26 +177,81 @@ care-work-view {
 }
 .care-row {
   display: flex;
+  flex: 1;
   flex-direction: column;
+  align-items: flex-start;
   gap: 6px;
-  width: 100%;
-  padding: 16px 0 10px;
+  min-inline-size: 0;
+  padding: 0;
   border: 0;
-  border-bottom: 1px solid var(--c-line);
   color: var(--text);
   background: transparent;
   font: inherit;
   text-align: start;
+  white-space: normal;
   cursor: pointer;
 }
 .care-row strong {
-  font-weight: 600;
   overflow-wrap: anywhere;
 }
-.care-row time {
-  align-self: flex-end;
-  font-size: 0.875rem;
-  color: var(--text-secondary);
+.care-row__delete {
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.care-row__delete:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+  border-radius: 50%;
+}
+
+/* Delete confirmation — self-contained (mirrors #complaint-delete) so the
+   dialog renders correctly when /care-work is opened directly, without
+   depending on another view's stylesheet being loaded. */
+#care-delete {
+  border: 0;
+  padding: 0;
+  width: min(400px, calc(100vw - 2rem));
+  border-radius: 24px;
+  background: var(--surface);
+}
+#care-delete::backdrop {
+  background: color-mix(in srgb, var(--text) 64%, transparent);
+}
+#care-delete .places-modal__card {
+  margin: 0;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+#care-delete h2,
+#care-delete p {
+  margin: 0;
+}
+#care-delete .places-modal__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+#care-delete .places-modal__actions button {
+  width: 100%;
+}
+#care-delete-confirm {
+  background: var(--wa-color-danger-fill-loud, var(--c-hazard));
+  color: var(--wa-color-danger-on-loud, #fff);
+}
+.care-row__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 .care-options {
   display: grid;
@@ -287,14 +439,6 @@ care-work-view {
   height: 84px;
   aspect-ratio: auto;
 }
-.care-day ul {
-  padding-inline-start: 0;
-}
-.care-day li {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
 
 .care-photo-section {
   min-width: 0;
@@ -315,23 +459,22 @@ care-work-view {
   }
 }
 
-.care-row-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+/* Let the whole sheet scroll when enlarged text or a short viewport makes
+   the fixed header too tall to leave a usable list pane. */
+complaint-view:has(.complaints__sticky[data-static]) {
+  display: block;
+  overflow-y: auto;
 }
-.care-row-shell .care-row {
-  min-inline-size: 0;
-  white-space: normal;
-  border-bottom: 0;
+complaint-view:has(.complaints__sticky[data-static]) .complaints__list {
+  flex: none;
+  overflow: visible;
 }
-.care-row-shell .care-row strong {
-  max-inline-size: 100%;
-}
-.care-row-shell {
-  border-bottom: 1px solid var(--c-line);
-}
-.care-row-shell .care-row__status {
-  justify-self: end;
-  max-inline-size: 100%;
-  padding-block-end: 0.625rem;
+@media (max-height: 540px) {
+  care-work-view:has(.care-days) {
+    display: block;
+    overflow-y: auto;
+  }
+  care-work-view .care-days {
+    overflow: visible;
+  }
 }

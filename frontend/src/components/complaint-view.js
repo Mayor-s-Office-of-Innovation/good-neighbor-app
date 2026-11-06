@@ -19,7 +19,11 @@ import {
 } from "../router.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
-import { formatMonthDayTime } from "../i18n/dates.js";
+import {
+  formatMonthDay,
+  formatMonthDayTime,
+  formatTime,
+} from "../i18n/dates.js";
 import {
   createComplaint,
   deleteComplaint,
@@ -98,7 +102,10 @@ class ComplaintView extends HTMLElement {
     const header = this.querySelector(".complaints__sticky");
     if (!header) return;
     const height = header.getBoundingClientRect().height;
-    const viewport = window.visualViewport?.height || window.innerHeight;
+    const viewport = Math.min(
+      window.visualViewport?.height || window.innerHeight,
+      this.clientHeight || window.innerHeight,
+    );
     const safeTop = parseFloat(getComputedStyle(header).insetBlockStart) || 0;
     const fits = height <= Math.max(0, viewport - safeTop) / 2;
     header.toggleAttribute("data-static", !fits);
@@ -143,10 +150,14 @@ class ComplaintView extends HTMLElement {
         <div class="complaints__sticky">
           ${careHeader(t("complaints.title"), true)}
           <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
-          <hr class="splash-rule" />
           <button class="btn-ink complaints__new" type="button" disabled>
-            ${escapeHtml(t("complaints.log"))}
+            <wa-icon name="plus" aria-hidden="true"></wa-icon>${escapeHtml(
+              t("complaints.log"),
+            )}
           </button>
+          <div class="care-past-head">
+            <h2 class="care-past-title">${escapeHtml(t("complaints.past"))}</h2>
+          </div>
         </div>
         <p class="hint" role="status">${escapeHtml(t("common.loading"))}</p>
       </div>`;
@@ -159,14 +170,21 @@ class ComplaintView extends HTMLElement {
         <div class="complaints__sticky">
           ${careHeader(t("complaints.title"), true)}
           <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
-          <hr class="splash-rule" />
           <button
             class="btn-ink complaints__new"
             id="log-complaint"
             type="button"
           >
-            ${escapeHtml(t("complaints.log"))}
+            <wa-icon name="plus" aria-hidden="true"></wa-icon>${escapeHtml(
+              t("complaints.log"),
+            )}
           </button>
+          <div class="care-past-head">
+            <h2 class="care-past-title">${escapeHtml(t("complaints.past"))}</h2>
+            ${complaints.length
+              ? `<span class="care-past-count">${escapeHtml(t("common.entries", { count: complaints.length }))}</span>`
+              : ""}
+          </div>
         </div>
         ${this._listActionError
           ? `<p class="complaint-compose__error" role="alert">${escapeHtml(t(this._listActionError))}</p>`
@@ -218,14 +236,18 @@ class ComplaintView extends HTMLElement {
         <div class="complaints__sticky">
           ${careHeader(t("complaints.title"), true)}
           <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
-          <hr class="splash-rule" />
           <button
             class="btn-ink complaints__new"
             type="button"
             data-new-complaint
           >
-            ${escapeHtml(t("complaints.log"))}
+            <wa-icon name="plus" aria-hidden="true"></wa-icon>${escapeHtml(
+              t("complaints.log"),
+            )}
           </button>
+          <div class="care-past-head">
+            <h2 class="care-past-title">${escapeHtml(t("complaints.past"))}</h2>
+          </div>
           ${loadError(t("complaints.loadError"), {
             retryAttribute: "data-retry-list",
           })}
@@ -263,7 +285,13 @@ class ComplaintView extends HTMLElement {
               : item.label || t("complaints.analyzing"),
           )}
         </h2>
-        <p>${escapeHtml(formatMonthDayTime(item.createdAt))}</p>
+        <p>
+          ${escapeHtml(
+            [formatMonthDay(item.createdAt), formatTime(item.createdAt)]
+              .filter(Boolean)
+              .join(" · "),
+          )}
+        </p>
       </a>
       <div class="complaint-row__actions">
         ${failed

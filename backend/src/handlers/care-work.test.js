@@ -1,11 +1,13 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import {
+  DeleteCommand,
   GetCommand,
   QueryCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 const mocks = vi.hoisted(() => ({
   send: vi.fn(),
+  deleteObject: vi.fn(),
   headObject: vi.fn(),
   getObjectBytes: vi.fn(),
   presignGet: vi.fn(),
@@ -27,6 +29,7 @@ vi.mock("../media/thumbnail.js", () => ({
 }));
 import {
   createCareWork,
+  deleteCareWork,
   listCareWork,
   getCareWork,
   getCarePhoto,
@@ -140,7 +143,8 @@ describe("Site-scoped proactive care", () => {
     const query = mocks.send.mock.calls.find(
       ([command]) => command instanceof QueryCommand,
     )?.[0];
-    expect(query.input.FilterExpression).toBe("expiresAt > :now");
+    expect(query.input.FilterExpression).toContain("expiresAt > :now");
+    expect(query.input.ExpressionAttributeValues[":deleted"]).toBe("deleted");
   });
   it("bounds pagination and refuses a cursor from another tenant", async () => {
     const token = Buffer.from(
@@ -556,3 +560,185 @@ it.each(["offered_services_at_site", "picked_up_needles"])(
     expect(records.get(`SITE#site-a/CARE_WORK#${ID}`).kind).toBe(kind);
   },
 );
+
+describe("care deletion", () => {
+  const key = `SITE#site-a/CARE_WORK#${ID}`;
+  beforeEach(async () => {
+    await createCareWork(event(payload()));
+    const original = mocks.send.getMockImplementation();
+    mocks.send.mockImplementation(async (command) => {
+      if (command instanceof TransactWriteCommand) {
+        for (const op of command.input.TransactItems || []) {
+          if (op.Update) {
+            expect(op.Update.Key).toEqual({
+              pk: "SITE#site-a",
+              sk: `CARE_WORK#${ID}`,
+            });
+            expect(op.Update.ConditionExpression).toContain(
+              "attribute_not_exists(#status)",
+            );
+            records.get(key).status = "deleting";
+          }
+          if (op.Delete?.Key)
+            records.delete(`${op.Delete.Key.pk}/${op.Delete.Key.sk}`);
+        }
+      }
+      return original?.(command);
+    });
+    mocks.send.mockClear();
+  });
+  it("permits another device at the same Site, removes the action projection, and prevents resurrection", async () => {
+    expect(
+      (await deleteCareWork(event(undefined, "site-a", "device-b"))).statusCode,
+    ).toBe(200);
+    expect(records.get(key)).toEqual({
+      pk: "SITE#site-a",
+      sk: `CARE_WORK#${ID}`,
+      type: "careWork",
+      status: "deleted",
+      expiresAt: NOW + 365 * 86400,
+    });
+    const writes = mocks.send.mock.calls.filter(
+      ([c]) => c instanceof TransactWriteCommand,
+    );
+    expect(writes[0][0].input.TransactItems[1].Delete.Key).toEqual({
+      pk: "STATUS#site-a",
+      sk: `2026-10-16T12:00:00.000Z#actions#${ID}`,
+    });
+    expect((await getCareWork(event())).statusCode).toBe(404);
+    expect((await getCarePhoto(event())).statusCode).toBe(404);
+    expect((await createCareWork(event(payload()))).statusCode).toBe(410);
+    expect((await deleteCareWork(event())).statusCode).toBe(200);
+    expect(
+      (
+        await presignCarePhoto(
+          event({
+            photoId: PHOTO,
+            contentType: "image/jpeg",
+            contentLength: 10,
+          }),
+        )
+      ).statusCode,
+    ).toBe(409);
+  });
+  it("cannot delete another Site's log or accept an invalid ID or missing Site claim", async () => {
+    expect((await deleteCareWork(event(undefined, "site-b"))).statusCode).toBe(
+      404,
+    );
+    expect(
+      (await deleteCareWork({ ...event(), pathParameters: { workId: "bad" } }))
+        .statusCode,
+    ).toBe(400);
+    await expect(
+      deleteCareWork({ ...event(), requestContext: { authorizer: {} } }),
+    ).rejects.toThrow("no custom:siteId claim");
+    expect(mocks.deleteObject).not.toHaveBeenCalled();
+    expect(records.get(key).status).toBeUndefined();
+  });
+  it("deletes raw images, normalized images and thumbnails, including unused paginated reservations", async () => {
+    const unused = "33333333-3333-4333-8333-333333333333";
+    records.get(key).photos = [
+      {
+        photoId: PHOTO,
+        s3Key: "other-site/private",
+        thumbS3Key: "other-site/private.thumb",
+      },
+    ];
+    const reservation = {
+      pk: "SITE#site-a",
+      sk: `CARE_UPLOAD#${ID}#${unused}`,
+    };
+    const original = mocks.send.getMockImplementation();
+    let pages = 0;
+    mocks.send.mockImplementation(async (command) => {
+      if (command instanceof QueryCommand) {
+        expect(command.input.ConsistentRead).toBe(true);
+        return ++pages === 1
+          ? { Items: [], LastEvaluatedKey: reservation }
+          : { Items: [reservation] };
+      }
+      return original?.(command);
+    });
+    await deleteCareWork(event());
+    expect(pages).toBe(2);
+    for (const id of [PHOTO, unused]) {
+      const raw = `care-work/site-a/${ID}/${id}`;
+      for (const key of [raw, `${raw}.jpg`, `${raw}.jpg.thumb.webp`])
+        expect(mocks.deleteObject).toHaveBeenCalledWith({
+          bucket: "uploads",
+          key,
+        });
+    }
+    expect(mocks.deleteObject).toHaveBeenCalledTimes(6);
+    expect(
+      mocks.send.mock.calls.some(
+        ([c]) =>
+          c instanceof DeleteCommand && c.input.Key?.sk === reservation.sk,
+      ),
+    ).toBe(true);
+  });
+  it("keeps deletion retryable after an object-store failure and does not serve media", async () => {
+    records.get(key).photos = [{ photoId: PHOTO }];
+    mocks.deleteObject.mockRejectedValueOnce(new Error("unavailable"));
+    await expect(deleteCareWork(event())).rejects.toThrow("unavailable");
+    expect(records.get(key).status).toBe("deleting");
+    expect((await getCarePhoto(event())).statusCode).toBe(404);
+    expect((await createCareWork(event(payload()))).statusCode).toBe(410);
+    mocks.deleteObject.mockResolvedValue({});
+    expect((await deleteCareWork(event())).statusCode).toBe(200);
+  });
+  it("rejects a racing lock failure instead of deleting media", async () => {
+    // Fail the lock, after the consistent read.
+    mocks.send
+      .mockReset()
+      .mockResolvedValueOnce({ Item: records.get(key) })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("conflict"), {
+          name: "TransactionCanceledException",
+        }),
+      );
+    expect((await deleteCareWork(event())).statusCode).toBe(409);
+    expect(mocks.deleteObject).not.toHaveBeenCalled();
+  });
+});
+
+it("cleans late derivatives when a concurrent create loses to deletion", async () => {
+  records.set(`SITE#site-a/CARE_UPLOAD#${ID}#${PHOTO}`, {
+    createdBy: "device-a",
+    contentLength: 3,
+    contentType: "image/jpeg",
+    createdAt: NOW,
+    expiresAt: NOW + 86400,
+  });
+  mocks.headObject.mockResolvedValue({
+    contentType: "image/jpeg",
+    contentLength: 3,
+    metadata: { "declared-bytes": "3" },
+  });
+  mocks.getObjectBytes.mockResolvedValue({ bytes: Buffer.from("raw") });
+  mocks.downscaleImage.mockResolvedValue({
+    bytes: Buffer.from("jpeg"),
+    contentType: "image/jpeg",
+  });
+  const original = mocks.send.getMockImplementation();
+  mocks.send.mockImplementation(async (command) => {
+    if (command instanceof TransactWriteCommand) {
+      records.set(`SITE#site-a/CARE_WORK#${ID}`, { status: "deleted" });
+      throw Object.assign(new Error("lost create"), {
+        name: "TransactionCanceledException",
+      });
+    }
+    return original?.(command);
+  });
+  expect(
+    (await createCareWork(event({ ...payload(), photoIds: [PHOTO] })))
+      .statusCode,
+  ).toBe(410);
+  expect(mocks.putObject).toHaveBeenCalledOnce();
+  expect(mocks.deleteObject).toHaveBeenCalledTimes(3);
+  for (const suffix of ["", ".jpg", ".jpg.thumb.webp"])
+    expect(mocks.deleteObject).toHaveBeenCalledWith({
+      bucket: "uploads",
+      key: `care-work/site-a/${ID}/${PHOTO}${suffix}`,
+    });
+});

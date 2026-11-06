@@ -9,21 +9,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Spies for the three side-effecting seams. vi.hoisted lets the mock factories
 // (hoisted above imports) reference them.
-const { ddbSend, sqsSend, presignPut, presignGet, headObject, setObjectTags } =
-  vi.hoisted(() => ({
-    ddbSend: vi.fn(),
-    sqsSend: vi.fn(),
-    presignPut: vi.fn(),
-    presignGet: vi.fn(),
-    headObject: vi.fn(),
-    setObjectTags: vi.fn(),
-  }));
+const {
+  ddbSend,
+  sqsSend,
+  presignPut,
+  presignGet,
+  headObject,
+  setObjectTags,
+  deleteObject,
+} = vi.hoisted(() => ({
+  ddbSend: vi.fn(),
+  sqsSend: vi.fn(),
+  presignPut: vi.fn(),
+  presignGet: vi.fn(),
+  headObject: vi.fn(),
+  setObjectTags: vi.fn(),
+  deleteObject: vi.fn(async () => ({})),
+}));
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../s3.js", () => ({
   presignPut,
   presignGet,
   headObject,
   setObjectTags,
+  deleteObject,
 }));
 vi.mock("@aws-sdk/client-sqs", async (importOriginal) => {
   const actual = /** @type {any} */ (await importOriginal());
@@ -975,6 +984,72 @@ describe("deleteArtifact", () => {
       ],
     });
   }
+
+  it("removes the original and thumbnail objects along with the row", async () => {
+    deleteObject.mockClear();
+    mockCheckWithArtifact();
+    ddbSend.mockResolvedValueOnce({});
+    const res = await callDelete(
+      deleteEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(
+      deleteObject.mock.calls
+        .map((call) => /** @type {any} */ (call)[0].key)
+        .sort(),
+    ).toEqual([
+      "checks/site-1/chk_01/place-north/art_1",
+      "checks/site-1/chk_01/place-north/art_1.thumb.webp",
+    ]);
+  });
+
+  it("leaves objects outside the caller's tenant prefix alone and survives a failed delete", async () => {
+    deleteObject.mockClear();
+    ddbSend.mockResolvedValueOnce({
+      Items: [{ sk: "CHECK#chk_01", status: "in_progress" }],
+    });
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          sk: "CHECK#chk_01#ART#art_1",
+          artifactId: "art_1",
+          s3Key: "checks/site-2/chk_01/art_1",
+        },
+      ],
+    });
+    ddbSend.mockResolvedValueOnce({});
+    expect(
+      (
+        await callDelete(
+          deleteEvent({
+            checkId: "chk_01",
+            artifactId: "art_1",
+            siteClaim: "site-1",
+          }),
+        )
+      ).statusCode,
+    ).toBe(200);
+    expect(deleteObject).not.toHaveBeenCalled();
+
+    deleteObject.mockRejectedValueOnce(new Error("synthetic S3 failure"));
+    mockCheckWithArtifact();
+    ddbSend.mockResolvedValueOnce({});
+    expect(
+      (
+        await callDelete(
+          deleteEvent({
+            checkId: "chk_01",
+            artifactId: "art_1",
+            siteClaim: "site-1",
+          }),
+        )
+      ).statusCode,
+    ).toBe(200);
+  });
 
   it("deletes the ART# item after resolving it by artifactId", async () => {
     mockCheckWithArtifact();

@@ -377,8 +377,11 @@ async function deliverCityHelpNoteInner(tableName, siteId, update, options) {
       await state("suppressed");
       return true;
     }
-    // Only explicit HUB validation rejections prove the note was not accepted.
+    // Only an explicit HUB validation rejection of the send itself proves the
+    // note was not accepted. The same codes from the feed check say nothing
+    // about an earlier send, so that note stays unknown.
     const rejected =
+      stage === "outbound" &&
       error instanceof Sf311Error &&
       /^(21|23|24|25|26|27|28|29)$/.test(String(error.code));
     // A queued job doesn't retry a rejection, so that one always alerts.
