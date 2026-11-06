@@ -50,6 +50,7 @@ locals {
     "POST /v1/checks/{checkId}/complete",
     "GET /v1/checks/{checkId}/artifacts/{artifactId}/media",
     "GET /v1/checks/{checkId}/artifacts/{artifactId}/duplicates",
+    "POST /v1/checks:evidence",
     "GET /v1/checks/{checkId}",
     "GET /v1/care-work",
     "POST /v1/care-work",

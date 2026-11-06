@@ -31,6 +31,13 @@ by authoritative guidance and receipt reads. Total cost therefore depends on the
 number of historical pages, retained assessments, and returned tasks; none of
 these reads calls the analyzer.
 
+After rendering the task list, Home requests evidence for uncached checks in groups
+of up to five. Each group starts immediately, including the last partial group.
+A single check uses the existing detail GET. Larger groups use the authenticated
+`POST /v1/checks:evidence` route, which runs the check queries concurrently and
+returns only card evidence fields. Task cards and recovered questions share
+in-flight reads by check ID. A failed check stays eligible for retry.
+
 ## Background refresh cadence
 
 Home polls check summaries and all four task statuses once per minute while
@@ -84,7 +91,7 @@ repeats the reads. The count comes from code, not a live AWS measurement.
 | HTML page | **1** | CloudFront; S3 serves it on a cache miss |
 | JS files | **11** | CloudFront; files load in parallel as the browser finds them |
 | CSS files | **2** | CloudFront |
-| API calls that read DynamoDB | **16** | 5 settings/list calls (the check list and the open worklist are one `GET /v1/home`, the other three statuses a second) + 5 check details + 5 photo URL calls + 1 duplicate batch |
+| API calls that read DynamoDB | **12** | 5 settings/list calls (the check list and the open worklist are one `GET /v1/home`, the other three statuses a second) + 1 batch of 5 check details + 5 photo URL calls + 1 duplicate batch |
 | Other API calls | **2** | 1 health check + 1 page-view event |
 | Task photos | **5** | S3; one photo per To-do task |
 | Icons and other page assets | **Varies** | CloudFront; count depends on the browser and page content |
@@ -92,7 +99,7 @@ repeats the reads. The count comes from code, not a live AWS measurement.
 | Backend calls to outside services | **1 if set up** | PostHog; no SF311 call in this example |
 | Repeat duplicate checks | **0 once all results settle** | Pending tasks only, with a 15-minute retry budget |
 
-That is **37 browser requests**, plus icons and other page assets. Pending results can add repeat
+That is **33 browser requests**, plus icons and other page assets. Pending results can add repeat
 polls while the page loads. One API call can make many database
 reads. Those reads are not extra browser requests.
 
@@ -153,7 +160,7 @@ sequenceDiagram
     end
     Note over B: Show To-do cards
     par Photos for To-do cards
-        B->>A: 5 GET /v1/checks/{checkId}
+        B->>A: 1 POST /v1/checks:evidence (5 checks)
         A->>D: 5 Queries for check data
         B->>A: 5 GET /v1/checks/{checkId}/artifacts/{artifactId}/media
         A->>D: 5 Queries for photo records
@@ -184,7 +191,7 @@ This table lists route work. Access checks add reads, as noted below.
 | `GET /v1/provider-sites` | 1 | Get current site, Query provider sites, Get each active site's data | None |
 | `GET /v1/checks?limit=30` | 1 | 1 GSI1 Query | None |
 | `GET /v1/tasks?status=…&limit=50` | 5 | 1 GSI2 Query; read up to 1 MB, sort, then take 50 | None |
-| `GET /v1/checks/{checkId}` | 5 | Query check data; read more pages if needed | None |
+| `POST /v1/checks:evidence` | 1 | Query 5 checks concurrently; read more pages if needed | None |
 | `GET /v1/checks/{checkId}/artifacts/{artifactId}/media` | 5 | 1 Query for photo records; task-update photos may need 2 extra GetItems | Sign URLs; the browser then gets the photo from S3 |
 | `POST /v1/duplicates:batch` | 1 at first | Many GetItems; process 4 tasks at a time | None; read saved results, with no model call |
 | `POST /v1/311-requests:batch` | 0 here | 1 GetItem per task/ticket pair | SF311 on a cache miss |
@@ -307,7 +314,7 @@ The cache does not establish action authority or persist model results itself.
   its key from Secrets Manager. There is no timer poll for 311. Returning to the
   page can cause a new call.
 - **Shared checks:** If the five To-do photos come from fewer than five checks,
-  Home needs fewer check-detail calls. Each photo still needs its own URL call.
+  the evidence batch runs fewer check queries. Each photo still needs its own URL call.
 - **iOS handoff:** This keeps users signed in when they add the app to their
   Home Screen. In Safari on iOS, a signed-in page prepares a one-use sign-in
   grant, even before the user taps Install. It fetches the app manifest. If

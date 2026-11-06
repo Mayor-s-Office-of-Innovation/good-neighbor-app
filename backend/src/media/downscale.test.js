@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
-import { downscaleImage, DownscaleError } from "./downscale.js";
+import { downscaleImage, DownscaleError, sniffImageType } from "./downscale.js";
 
 /** Make a real JPEG of the given dimensions so sharp has real pixels to work. */
 const jpegOf = (/** @type {number} */ width, /** @type {number} */ height) =>
@@ -175,4 +175,209 @@ it("distinguishes a readable WebP with the wrong label from corrupt bytes", asyn
   await expect(
     downscaleImage(Buffer.from("invalid"), "image/jpeg"),
   ).rejects.toMatchObject({ code: "undecodable_input" });
+});
+
+/**
+ * An ISO-BMFF `ftyp` box with the given major and compatible brands.
+ * @param {string} major
+ * @param {string[]} compatible
+ * @returns {Buffer}
+ */
+const ftyp = (major, compatible) => {
+  const body = Buffer.from(
+    `ftyp${major}\0\0\0\0${compatible.join("")}`,
+    "latin1",
+  );
+  const size = Buffer.alloc(4);
+  size.writeUInt32BE(body.length + 4);
+  return Buffer.concat([size, body]);
+};
+
+describe("file signature check", () => {
+  it("rejects an SVG labeled as JPEG before sharp parses it", async () => {
+    const svg = Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>',
+    );
+    // sharp would happily decode this SVG; the signature check must stop it.
+    await expect(sharp(svg).metadata()).resolves.toMatchObject({
+      format: "svg",
+    });
+    await expect(downscaleImage(svg, "image/jpeg")).rejects.toMatchObject({
+      code: "undecodable_input",
+    });
+  });
+
+  it("rejects other formats sharp can read, like GIF", async () => {
+    const gif = await sharp({
+      create: { width: 2, height: 2, channels: 3, background: "white" },
+    })
+      .gif()
+      .toBuffer();
+    await expect(downscaleImage(gif, "image/png")).rejects.toMatchObject({
+      code: "undecodable_input",
+    });
+  });
+
+  it("reports a mismatch when the signature is an allowed but different type", async () => {
+    const bytes = await jpegOf(10, 10);
+    await expect(downscaleImage(bytes, "image/png")).rejects.toMatchObject({
+      code: "image_type_mismatch",
+    });
+  });
+
+  it("recognizes each allowed type from its leading bytes", async () => {
+    const make = sharp({
+      create: { width: 2, height: 2, channels: 3, background: "white" },
+    });
+    expect(sniffImageType(await make.clone().jpeg().toBuffer())).toBe(
+      "image/jpeg",
+    );
+    expect(sniffImageType(await make.clone().png().toBuffer())).toBe(
+      "image/png",
+    );
+    expect(sniffImageType(await make.clone().webp().toBuffer())).toBe(
+      "image/webp",
+    );
+    const heicHeader = Buffer.concat([
+      Buffer.from([0, 0, 0, 0x18]),
+      Buffer.from("ftypheic", "latin1"),
+    ]);
+    expect(sniffImageType(heicHeader)).toBe("image/heic");
+    // A generic mif1 major brand counts only with a HEIC compatible brand.
+    expect(sniffImageType(ftyp("mif1", ["mif1", "heic"]))).toBe("image/heic");
+  });
+
+  it("recognizes nothing else", () => {
+    expect(sniffImageType(Buffer.alloc(0))).toBeUndefined();
+    expect(
+      sniffImageType(Buffer.from('<?xml version="1.0"?><svg/>')),
+    ).toBeUndefined();
+    expect(sniffImageType(Buffer.from("GIF89a"))).toBeUndefined();
+    const mp4Header = Buffer.concat([
+      Buffer.from([0, 0, 0, 0x18]),
+      Buffer.from("ftypisom", "latin1"),
+    ]);
+    expect(sniffImageType(mp4Header)).toBeUndefined();
+  });
+});
+
+describe("rejection log", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /**
+   * @param {import("vitest").MockInstance} spy
+   * @returns {Record<string, unknown>[]} parsed ImageRejected entries
+   */
+  const loggedEntries = (spy) =>
+    spy.mock.calls
+      .map(([line]) => {
+        try {
+          return JSON.parse(String(line));
+        } catch {
+          return undefined;
+        }
+      })
+      .filter((entry) => entry?.marker === "ImageRejected");
+
+  it("logs the brand when a HEIC-family file has an unaccepted brand", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const bytes = Buffer.concat([
+      Buffer.from([0, 0, 0, 0x18]),
+      Buffer.from("ftypavif", "latin1"),
+      Buffer.alloc(16),
+    ]);
+    await expect(downscaleImage(bytes, "image/heic")).rejects.toThrow(
+      DownscaleError,
+    );
+    expect(loggedEntries(warn)).toEqual([
+      expect.objectContaining({
+        reason: "undecodable_input",
+        stage: "signature",
+        declaredType: "image/heic",
+        signature: "unrecognized",
+        brand: "avif",
+        bytes: 28,
+      }),
+    ]);
+  });
+
+  it("logs a decode-stage rejection once, without a brand", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const buffer = await jpegOf(100, 100);
+    const truncated = buffer.subarray(0, Math.floor(buffer.length * 0.3));
+    await expect(downscaleImage(truncated, "image/jpeg")).rejects.toThrow(
+      DownscaleError,
+    );
+    const entries = loggedEntries(warn);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      stage: "decode",
+      signature: "image/jpeg",
+    });
+    expect(entries[0].brand).toBeUndefined();
+  });
+
+  it("logs nothing for an accepted image", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await downscaleImage(await jpegOf(10, 10), "image/jpeg");
+    expect(loggedEntries(warn)).toEqual([]);
+  });
+});
+
+describe("AVIF is not HEIC", () => {
+  const avifOf = () =>
+    sharp({
+      create: { width: 4, height: 4, channels: 3, background: "white" },
+    })
+      .avif()
+      .toBuffer();
+
+  it("does not treat a generic mif1 brand alone as HEIC", () => {
+    expect(sniffImageType(ftyp("mif1", ["mif1"]))).toBeUndefined();
+    expect(
+      sniffImageType(ftyp("mif1", ["mif1", "avif", "miaf"])),
+    ).toBeUndefined();
+    expect(
+      sniffImageType(ftyp("mif1", ["mif1", "heic", "avif"])),
+    ).toBeUndefined();
+  });
+
+  it("rejects an AVIF with a mif1 major brand declared as HEIC", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const avif = await avifOf();
+    // Rewrite the major brand to mif1; the compatible brands still name avif.
+    avif.write("mif1", 8, "latin1");
+    await expect(downscaleImage(avif, "image/heic")).rejects.toMatchObject({
+      code: "undecodable_input",
+    });
+    vi.restoreAllMocks();
+  });
+
+  it("never passes HEIF to sharp, even an AVIF whose brands all say HEIC", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const avif = await avifOf();
+    const size = avif.readUInt32BE(0);
+    for (let offset = 8; offset + 4 <= size; offset += 4) {
+      if (offset === 12) continue; // minor version
+      avif.write("heic", offset, "latin1");
+    }
+    expect(sniffImageType(avif)).toBe("image/heic");
+    // sharp trusts the brands (reports hevc) yet would still decode the AV1
+    // data, which is why HEIF must not reach it at all.
+    await expect(sharp(avif).metadata()).resolves.toMatchObject({
+      format: "heif",
+      compression: "hevc",
+    });
+    await expect(downscaleImage(avif, "image/heic")).rejects.toMatchObject({
+      code: "undecodable_input",
+    });
+    const entry = warn.mock.calls
+      .map(([line]) => JSON.parse(String(line)))
+      .find((e) => e.marker === "ImageRejected");
+    expect(entry).toMatchObject({
+      stage: "signature",
+      signature: "image/heic",
+    });
+    vi.restoreAllMocks();
+  });
 });
