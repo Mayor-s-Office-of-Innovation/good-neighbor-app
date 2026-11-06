@@ -166,7 +166,8 @@ function cityNoteJob(tableName, siteId, update) {
     !notes.some(
       (/** @type {Record<string, any>} */ note) =>
         note.cityNotePayload &&
-        !["sent", "suppressed"].includes(note.cityNoteStatus),
+        !["sent", "suppressed", "failed"].includes(note.cityNoteStatus) &&
+        !String(note.cityNotePayload.SRnum || "").startsWith("SIM-"),
     )
   )
     return [];

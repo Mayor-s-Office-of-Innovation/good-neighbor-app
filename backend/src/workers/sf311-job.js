@@ -1,4 +1,3 @@
-import { deliverCityHelpNote } from "../task-updates/city-help-note.js";
 import {
   evidenceDeletionKey,
   evidenceIds,
@@ -27,6 +26,7 @@ import {
   taskWorklistDateGsi,
 } from "../handlers/keys.js";
 import { logServerError } from "../lib/log-server-error.js";
+import { deliverCityHelpNote } from "../task-updates/city-help-note.js";
 import {
   reportSf311Failure,
   reportSf311Results,
@@ -166,25 +166,6 @@ export async function runJob(message, delivery = {}) {
   if (!job || ["complete", "failed"].includes(job.status)) return;
   if (!is311SubmissionEnabled())
     throw new Error("SF311 processing is disabled");
-  if (job.trigger === "city_note") {
-    // Always reload the timeline event: stream/SQS duplicates must observe the
-    // latest per-ticket claims and checkpoints, never the enqueue snapshot.
-    const update = await read({ pk: jobKey.pk, sk: job.updateSk });
-    if (!update || update.taskId !== message.taskId)
-      throw new Error("SF311 note update unavailable");
-    if (!(await deliverCityHelpNote(tableName, message.siteId, update)))
-      throw new Error("SF311 note delivery unconfirmed");
-    await ddb.send(
-      new UpdateCommand({
-        TableName: tableName,
-        Key: jobKey,
-        UpdateExpression: "SET #status = :complete",
-        ExpressionAttributeNames: { "#status": "status" },
-        ExpressionAttributeValues: { ":complete": "complete" },
-      }),
-    );
-    return;
-  }
   const key = taskKey(message.siteId, message.taskId);
   const lockKey = { pk: jobKey.pk, sk: `SF311_LOCK#${message.taskId}` };
   const token = randomUUID();
@@ -250,6 +231,19 @@ export async function runJob(message, delivery = {}) {
     results = next;
   };
   try {
+    // Notes run under the same per-task lock as filings and closures, but
+    // don't depend on the task's status.
+    if (job.trigger === "city_note") {
+      await sendQueuedCityNote({
+        tableName,
+        message,
+        jobKey,
+        job,
+        read,
+        attempt: delivery.receiveCount ?? 1,
+      });
+      return;
+    }
     let task = await read(key);
     if (task && job.trigger !== "user_confirmed" && isSilent311Task(task))
       await withSilent311Guard(String(task.createdAt || ""), async () => {});
@@ -510,6 +504,120 @@ export async function runJob(message, delivery = {}) {
         });
     }
   }
+}
+
+/**
+ * A "City help is no longer needed" note queued by the task-updates handler.
+ * Delivery itself (claim, send, reconcile, never blindly resend) lives in
+ * `task-updates/city-help-note.js`; this reads the note's `cityNoteStatus`
+ * afterwards to decide what happens to the job:
+ * - `sent` or `suppressed` (or nothing to send): `complete`;
+ * - `failed` (HUB rejected it): job `failed`, no retry;
+ * - `pending` or `unknown`: throw so SQS redelivers with backoff. On the last
+ *   delivery the job is `failed` and an alert fires. A `pending` note (never
+ *   sent) becomes `failed`; an `unknown` one (may have arrived) stays as is
+ *   for an operator to check.
+ * @param {object} ctx
+ * @param {string} ctx.tableName
+ * @param {{siteId: string, taskId: string, jobSk: string}} ctx.message
+ * @param {{pk: string, sk: string}} ctx.jobKey
+ * @param {Record<string, any>} ctx.job
+ * @param {(key: {pk: string, sk: string}) => Promise<Record<string, any> | undefined>} ctx.read
+ * @param {number} ctx.attempt
+ * @returns {Promise<void>}
+ */
+async function sendQueuedCityNote(ctx) {
+  const { tableName, message, jobKey, job } = ctx;
+  const { siteId, taskId } = message;
+  /**
+   * @param {string} status
+   * @param {string} [reason]
+   * @returns {Promise<unknown>}
+   */
+  const finishJob = (status, reason) =>
+    ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: jobKey,
+        UpdateExpression: reason
+          ? "SET #status = :status, failureReason = :reason"
+          : "SET #status = :status",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":status": status,
+          ...(reason ? { ":reason": reason } : {}),
+        },
+      }),
+    );
+  const updateKey = job.updateSk
+    ? { pk: jobKey.pk, sk: String(job.updateSk) }
+    : job.updateId && job.updateOccurredAt
+      ? taskUpdateKey(
+          siteId,
+          taskId,
+          String(job.updateOccurredAt),
+          String(job.updateId),
+        )
+      : undefined;
+  const update = updateKey ? await ctx.read(updateKey) : undefined;
+  if (!updateKey || !update || update.taskId !== taskId)
+    return void (await finishJob("abandoned"));
+
+  const delivered = await deliverCityHelpNote(tableName, siteId, update, {
+    terminal: false,
+    failOnRejection: true,
+  });
+  if (delivered) return void (await finishJob("complete"));
+  const notes = Array.isArray(update.cityNotes) ? update.cityNotes : [update];
+  const outstanding = notes.filter(
+    (note) => !["sent", "suppressed", "failed"].includes(note.cityNoteStatus),
+  );
+  if (
+    !outstanding.length &&
+    notes.some((note) => note.cityNoteStatus === "failed")
+  )
+    return void (await finishJob("failed", "note_rejected"));
+  if (ctx.attempt < MAX_FILING_ATTEMPTS)
+    throw Object.assign(
+      new Error("City note not confirmed; retry from its delivery record"),
+      { sf311Reported: true },
+    );
+
+  const neverSent = outstanding.every(
+    (note) => note.cityNoteStatus === "pending",
+  );
+  const reason = neverSent ? "note_not_sent" : "note_delivery_unknown";
+  reportSf311Failure("note", neverSent ? "sf311_error" : reason, {
+    terminal: true,
+    attempt: ctx.attempt,
+    jobId: message.jobSk,
+    taskId,
+    siteId,
+  });
+  // Only a note no attempt ever sent is safe to call failed.
+  for (const [index, note] of notes.entries()) {
+    if (note.cityNoteStatus !== "pending") continue;
+    const prefix = Array.isArray(update.cityNotes)
+      ? `cityNotes[${index}].`
+      : "";
+    await ddb
+      .send(
+        new UpdateCommand({
+          TableName: tableName,
+          Key: updateKey,
+          UpdateExpression: `SET ${prefix}cityNoteStatus = :failed`,
+          ConditionExpression: `${prefix}cityNoteStatus = :pending AND attribute_not_exists(${prefix}cityNoteLeaseExpiresAt)`,
+          ExpressionAttributeValues: {
+            ":failed": "failed",
+            ":pending": "pending",
+          },
+        }),
+      )
+      .catch((error) => {
+        if (error?.name !== "ConditionalCheckFailedException") throw error;
+      });
+  }
+  await finishJob("failed", reason);
 }
 
 /**

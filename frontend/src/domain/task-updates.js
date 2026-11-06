@@ -32,3 +32,37 @@ export function formatPacificDateTime(value) {
   if (!value) return "";
   return formatMonthDayTime(value);
 }
+
+/**
+ * Catalog key for a City note's state on the timeline, or "" when there is
+ * nothing to say. `unknown` reads as still sending: the worker may be retrying,
+ * and once it stops an operator follows up, so the note may well have arrived.
+ * @param {unknown} status the update's `cityNoteStatus`
+ */
+export function cityNoteLabelKey(status) {
+  if (status === "failed") return "taskUpdate.cityNote.failed";
+  if (status === "pending" || status === "sending" || status === "unknown")
+    return "taskUpdate.cityNote.sending";
+  return "";
+}
+
+/** @param {Record<string, any>} update */
+export function cityNoteInFlight(update) {
+  return (
+    cityNoteLabelKey(cityNoteStatus(update)) === "taskUpdate.cityNote.sending"
+  );
+}
+
+/** @param {Record<string, any>} update @returns {string | undefined} */
+export function cityNoteStatus(update) {
+  if (!Array.isArray(update.cityNotes)) return update.cityNoteStatus;
+  const statuses = update.cityNotes.map((note) => note.cityNoteStatus);
+  if (
+    statuses.some((status) =>
+      ["pending", "sending", "unknown"].includes(status),
+    )
+  )
+    return "pending";
+  if (statuses.includes("failed")) return "failed";
+  return undefined;
+}

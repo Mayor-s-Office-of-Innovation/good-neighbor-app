@@ -235,7 +235,7 @@ as task update events and every GSI sort key.
 | Provider Manager enrollment | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_ENROLLMENT#<enrollmentId>` | Directly addressable root lifecycle record for one physical device's all-or-nothing provider redemption. Stores the membership generation and up to 21 Site/binding pointers so a Supervisor can revoke every still-active projection in one transaction. List responses derive active/partial/revoked state from the authoritative physical-device and binding rows. |
 | Perimeter-check compliance period | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | Immutable effective-dated period containing one or more reason codes, integer checks/day (1–8), a snapshotted `underEnhancedMonitoring` boolean (reason 6 only), and a snapshot of the selected Site manager plus the authenticated generator. The generator—not a client-nominated manager—appears as sender; Compliance managers must be assigned to the Site while supervisors may generate for any Site. Generator phone is required. Start is the server's current Pacific date; the user-facing end date is inclusive and is stored with an exclusive boundary. Reasons 1 or 6 require an end date. Missing expiry means indefinite. A version with an end date carries GSI3 keys (`COMPLIANCE_TERMS#OPEN` / `<expiresOnExclusive>#<siteId>#<versionId>`) until it ends or is superseded. |
 | Global silent 311 control | `SYSTEM#CONTROLS` | `SILENT_311` | `enabled` (missing defaults true), optimistic `revision`, `epochStartedAt`, and authenticated `updatedBy`. Every transition advances the epoch; only new silent task workflows after enablement are eligible. No backlog replay. |
-| SF311 job | `SITE#<siteId>` | `SF311_JOB#<taskId>#<phase>` | `SF311_OUTBOX`, committed with task creation, action override, resolution, or a "File 311 ticket" tap (phase `filed-<id>`, `trigger: "user_confirmed"`, `actorId`). Streams dispatches to SQS; status tracks pending/dispatched/retry/complete/failed and results retain ticket checkpoints. Suppressed silent jobs finish `complete` with `suppressionReason: "silent_filing_disabled"`. |
+| SF311 job | `SITE#<siteId>` | `SF311_JOB#<taskId>#<phase>` | `SF311_OUTBOX`, committed with task creation, action override, resolution, a "File 311 ticket" tap (phase `filed-<id>`, `trigger: "user_confirmed"`, `actorId`), or a "City help no longer needed" note (phase `note-<updateId>`, `trigger: "city_note"`, `updateSk`; legacy jobs use `updateId` / `updateOccurredAt`; final status may carry `failureReason`). Streams dispatches to SQS; status tracks pending/dispatched/retry/complete/failed and results retain ticket checkpoints. Suppressed silent jobs finish `complete` with `suppressionReason: "silent_filing_disabled"`. |
 | SF311 worker state | `SITE#<siteId>` | `SF311_LOCK#<taskId>` | Expiring worker lease plus durable integration results shared across jobs. Separate from task snapshots so foreground updates cannot erase a filing checkpoint. |
 | Compliance-letter generation job | `SITE#<siteId>` | `LETTER_JOB#<createdAt>#<jobId>` | Transactional outbox item (`COMPLIANCE_LETTER_OUTBOX`) created with a perimeter-check period. DynamoDB Streams dispatches it to SQS; the worker renders the PDF, stores it in S3, and advances the Site letter state idempotently. |
 | Requirement-ended notice | `SITE#<siteId>` | `LETTER_JOB#ended-<termsVersionId>` | `COMPLIANCE_LETTER_OUTBOX`, `noticeOnly: true`; created atomically with manual cancellation or scheduled expiry. Copies the period's original email To/CC snapshot. Uses the existing delivery claim/receipt safeguards without a PDF or letter-history counter. |
@@ -332,14 +332,18 @@ The job uses `SF311_JOB#<taskId>#note-<updateId>`, `trigger: city_note`, and
 `updateSk` to reference the immutable timeline payload. Streams dispatches it to
 the dedicated 311 queue. Resolution events use a `cityNotes` array with the same
 per-ticket payloads and checkpoints for all eligible open City tickets. `cityNoteStatus`
-tracks `pending`, `sending`, `sent`, `unknown`, or terminal `suppressed`; `cityNoteLeaseExpiresAt` gives
+tracks `pending`, `sending`, `sent`, `unknown`, or terminal `suppressed` or `failed`; `cityNoteLeaseExpiresAt` gives
 one sender a 60-second lease. The client reuses the same idempotency key when
 retrying an unchanged draft. Successful retries reuse the event and do not
-resend the note. Explicit HUB validation rejections return to `pending`.
+resend the note. The worker holds the task’s `SF311_LOCK` during delivery. Explicit HUB
+validation rejections mark the affected note terminal `failed`. On the fifth delivery,
+never-sent notes become `failed`; uncertain notes remain `unknown` for operator
+review. Both outcomes alert. Readers accept legacy `updateId` / `updateOccurredAt`
+job pointers as well as `updateSk`.
 Timeouts, ambiguous responses, and expired attempts are reconciled against the
 City feed using the SR, sending agency, note text, and effective time. The API
 returns success after the local transaction; the worker independently retries
-unconfirmed delivery and ultimately dead-letters the job. It does not blindly
+unconfirmed delivery and marks exhausted jobs failed with an alert. It does not blindly
 resend an uncertain note. Such records may need operational investigation
 if the City feed never exposes the matching update. Sending respects
 `GNP_311_SUBMISSION_ENABLED`. Suppressed silent notes are never replayed or

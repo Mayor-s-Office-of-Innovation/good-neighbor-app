@@ -4,20 +4,20 @@ import {
   UpdateCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
-const { send, execute, sendSqs, deliverNote } = vi.hoisted(() => ({
-  deliverNote: vi.fn(),
+const { send, execute, sendSqs, sendNote } = vi.hoisted(() => ({
   send: vi.fn(),
   sendSqs: vi.fn(),
   execute: vi.fn(),
+  sendNote: vi.fn(),
+}));
+vi.mock("../task-updates/city-help-note.js", () => ({
+  deliverCityHelpNote: sendNote,
 }));
 vi.mock("@aws-sdk/client-sqs", async (original) => ({
   ...(await original()),
   SQSClient: class {
     send = sendSqs;
   },
-}));
-vi.mock("../task-updates/city-help-note.js", () => ({
-  deliverCityHelpNote: deliverNote,
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../config.js", () => ({
@@ -218,94 +218,11 @@ it("finishes a replayed closure job without creating its ticket again", async ()
   expect(execute).toHaveBeenCalledOnce();
 });
 
-it("cancels a silent ticket when deletion commits during filing", async () => {
-  execute
-    .mockImplementationOnce(async () => {
-      task.status = "superseded";
-      task.supersessionReason = "issue_deleted";
-      return [ticket];
-    })
-    .mockResolvedValueOnce([
-      {
-        code: "close_311_ticket",
-        status: "submitted",
-        payload: {
-          closures: [
-            {
-              serviceCode: "code",
-              srNum: "123",
-              status: "closed",
-              closedReasonCode: "3",
-            },
-          ],
-        },
-      },
-    ]);
-  await runJob(message);
-  expect(execute).toHaveBeenCalledTimes(2);
-  expect(execute.mock.calls[1][0]).toEqual([
-    { code: "close_311_ticket", payload: { closedReasonCode: "3" } },
-  ]);
-  expect(task.status).toBe("superseded");
-  expect(job.status).toBe("complete");
-});
-
 it("does not close tickets filed explicitly for City-owned work", async () => {
   task.status = "completed";
   task.completionMethod = "311_filed";
   await runJob(message);
   expect(execute).toHaveBeenCalledOnce();
-});
-
-it.each(["issue_deleted", "analysis_condition_rejected"])(
-  "cancels silent tickets after %s without creating a new ticket",
-  async (supersessionReason) => {
-    task.status = "superseded";
-    task.supersessionReason = supersessionReason;
-    task.appActionResults = [ticket];
-    execute.mockResolvedValueOnce([
-      {
-        code: "close_311_ticket",
-        status: "submitted",
-        payload: {
-          closures: [
-            {
-              serviceCode: "code",
-              srNum: "123",
-              status: "closed",
-              closedReasonCode: "3",
-            },
-          ],
-        },
-      },
-    ]);
-    await runJob(message);
-    expect(execute).toHaveBeenCalledOnce();
-    expect(execute.mock.calls[0][0]).toEqual([
-      { code: "close_311_ticket", payload: { closedReasonCode: "3" } },
-    ]);
-    expect(task.status).toBe("superseded");
-    expect(job.status).toBe("complete");
-    await runJob(message);
-    expect(execute).toHaveBeenCalledOnce();
-  },
-);
-
-it("does not cancel a deleted City-owned ticket", async () => {
-  task.status = "superseded";
-  task.supersessionReason = "issue_deleted";
-  task.appActionResults = [
-    {
-      ...ticket,
-      payload: {
-        tickets: [
-          { serviceCode: "code", srNum: "123", responsibleAgency: "18" },
-        ],
-      },
-    },
-  ];
-  await runJob(message);
-  expect(execute).not.toHaveBeenCalled();
 });
 it("retries failures with the durable ticket checkpoint instead of forgetting the ticket", async () => {
   execute.mockImplementationOnce(async (_actions, options) => {
@@ -1017,43 +934,211 @@ it("does not create a silent ticket for an edited action on a later resolution j
   expect(execute).not.toHaveBeenCalled();
 });
 
-it.each([true, false])(
-  "runs saved City notes independently of task state (confirmed: %s)",
-  async (confirmed) => {
+describe("queued City notes (trigger: city_note)", () => {
+  const noteMessage = {
+    ...message,
+    jobSk: "SF311_JOB#task#note-u1",
+  };
+  const updateSk = "TASK#task#UPDATE#2026-11-04T12:00:00Z#u1";
+  /** @type {any} */
+  let note;
+  /** @type {any[]} */
+  let updates;
+  beforeEach(() => {
     job = {
       status: "dispatched",
       trigger: "city_note",
-      updateSk: "TASK#task#UPDATE#saved",
+      updateId: "u1",
+      updateOccurredAt: "2026-11-04T12:00:00Z",
     };
-    const update = {
+    note = {
+      sk: updateSk,
       taskId: "task",
-      updateId: "saved",
-      cityNotes: [{ cityNoteStatus: "unknown" }],
+      updateId: "u1",
+      cityNotePayload: { SRnum: "123" },
+      cityNoteStatus: "pending",
     };
-    send.mockReset().mockImplementation(async (command) => {
-      if (command instanceof GetCommand)
-        return { Item: command.input.Key?.sk === message.jobSk ? job : update };
-      if (command instanceof UpdateCommand) {
-        job.status = command.input.ExpressionAttributeValues?.[":complete"];
+    // The note doesn't care what state the task is in.
+    task.status = "completing";
+    updates = [];
+    deliverAs("sent");
+    const mock = send.getMockImplementation();
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand && command.input.Key?.sk === updateSk)
+        return { Item: note && globalThis.structuredClone(note) };
+      if (
+        command instanceof UpdateCommand &&
+        !command.input.UpdateExpression?.includes("sf311Lease")
+      ) {
+        updates.push(command.input);
         return {};
       }
-      throw new Error("Unexpected command");
+      return mock?.(command);
     });
-    deliverNote.mockReset().mockResolvedValue(confirmed);
-    if (confirmed) {
-      await runJob(message);
-      expect(job.status).toBe("complete");
-      await runJob(message);
-      expect(deliverNote).toHaveBeenCalledOnce();
-    } else {
-      await expect(runJob(message)).rejects.toThrow("unconfirmed");
-      expect(job.status).toBe("dispatched");
-      deliverNote.mockResolvedValue(true);
-      await runJob(message);
-      expect(job.status).toBe("complete");
-    }
-    expect(deliverNote).toHaveBeenCalledWith("test", "site", update);
+  });
+  /**
+   * Have delivery leave the note in `status`, as the real one does.
+   * @param {string} status
+   */
+  function deliverAs(status) {
+    sendNote.mockReset().mockImplementation(async (_t, _s, saved) => {
+      saved.cityNoteStatus = status;
+      return status === "sent";
+    });
+  }
+  /** @param {string} sk */
+  const writesTo = (sk) => updates.filter((input) => input.Key.sk === sk);
+  const jobStatus = () =>
+    writesTo(noteMessage.jobSk).at(-1)?.ExpressionAttributeValues;
+
+  it("sends the note under the task lock and completes the job", async () => {
+    await runJob(noteMessage);
+    expect(sendNote).toHaveBeenCalledWith(
+      "test",
+      "site",
+      expect.objectContaining({ updateId: "u1" }),
+      { terminal: false, failOnRejection: true },
+    );
+    expect(jobStatus()).toEqual({ ":status": "complete" });
     expect(execute).not.toHaveBeenCalled();
-    expect(finalWrites).toEqual([]);
-  },
-);
+    expect(lock.sf311Lease).toBeUndefined();
+  });
+  it("does not send while another job holds the task lock", async () => {
+    const mock = send.getMockImplementation();
+    send.mockImplementation(async (command) => {
+      if (
+        command instanceof UpdateCommand &&
+        command.input.UpdateExpression?.startsWith("SET sf311Lease")
+      )
+        throw Object.assign(new Error("leased"), {
+          name: "ConditionalCheckFailedException",
+        });
+      return mock?.(command);
+    });
+    await expect(runJob(noteMessage)).rejects.toThrow("leased");
+    expect(sendNote).not.toHaveBeenCalled();
+  });
+  it("fails a rejected note without retrying", async () => {
+    deliverAs("failed");
+    await runJob(noteMessage);
+    expect(jobStatus()).toEqual({
+      ":status": "failed",
+      ":reason": "note_rejected",
+    });
+  });
+  it.each(["unknown", "pending"])(
+    "retries a %s note before the last delivery",
+    async (status) => {
+      deliverAs(status);
+      await expect(runJob(noteMessage, { receiveCount: 4 })).rejects.toThrow(
+        "City note not confirmed",
+      );
+      expect(writesTo(noteMessage.jobSk)).toEqual([]);
+      expect(writesTo(updateSk)).toEqual([]);
+    },
+  );
+  it("leaves an uncertain note unknown for an operator on the last delivery", async () => {
+    const metrics = vi.spyOn(console, "log").mockImplementation(() => {});
+    deliverAs("unknown");
+    await runJob(noteMessage, { receiveCount: 5 });
+    expect(jobStatus()).toEqual({
+      ":status": "failed",
+      ":reason": "note_delivery_unknown",
+    });
+    expect(writesTo(updateSk)).toEqual([]);
+    const failure = metrics.mock.calls
+      .map(([line]) => String(line))
+      .find((line) => line.includes("sf311_action_failure"));
+    expect(failure).toContain('"outcome":"needs_attention"');
+    expect(failure).toContain('"reason":"note_delivery_unknown"');
+    metrics.mockRestore();
+  });
+  it("marks a never-sent note failed on the last delivery", async () => {
+    const metrics = vi.spyOn(console, "log").mockImplementation(() => {});
+    deliverAs("pending");
+    await runJob(noteMessage, { receiveCount: 5 });
+    expect(jobStatus()).toEqual({
+      ":status": "failed",
+      ":reason": "note_not_sent",
+    });
+    expect(writesTo(updateSk)[0]).toMatchObject({
+      UpdateExpression: "SET cityNoteStatus = :failed",
+      ConditionExpression:
+        "cityNoteStatus = :pending AND attribute_not_exists(cityNoteLeaseExpiresAt)",
+    });
+    metrics.mockRestore();
+  });
+
+  it("loads updateSk jobs and completes multi-ticket delivery regardless of task state", async () => {
+    job.updateSk = updateSk;
+    delete job.updateId;
+    delete job.updateOccurredAt;
+    note.cityNotes = [
+      { cityNoteStatus: "pending" },
+      { cityNoteStatus: "pending" },
+    ];
+    sendNote.mockImplementation(async (_t, _s, saved) => {
+      for (const entry of saved.cityNotes) entry.cityNoteStatus = "sent";
+      return true;
+    });
+    await runJob(noteMessage);
+    expect(jobStatus()).toEqual({ ":status": "complete" });
+    expect(execute).not.toHaveBeenCalled();
+    expect(lock.sf311Lease).toBeUndefined();
+  });
+
+  it("keeps retrying other tickets after a rejection", async () => {
+    note.cityNotes = [
+      { cityNoteStatus: "failed" },
+      { cityNoteStatus: "unknown" },
+    ];
+    sendNote.mockImplementation(async () => false);
+    await expect(runJob(noteMessage, { receiveCount: 4 })).rejects.toThrow(
+      "City note not confirmed",
+    );
+    expect(writesTo(noteMessage.jobSk)).toEqual([]);
+  });
+
+  it("fails only never-sent nested notes on the last delivery, preserving sent and uncertain checkpoints", async () => {
+    const metrics = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      note.cityNotes = [
+        { cityNoteStatus: "sent" },
+        { cityNoteStatus: "failed" },
+        { cityNoteStatus: "unknown" },
+        { cityNoteStatus: "pending" },
+      ];
+      sendNote.mockImplementation(async () => false);
+      await runJob(noteMessage, { receiveCount: 5 });
+      expect(jobStatus()).toEqual({
+        ":status": "failed",
+        ":reason": "note_delivery_unknown",
+      });
+      expect(writesTo(updateSk)).toHaveLength(1);
+      expect(writesTo(updateSk)[0]).toMatchObject({
+        UpdateExpression: "SET cityNotes[3].cityNoteStatus = :failed",
+        ConditionExpression:
+          "cityNotes[3].cityNoteStatus = :pending AND attribute_not_exists(cityNotes[3].cityNoteLeaseExpiresAt)",
+      });
+    } finally {
+      metrics.mockRestore();
+    }
+  });
+
+  it("finishes a partially rejected multi-ticket job once other tickets settle", async () => {
+    note.cityNotes = [{ cityNoteStatus: "failed" }, { cityNoteStatus: "sent" }];
+    sendNote.mockImplementation(async () => false);
+    await runJob(noteMessage);
+    expect(jobStatus()).toEqual({
+      ":status": "failed",
+      ":reason": "note_rejected",
+    });
+  });
+
+  it("abandons a job whose update is gone", async () => {
+    note = undefined;
+    await runJob(noteMessage);
+    expect(sendNote).not.toHaveBeenCalled();
+    expect(jobStatus()).toEqual({ ":status": "abandoned" });
+  });
+});

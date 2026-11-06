@@ -23,6 +23,7 @@ import {
   hasUnsavedTaskUpdateDraft,
   MAX_TASK_UPDATE_TEXT,
 } from "../domain/task-update-draft.js";
+import { cityNoteInFlight } from "../domain/task-updates.js";
 import {
   taskUpdateActionEditor,
   taskUpdateActionPhotos,
@@ -32,6 +33,18 @@ import {
   taskUpdateTimeline,
 } from "./task-update-dialog.templates.js";
 import { bindYesNoChoice } from "./yes-no-choice.js";
+
+// While a City note is still sending, re-check its status this often, for up
+// to this many times (about two minutes); after that, the next open shows it.
+export const CITY_NOTE_POLL_MS = 10_000;
+export const CITY_NOTE_POLL_LIMIT = 12;
+
+/** @param {Record<string, any>[] | undefined} updates */
+function updateIds(updates) {
+  return new Set(
+    (updates || []).map((update) => update.updateId).filter(Boolean),
+  );
+}
 
 export class TaskUpdateDialog extends HTMLElement {
   /** @type {boolean | undefined} */
@@ -58,6 +71,10 @@ export class TaskUpdateDialog extends HTMLElement {
     /** @type {Set<AbortController>} */
     this._timelineReads = new Set();
     this._timelineFrame = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    this._notePollTimer = null;
+    /** Update ids on the newest timeline page, the only page polling re-reads. */
+    this._newestPageIds = new Set();
     this._retryToken = "";
     /** @type {Record<string, any> | null} */
     this._pendingEvent = null;
@@ -192,6 +209,7 @@ export class TaskUpdateDialog extends HTMLElement {
           }
         : page;
       this._nextToken = page.nextToken;
+      if (!nextToken) this._newestPageIds = updateIds(page.updates);
       this._task = { ...this._task, ...this._detail.task };
       if (this._task.canRequestCityHelp === false)
         this._cityHelpNeeded = undefined;
@@ -201,6 +219,7 @@ export class TaskUpdateDialog extends HTMLElement {
         return;
       }
       this._render();
+      this._scheduleCityNotePoll(generation);
       void this._loadCityUpdates(generation);
       void this._loadTimelinePhotos(generation);
     } catch {
@@ -319,7 +338,82 @@ export class TaskUpdateDialog extends HTMLElement {
     }
   }
 
+  /**
+   * Check again later while a note on the newest page is still on its way to
+   * the City. Older pages aren't re-read; the next open picks those up.
+   * @param {number} generation @param {number} [attempt]
+   */
+  _scheduleCityNotePoll(generation, attempt = 0) {
+    if (this._notePollTimer !== null) clearTimeout(this._notePollTimer);
+    this._notePollTimer = null;
+    if (
+      attempt >= CITY_NOTE_POLL_LIMIT ||
+      !(this._detail?.updates || []).some(
+        (update) =>
+          this._newestPageIds.has(update.updateId) && cityNoteInFlight(update),
+      )
+    )
+      return;
+    this._notePollTimer = setTimeout(() => {
+      this._notePollTimer = null;
+      void this._pollCityNotes(generation, attempt + 1);
+    }, CITY_NOTE_POLL_MS);
+  }
+
+  /**
+   * Re-read the newest page and copy only note statuses onto loaded updates,
+   * so the timeline doesn't flash a loading state or lose older pages.
+   * @param {number} generation @param {number} attempt
+   */
+  async _pollCityNotes(generation, attempt) {
+    if (generation !== this._loadGeneration || !this._open || !this._task)
+      return;
+    try {
+      const page = await this._timelineRead((signal) =>
+        getTaskUpdates(this._task.taskId, undefined, { signal }),
+      );
+      if (generation !== this._loadGeneration || !this._detail) return;
+      this._newestPageIds = updateIds(page.updates);
+      const statuses = new Map(
+        (page.updates || [])
+          .filter((update) => update.updateId)
+          .map((update) => [
+            update.updateId,
+            {
+              cityNoteStatus: update.cityNoteStatus,
+              cityNotes: update.cityNotes,
+            },
+          ]),
+      );
+      let changed = false;
+      const updates = (this._detail.updates || []).map((update) => {
+        if (
+          !update.updateId ||
+          !statuses.has(update.updateId) ||
+          JSON.stringify(statuses.get(update.updateId)) ===
+            JSON.stringify({
+              cityNoteStatus: update.cityNoteStatus,
+              cityNotes: update.cityNotes,
+            })
+        )
+          return update;
+        changed = true;
+        return { ...update, ...statuses.get(update.updateId) };
+      });
+      if (changed) {
+        this._detail = { ...this._detail, updates };
+        this._refreshTimeline();
+      }
+    } catch {
+      // A missed check is fine; the next one (or the next open) catches up.
+    }
+    if (generation === this._loadGeneration)
+      this._scheduleCityNotePoll(generation, attempt);
+  }
+
   _cancelTimelineReads() {
+    if (this._notePollTimer !== null) clearTimeout(this._notePollTimer);
+    this._notePollTimer = null;
     for (const controller of this._timelineReads) controller.abort();
     this._timelineReads.clear();
     if (this._timelineFrame !== null) cancelAnimationFrame(this._timelineFrame);

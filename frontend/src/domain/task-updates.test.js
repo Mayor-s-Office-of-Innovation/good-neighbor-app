@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { t } from "../i18n/i18n.js";
 import { formatDateTime, formatTime, formatWeekday } from "../i18n/dates.js";
-import { formatPacificUpdated } from "./task-updates.js";
+import {
+  cityNoteInFlight,
+  cityNoteStatus,
+  cityNoteLabelKey,
+  formatPacificUpdated,
+} from "./task-updates.js";
 
 describe("formatPacificUpdated", () => {
   it("uses Monday as the current-week boundary", () => {
@@ -32,4 +37,36 @@ describe("formatPacificUpdated", () => {
     );
     expect(formatPacificUpdated("not a date", now)).toBe("");
   });
+});
+
+describe("City note helpers", () => {
+  it("maps each note status to a label key", () => {
+    expect(cityNoteLabelKey("pending")).toBe("taskUpdate.cityNote.sending");
+    expect(cityNoteLabelKey("sending")).toBe("taskUpdate.cityNote.sending");
+    expect(cityNoteLabelKey("unknown")).toBe("taskUpdate.cityNote.sending");
+    expect(cityNoteLabelKey("failed")).toBe("taskUpdate.cityNote.failed");
+    expect(cityNoteLabelKey("sent")).toBe("");
+    expect(cityNoteLabelKey("suppressed")).toBe("");
+    expect(cityNoteLabelKey(undefined)).toBe("");
+  });
+
+  it("treats only still-sending notes as in flight", () => {
+    expect(cityNoteInFlight({ cityNoteStatus: "pending" })).toBe(true);
+    expect(cityNoteInFlight({ cityNoteStatus: "unknown" })).toBe(true);
+    expect(cityNoteInFlight({ cityNoteStatus: "failed" })).toBe(false);
+    expect(cityNoteInFlight({ cityNoteStatus: "sent" })).toBe(false);
+    expect(cityNoteInFlight({})).toBe(false);
+  });
+});
+
+it("keeps mixed multi-ticket notes in flight and shows failure once all tickets settle", () => {
+  const update = {
+    cityNotes: [{ cityNoteStatus: "failed" }, { cityNoteStatus: "unknown" }],
+  };
+  expect(cityNoteInFlight(update)).toBe(true);
+  update.cityNotes[1].cityNoteStatus = "sent";
+  expect(cityNoteInFlight(update)).toBe(false);
+  expect(cityNoteStatus(update)).toBe("failed");
+  update.cityNotes[0].cityNoteStatus = "suppressed";
+  expect(cityNoteStatus(update)).toBeUndefined();
 });

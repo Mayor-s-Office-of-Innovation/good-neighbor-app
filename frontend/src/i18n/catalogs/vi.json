@@ -1554,6 +1554,8 @@
   "taskUpdate.cityHelp.no": "Không",
   "taskUpdate.cityHelp.title": "Bạn có còn cần Thành phố hỗ trợ không?",
   "taskUpdate.cityHelp.yes": "Có",
+  "taskUpdate.cityNote.failed": "Không gửi được đến Thành phố",
+  "taskUpdate.cityNote.sending": "Đang gửi đến Thành phố",
   "taskUpdate.created.perimeter": "Vấn đề được thêm trong đợt kiểm tra quanh tòa nhà",
   "taskUpdate.created.single": "Vấn đề được thêm dưới dạng vấn đề đơn lẻ",
   "taskUpdate.discard.cancel": "Quay lại chỉnh sửa",
