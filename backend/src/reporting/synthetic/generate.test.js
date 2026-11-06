@@ -8,12 +8,7 @@ import { pacificDateKey } from "../../lib/pacific-dates.js";
 import { createLocalViews, writeLocalLake } from "../local-lake.js";
 import { buildProjection, readLakeInputs } from "../projection.js";
 import { RESPONSE_STATES } from "../contract.js";
-import {
-  PROFILES,
-  generateYear,
-  syntheticPhotoKey,
-  syntheticSite,
-} from "./generate.js";
+import { PROFILES, generateYear, syntheticSite } from "./generate.js";
 import { compareWithAnswers } from "./verify.js";
 
 // Two months across the fall-back, one Site per pattern: small enough for
@@ -99,20 +94,23 @@ describe("generateYear", () => {
     for (const shape of ["0/0", "0/1", "1/0", "1/1", "2/2"])
       expect(shapes).toContain(shape);
     expect(updates.some((u) => u.type === "resolution_proof")).toBe(true);
-    // Every photo points at a pooled image local seeding uploads.
-    const pool = new Set(
-      ["check", "update"].flatMap((kind) =>
-        Array.from({ length: 6 }, (_, n) => [
-          syntheticPhotoKey(/** @type {any} */ (kind), n),
-          syntheticPhotoKey(/** @type {any} */ (kind), n, true),
-        ]).flat(),
-      ),
-    );
+    // The photo routes sign only keys under the photo's own Site and Check.
     const keyed = items.filter((i) => i.s3Key);
     expect(keyed.length).toBeGreaterThan(0);
-    expect(
-      keyed.every((i) => pool.has(i.s3Key) && pool.has(i.thumbS3Key)),
-    ).toBe(true);
+    for (const i of keyed) {
+      const prefix = `checks/${i.pk.slice(5)}/${i.checkId}/`;
+      expect(i.s3Key).toBe(`${prefix}${i.artifactId}`);
+      expect(i.thumbS3Key).toBe(`${i.s3Key}.thumb.webp`);
+    }
+    // An unfinished Check holds only what the app writes when it starts.
+    const unfinished = items.filter(
+      (i) => /^CHECK#[^#]+$/.test(i.sk) && i.status === "in_progress",
+    );
+    expect(unfinished.length).toBeGreaterThan(0);
+    for (const header of unfinished) {
+      expect(header).not.toHaveProperty("rubricVersion");
+      expect(header).not.toHaveProperty("categories");
+    }
   });
 
   it("names each Site once, as a fictional place marked Synthetic", () => {

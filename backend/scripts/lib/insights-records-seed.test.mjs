@@ -4,7 +4,13 @@ import {
   PROFILES,
   generateYear,
 } from "../../src/reporting/synthetic/generate.js";
-import { recordRows, syntheticPhoto } from "./insights-records-seed.mjs";
+import {
+  PHOTO_POOL,
+  poolIndex,
+  recordRows,
+  syntheticPhoto,
+  syntheticPhotoKey,
+} from "./insights-records-seed.mjs";
 
 const { items } = generateYear({
   seed: 7,
@@ -30,8 +36,16 @@ describe("recordRows", () => {
       for (const id of update.photoKeys)
         expect(
           bySk.get(`${update.pk}|TASK#${taskId}#MEDIA#${id}`)?.s3Key,
-        ).toMatch(/^synthetic\/photos\//);
+        ).toMatch(/^checks\//);
     }
+  });
+
+  it("spreads photos over every pooled image", () => {
+    const keys = rows.flatMap((r) => (r.s3Key ? [r.s3Key] : []));
+    const used = new Set(
+      keys.map((k) => syntheticPhotoKey("check", poolIndex(k))),
+    );
+    expect(used.size).toBe(PHOTO_POOL);
   });
 
   it("drops the fields the dev table's worklists index", () => {
@@ -49,6 +63,10 @@ describe("syntheticPhoto", () => {
       await syntheticPhoto("update", 5, true),
     ).metadata();
     expect([full.format, full.width, full.height]).toEqual(["jpeg", 1280, 960]);
-    expect([thumb.width, thumb.height]).toEqual([320, 240]);
+    expect([thumb.format, thumb.width, thumb.height]).toEqual([
+      "webp",
+      320,
+      240,
+    ]);
   });
 });

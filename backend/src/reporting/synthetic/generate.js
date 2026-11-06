@@ -291,18 +291,17 @@ export function syntheticSite(s) {
   };
 }
 
-// A few labelled images stand in for every photo, so local seeding stays small.
-export const PHOTO_POOL = 6;
-
 /**
- * Where a synthetic photo sits in the uploads bucket.
- * @param {"check" | "update"} kind
- * @param {number} n 0-based; wraps around the pool
- * @param {boolean} [thumb]
- * @returns {string}
+ * Where the app stores a Check or Issue update photo; the photo routes refuse
+ * any key outside its own Site and Check.
+ * @param {string} siteId
+ * @param {string} checkId
+ * @param {string} artifactId
+ * @returns {{ s3Key: string, thumbS3Key: string }}
  */
-export function syntheticPhotoKey(kind, n, thumb = false) {
-  return `synthetic/photos/${kind}-${(n % PHOTO_POOL) + 1}${thumb ? "-thumb" : ""}.jpg`;
+function photoKeysFor(siteId, checkId, artifactId) {
+  const s3Key = `checks/${siteId}/${checkId}/${artifactId}`;
+  return { s3Key, thumbS3Key: `${s3Key}.thumb.webp` };
 }
 
 // Seeded, since Math.random would make every run differ.
@@ -666,7 +665,6 @@ export function generateYear(opts = {}) {
         updatedAt: iso(whenMs),
       });
 
-    let updatePhotoNo = 0;
     /**
      * A note or photo update with its media rows, as task-update-store.js writes them.
      * @param {Record<string, any>} task
@@ -706,34 +704,30 @@ export function generateYear(opts = {}) {
           updateId,
           updateSk: `TASK#${taskId}#UPDATE#${at}#${updateId}`,
         },
-        ...photoKeys.flatMap((photoId) => {
-          updatePhotoNo += 1;
-          return [
-            {
-              pk,
-              sk: `TASK#${taskId}#MEDIA#${photoId}`,
-              entityType: "task_update_media",
-              taskId,
-              checkId,
-              artifactId: photoId,
-              purpose: "task_update",
-              s3Key: syntheticPhotoKey("update", updatePhotoNo + s),
-              thumbS3Key: syntheticPhotoKey("update", updatePhotoNo + s, true),
-              contentType: "image/jpeg",
-              contentLength: 120_000,
-              capturedAt: at,
-            },
-            {
-              pk,
-              sk: `CHECK#${checkId}#UPDATE_MEDIA#${photoId}`,
-              entityType: "task_update_media_pointer",
-              mediaSk: `TASK#${taskId}#MEDIA#${photoId}`,
-              checkId,
-              artifactId: photoId,
-              taskId,
-            },
-          ];
-        }),
+        ...photoKeys.flatMap((photoId) => [
+          {
+            pk,
+            sk: `TASK#${taskId}#MEDIA#${photoId}`,
+            entityType: "task_update_media",
+            taskId,
+            checkId,
+            artifactId: photoId,
+            purpose: "task_update",
+            ...photoKeysFor(siteId, checkId, photoId),
+            contentType: "image/jpeg",
+            contentLength: 120_000,
+            capturedAt: at,
+          },
+          {
+            pk,
+            sk: `CHECK#${checkId}#UPDATE_MEDIA#${photoId}`,
+            entityType: "task_update_media_pointer",
+            mediaSk: `TASK#${taskId}#MEDIA#${photoId}`,
+            checkId,
+            artifactId: photoId,
+            taskId,
+          },
+        ]),
       );
     };
 
@@ -1090,8 +1084,6 @@ export function generateYear(opts = {}) {
           status: unfinished ? "in_progress" : "completed",
           flowType: single ? "single-problem" : "perimeter",
           startedAt: iso(startMs),
-          rubricVersion: "1.0.0",
-          categories: [],
           issueCount: 0,
           maxSeverity: 0,
         };
@@ -1158,8 +1150,7 @@ export function generateYear(opts = {}) {
               ...(typed
                 ? { text: "Synthetic description: overflowing bin by the gate" }
                 : {
-                    s3Key: syntheticPhotoKey("check", checkNo + p),
-                    thumbS3Key: syntheticPhotoKey("check", checkNo + p, true),
+                    ...photoKeysFor(siteId, checkId, artifactId),
                     contentType: "image/jpeg",
                     contentLength: 240_000,
                   }),
@@ -1390,6 +1381,8 @@ export function generateYear(opts = {}) {
             completedAt: iso(doneMs),
             synthesizedAt: iso(doneMs),
             grade: pick(["Excellent", "Good", "Fair", "Poor"]),
+            rubricVersion: "1.0.0",
+            categories: [],
             ...evidenceSummary(kinds),
             issueCount,
             maxSeverity,
