@@ -72,6 +72,19 @@ test("an app moved in the page whose session read fails offers a reload", async 
   assert.equal(loads.reload.mock.calls.length, 1);
 });
 
+test("an app moved in the page drops unsaved 311 changes", async () => {
+  const { app } = await mountAdmin("/sites");
+  await fill('[data-site-311="s1"]', false);
+  app.remove();
+  document.body.append(app);
+  await settle();
+  assert.equal($('[data-site-311="s1"]').checked, true);
+  assert.ok(missing("[data-discard-311]"));
+  // An unsaved-changes prompt would keep the user on /sites.
+  await click("a[href='/providers']");
+  assert.equal(url(), "/providers");
+});
+
 test("a failed route read retries the route once the role is known", async () => {
   const { api } = await mountAdmin("/sites");
   api.on("GET", /^sites\/s1(\?|$)/, failTimes(1, 503, "Site read failed"));

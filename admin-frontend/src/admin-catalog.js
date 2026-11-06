@@ -25,7 +25,7 @@ export const START_UP_LISTS = Object.freeze([
  * @param {any[]} managers
  * @returns {AdminSite[]}
  */
-function directorySites(records, managers) {
+export function directorySites(records, managers) {
   return records
     .map(({ items }) => {
       const site = items.find((item) => item.sk === "#META");

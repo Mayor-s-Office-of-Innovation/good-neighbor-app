@@ -4,6 +4,7 @@ import { START_UP_LISTS } from "../../admin-catalog.js";
 import { mixActions } from "../../mix-actions.js";
 import { trackDirtyForm } from "../../form-state.js";
 import { visibleRecords } from "../../record-navigation.js";
+import { listenForControls } from "../page-events.js";
 import { programEvents } from "./program.bindings.js";
 import { programActions } from "./program.actions.js";
 import { newProgramView, programView } from "./program.templates.js";
@@ -14,15 +15,6 @@ import { newProgramView, programView } from "./program.templates.js";
  * @typedef {import("../../admin-session.js").AdminSession} AdminSession
  * @typedef {AdminProgramPage & typeof programActions} ProgramPageElement
  */
-
-const controlSelectors = Object.fromEntries(
-  Object.entries(programEvents).map(([type, actions]) => [
-    type,
-    Object.keys(actions)
-      .map((attribute) => `[${attribute}]`)
-      .join(","),
-  ]),
-);
 
 export class AdminProgramPage extends HTMLElement {
   constructor() {
@@ -46,34 +38,13 @@ export class AdminProgramPage extends HTMLElement {
   }
 
   connectedCallback() {
-    for (const type of Object.keys(programEvents))
-      this.addEventListener(type, this.controlEvent);
+    this.stopListening = listenForControls(this, programEvents);
     this.render();
   }
 
   disconnectedCallback() {
-    for (const type of Object.keys(programEvents))
-      this.removeEventListener(type, this.controlEvent);
+    this.stopListening?.();
   }
-
-  /** @param {Event} event */
-  controlEvent = (event) => {
-    const control =
-      event.target instanceof Element
-        ? event.target.closest(controlSelectors[event.type])
-        : null;
-    if (!(control instanceof HTMLElement) || !this.contains(control)) return;
-    const actions = programEvents[event.type];
-    const attribute = Object.keys(actions).find((name) =>
-      control.hasAttribute(name),
-    );
-    if (attribute)
-      actions[attribute](
-        /** @type {ProgramPageElement} */ (this),
-        control,
-        event,
-      );
-  };
 
   /**
    * Load what the route shows; false when a newer open() or leave() came first.
