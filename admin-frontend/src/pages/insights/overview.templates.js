@@ -319,61 +319,9 @@ export function reportButtonText(selected) {
       };
 }
 
-/** @param {{ selected: number, job: ReportState | null }} view */
-export function reportBarText({ selected, job }) {
-  const busy = !!job && ["starting", "queued", "running"].includes(job.phase);
-  return {
-    busy,
-    button: selected
-      ? t("admin.insights.report.buttonCount", { count: selected })
-      : t("admin.insights.report.button"),
-    hint: selected
-      ? t("admin.insights.report.selected", { count: selected })
-      : t("admin.insights.report.hint"),
-  };
-}
-
-/** @param {ReportState} job @param {boolean} linkStale the signed link has run out */
-export function jobView(job, linkStale) {
-  const count = job.siteCount;
-  if (job.phase === "starting")
-    return `<p>${escapeHtml(t("admin.insights.report.starting"))}</p>`;
-  if (job.phase === "queued" || job.phase === "running") {
-    // The job runs on while status reads fail, so the page keeps asking.
-    const delayed = job.error
-      ? ` <span class="muted" data-report-delayed>${escapeHtml(t("admin.insights.report.checkDelayed"))}</span>`
-      : "";
-    return `<p>${escapeHtml(t("admin.insights.report.working", { count }))}${delayed}</p>`;
-  }
-  if (job.phase === "succeeded") {
-    const url = job.job?.downloadUrl;
-    // A ready report with no link yet can still ask for one.
-    const link =
-      !url || linkStale
-        ? `<button type="button" class="btn-link" id="insights-report-refresh">${escapeHtml(t("admin.insights.report.refresh"))}</button>`
-        : `<a href="${escapeHtml(url)}" id="insights-report-download" target="_blank" rel="noopener">${escapeHtml(t("admin.insights.report.download"))}</a>`;
-    const kept = job.job?.expiresAt
-      ? escapeHtml(
-          t("admin.insights.report.kept", {
-            time: formatInstant(job.job.expiresAt),
-          }),
-        )
-      : "";
-    const failed = job.error
-      ? `<span class="error">${escapeHtml(t("admin.insights.report.refreshFailed"))}</span>`
-      : "";
-    // The link goes last, after when it expires, as the mock has it.
-    return `<p>${[escapeHtml(t("admin.insights.report.ready", { count })), kept, link, failed].filter(Boolean).join(" ")}</p>`;
-  }
-  if (job.phase === "cancelled")
-    return `<p>${escapeHtml(t("admin.insights.report.cancelled"))}</p>`;
-  const key = codeKey("admin.insights.report.error", job.error);
-  return `<p class="error" data-report-error="${escapeHtml(job.error)}">${escapeHtml(hasKey(key) ? t(key) : t("admin.insights.report.error.generic"))}</p>`;
-}
-
-/** @param {{ count: number, period: string, time: string }} view */
-export function reportDialogView({ count, period, time }) {
-  return `<dialog id="insights-report-dialog" class="places-modal" aria-labelledby="insights-report-title" aria-describedby="insights-report-copy">
+/** @param {{ count: number }} view */
+export function reportDialogView({ count }) {
+  return `<dialog id="insights-report-dialog" class="places-modal" aria-labelledby="insights-report-title">
     <form class="places-modal__card" method="dialog">
       <div class="places-modal__copy">
         <h2 class="places-modal__title" id="insights-report-title">${escapeHtml(t("admin.insights.report.title", { count }))}</h2>

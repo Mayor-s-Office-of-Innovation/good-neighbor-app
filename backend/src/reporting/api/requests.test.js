@@ -310,6 +310,35 @@ describe("parseListQuery", () => {
     ).toMatchObject({ code: "invalid_responseState" });
   });
 
+  it("takes a comma list of Issue response states, as the Site page sends", () => {
+    expect(
+      parseListQuery("issues", { responseState: "overdue,late" }).filters,
+    ).toEqual({ responseState: "overdue,late" });
+  });
+
+  it("refuses an Issue state list with one unknown state", () => {
+    expect(
+      errorOf(() =>
+        parseListQuery("issues", { responseState: "overdue,bogus" }),
+      ),
+    ).toMatchObject({ code: "invalid_responseState", statusCode: 400 });
+  });
+
+  it("takes a comma list of severity bands, as the Site page's Severe Issues sends", () => {
+    expect(
+      parseListQuery("issues", { severityBand: "moderate,severe" }).filters,
+    ).toEqual({ severityBand: "moderate,severe" });
+    expect(
+      errorOf(() => parseListQuery("issues", { severityBand: "severe,bogus" })),
+    ).toMatchObject({ code: "invalid_severityBand", statusCode: 400 });
+  });
+
+  it("refuses a comma list of Site response states, which Overview never sends", () => {
+    expect(
+      errorOf(() => parseListQuery("sites", { responseState: "overdue,late" })),
+    ).toMatchObject({ code: "invalid_responseState", statusCode: 400 });
+  });
+
   it("keeps a valid Issue filter", () => {
     expect(
       parseListQuery("issues", { severityBand: "severe" }).filters,

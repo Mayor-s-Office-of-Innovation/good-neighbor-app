@@ -21,7 +21,6 @@ import {
   periodDays,
 } from "./insights.templates.js";
 import { bandView, severityBand } from "./overview.templates.js";
-import { openColumnHead } from "./raw.templates.js";
 
 /** @typedef {Record<string, any>} Reply */
 /** @typedef {{ publicContact?: Record<string, string>, primaryContact?: Record<string, string> } | null} ContactDetails the Site's Manage record */
@@ -400,6 +399,10 @@ function onTimeCell(issue) {
 
 const ISSUE_COLUMNS = ["issue", "createdAt", "responseTime", "onTime"];
 
+/** The open-marker column, named for screen readers as on Overview. */
+const openColumnHead = () =>
+  `<th role="columnheader" scope="col"><span class="visually-hidden">${escapeHtml(t("admin.insights.raw.col.open"))}</span></th>`;
+
 /** @param {string} key */
 const colLabel = (key) => t(`admin.insights.siteIssues.col.${key}`);
 
@@ -414,21 +417,25 @@ export function siteIssuesView({ list, issues, failed, tile, issueHref }) {
     .map((key) => tileWord(list, key))
     .join(", ");
   if (!rows.length)
-    return `<p class="muted" data-site-issues-empty>${escapeHtml(t("admin.insights.noTileIssues", { state: t(`admin.insights.response.${tile}`) }))}</p>`;
-  return `<ul class="insights__issues" aria-label="${escapeHtml(t(`admin.insights.response.${tile}`))}">${rows
-    .map(
-      (
-        i,
-      ) => `<li data-issue-row="${escapeHtml(i.issueId)}"><a href="${escapeHtml(issueHref(i))}" data-route>
-      ${severityView(i.severity)}
-      <strong>${escapeHtml(i.category ? rulebookText(i.category, "rulebook.category") : t("admin.insights.issue.categoryUnknown"))}</strong>
-      <span class="muted">${escapeHtml(i.deadlineAt ? t("admin.insights.issueWhen", { created: formatInstant(i.createdAt), due: formatInstant(i.deadlineAt) }) : formatInstant(i.createdAt))}</span>
-      <span>${escapeHtml(t(`admin.insights.issueStatus.${i.resolvedAt ? "resolved" : "open"}`))}</span>
-      <span class="muted">${escapeHtml(i.issueId)}</span>
-      <wa-icon name="chevron-right" aria-hidden="true"></wa-icon>
-    </a></li>`,
-    )
-    .join("")}</ul>${
+    return `<p class="muted" data-site-issues-empty>${escapeHtml(t("admin.insights.noTileIssues", { state: label }))}</p>`;
+  return `<div class="table-wrap insights__table insights__table--paged" data-insights-table>
+    <table role="table">
+      <caption class="visually-hidden">${escapeHtml(label)}</caption>
+      <thead role="rowgroup"><tr role="row">${ISSUE_COLUMNS.map((key) => `<th role="columnheader" scope="col">${escapeHtml(colLabel(key))}</th>`).join("")}${openColumnHead()}</tr></thead>
+      <tbody role="rowgroup">${rows
+        .map((i) => {
+          const band = severityBand(i.severity);
+          return `<tr role="row" data-issue-row="${escapeHtml(i.issueId)}">
+        <th role="rowheader" scope="row" data-label="${escapeHtml(colLabel("issue"))}"><a href="${escapeHtml(issueHref(i))}" data-route><span class="insights__sev" data-severity="${band}"><span class="insights__dot" aria-hidden="true"></span><span class="visually-hidden">${escapeHtml(t(`admin.insights.severity.${band}`))}</span></span>${escapeHtml(i.category ? rulebookText(i.category, "rulebook.category") : t("admin.insights.issue.categoryUnknown"))}</a></th>
+        <td role="cell" data-label="${escapeHtml(colLabel("createdAt"))}" data-issue-created>${escapeHtml(formatInstant(i.createdAt))}</td>
+        <td role="cell" data-label="${escapeHtml(colLabel("responseTime"))}" data-issue-took>${responseTimeCell(i)}</td>
+        <td role="cell" data-label="${escapeHtml(colLabel("onTime"))}" data-issue-on-time>${onTimeCell(i)}</td>
+        <td role="cell" class="insights__chev" aria-hidden="true"><wa-icon name="chevron-right"></wa-icon></td>
+      </tr>`;
+        })
+        .join("")}</tbody>
+    </table>
+  </div>${
     issues.total > rows.length
       ? `<p class="muted">${escapeHtml(t("admin.insights.issuesShown", { shown: rows.length, count: issues.total }))}</p>`
       : ""

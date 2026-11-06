@@ -10,6 +10,7 @@ import { SITE_DAY_METRICS, compareTotals, sumSiteDays } from "../activity.js";
 import { API_VERSION, CONTRACT_VERSION, RESPONSE_STATES } from "../contract.js";
 import { comparisonFor, previousOf } from "../periods.js";
 import {
+  LIST_FILTERS,
   SITE_DIMENSIONS,
   decodeCursor,
   encodeCursor,
@@ -26,6 +27,7 @@ const DAY_MS = 86_400_000;
 const NAMES = new Intl.Collator("en", { sensitivity: "base", numeric: true });
 const NAME_KEYS = new Set(["name", "siteName", "tieName", "sortValue"]);
 const ACTIVITY = SITE_DAY_METRICS.filter((m) => !RESPONSE_STATES.includes(m));
+const SEVERITY_BANDS = LIST_FILTERS.issues.severityBand;
 
 // Placeholder concern limits, to be revised. Few Checks needs none: each Site owes its own number.
 export const CONCERN_RULES = Object.freeze({
@@ -281,6 +283,21 @@ function contacts(snap, siteId) {
   };
 }
 
+// Today's public contact, as posted for neighbors; the Site manager's stays out (plan §8).
+/**
+ * @param {Snapshot} snap
+ * @param {string} siteId
+ * @returns {{ email: string | null, phone: string | null, phoneExtension: string | null }}
+ */
+function publicContactDetails(snap, siteId) {
+  const record = snap.contactsBySite.get(siteId);
+  return {
+    email: record?.publicEmail ?? null,
+    phone: record?.publicPhone ?? null,
+    phoneExtension: record?.publicPhoneExtension ?? null,
+  };
+}
+
 /** @param {Record<string, any>} site */
 function siteDims(site) {
   return {
@@ -417,12 +434,15 @@ function siteFacts(snap, site, interval) {
   /** @type {number | null} */
   let maxSeverity = null;
   let longUnresolved = 0;
+  /** @type {Record<string, number>} */
+  const severity = Object.fromEntries(SEVERITY_BANDS.map((b) => [b, 0]));
   for (const issue of snap.issuesBySite.get(site.siteId) ?? []) {
     if (
       issue.createdDay < interval.startDay ||
       issue.createdDay >= interval.endDay
     )
       continue;
+    severity[issue.severityBand] += 1;
     if (issue.severity > (maxSeverity ?? 0)) maxSeverity = issue.severity;
     const openFor = evaluated - Date.parse(issue.createdAt);
     if (
@@ -447,6 +467,7 @@ function siteFacts(snap, site, interval) {
     checksPerOwedDay < checksOwedPerDay;
   const facts = {
     totals,
+    severity,
     maxSeverity,
     checksPerDay,
     checksOwedPerDay,
@@ -486,9 +507,9 @@ function concernsOf(
     active && underOwed && "fewChecks",
     activity.severeIssues >= rules.severeIssues && "repeatedSevere",
     days > 0 && activity.issuesCreated > manyIssues && "manyIssues",
-    longUnresolved > 0 && "longUnresolved",
-    response.overdue > 0 && "overdue",
-    response.late > 0 && "late",
+    // One flag for all three, since managers read them as one problem (Bryan, 11/05).
+    (longUnresolved > 0 || response.overdue > 0 || response.late > 0) &&
+      "slowResponse",
   ].filter((c) => typeof c === "string");
 }
 
@@ -552,7 +573,7 @@ function outcomeFilters(filters) {
 const SITE_SORT_VALUE = {
   /** @param {any} r */ name: (r) => r.name ?? r.siteId,
   /** @param {any} r */ overdueLate: (r) =>
-    r.response.overdue + r.response.late,
+    r.response.overdue + r.response.late + (r.longUnresolved ?? 0),
   /** @param {any} r */ maxSeverity: (r) => r.maxSeverity,
   /** @param {any} r */
   completedPerimeterChecks: (r) => r.activity.completedPerimeterChecks,
@@ -641,11 +662,17 @@ export function siteDetail(snap, siteId, { interval, now }) {
   );
   const zero = Object.fromEntries(SITE_DAY_METRICS.map((m) => [m, 0]));
   const facts = siteFacts(snap, site, interval);
+  const indicators = contacts(snap, siteId);
   return {
     meta: meta(snap, interval, now),
     site: { ...siteDims(site), manageHref: manageHref(siteId) },
-    ...contacts(snap, siteId),
-    totals: facts.totals,
+    ...indicators,
+    publicContact: {
+      ...indicators.publicContact,
+      ...publicContactDetails(snap, siteId),
+    },
+    // Only the Site page has Severe Issues tiles, so Overview rows skip these counts.
+    totals: { ...facts.totals, severity: facts.severity },
     checksPerDay: facts.checksPerDay,
     checksOwedPerDay: facts.checksOwedPerDay,
     checksPerOwedDay: facts.checksPerOwedDay,
@@ -685,8 +712,10 @@ function issuesIn(snap, interval, filter, filters) {
       ids.has(i.siteId) &&
       i.createdDay >= interval.startDay &&
       i.createdDay < interval.endDay &&
-      (!filters.severityBand || i.severityBand === filters.severityBand) &&
-      (!filters.responseState || i.responseState === filters.responseState) &&
+      (!filters.severityBand ||
+        filters.severityBand.split(",").includes(i.severityBand)) &&
+      (!filters.responseState ||
+        filters.responseState.split(",").includes(i.responseState)) &&
       (!filters.source || i.source === filters.source) &&
       (!filters.category || i.category === filters.category) &&
       (!filters.issueStatus ||
@@ -1050,6 +1079,9 @@ export const EXPORT_COLUMNS = Object.freeze({
     ...RESPONSE_STATES,
     "maxSeverity",
     "publicContact",
+    "publicEmail",
+    "publicPhone",
+    "publicPhoneExtension",
     "siteContact",
     "contactBasis",
   ],
@@ -1100,14 +1132,20 @@ export function exportRows(snap, { dataset, interval, filter, list }) {
   const { rows } = filteredSiteRows(snap, interval, filter, list.filters);
   return {
     columns,
-    rows: sortSiteRows(rows, list.sort).map((r) => ({
-      ...r,
-      ...r.activity,
-      ...r.response,
-      publicContact: r.publicContact.state,
-      siteContact: r.siteContact.state,
-      contactBasis: r.publicContact.basis,
-    })),
+    rows: sortSiteRows(rows, list.sort).map((r) => {
+      const posted = publicContactDetails(snap, r.siteId);
+      return {
+        ...r,
+        ...r.activity,
+        ...r.response,
+        publicContact: r.publicContact.state,
+        publicEmail: posted.email,
+        publicPhone: posted.phone,
+        publicPhoneExtension: posted.phoneExtension,
+        siteContact: r.siteContact.state,
+        contactBasis: r.publicContact.basis,
+      };
+    }),
   };
 }
 
@@ -1120,16 +1158,9 @@ export function reportDataset(snap, { siteIds, interval, now }) {
     meta: meta(snap, interval, now),
     sites: siteIds.map((siteId) => {
       const detail = siteDetail(snap, siteId, { interval, now });
-      const record = snap.contactsBySite.get(siteId);
       return {
         site: detail.site,
-        // Today's public contact, as the Site page shows it (plan §8).
-        publicContact: {
-          ...detail.publicContact,
-          email: record?.publicEmail ?? null,
-          phone: record?.publicPhone ?? null,
-          phoneExtension: record?.publicPhoneExtension ?? null,
-        },
+        publicContact: detail.publicContact,
         // As the Overview row flags it; a closed Site needs none.
         noPublicContact:
           detail.site.status !== "inactive" &&

@@ -223,6 +223,9 @@ export const SORTS = Object.freeze({
   checks: { activityAt: "desc", siteName: "asc" },
 });
 
+// The Site page lists several states or bands at once, e.g. "overdue,late".
+const MULTI = new Set(["issues.responseState", "issues.severityBand"]);
+
 /** Fixed values, so a typo is a 400, not an empty list; null is free text. */
 const CONTACT_STATES = ["available", "missing", "unknown"];
 export const LIST_FILTERS = Object.freeze({
@@ -284,7 +287,10 @@ export function parseListQuery(kind, params) {
     if (
       !value ||
       value.length > LIMITS.maxFilterLength ||
-      (values && !values.includes(value))
+      (values &&
+        (MULTI.has(`${kind}.${name}`) ? value.split(",") : [value]).some(
+          (one) => !values.includes(one),
+        ))
     )
       throw requestError(`invalid_${name}`);
     filters[name] = value;

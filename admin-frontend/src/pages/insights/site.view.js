@@ -41,6 +41,14 @@ import {
 
 const LISTS = /** @type {SiteList[]} */ (Object.keys(SITE_LISTS));
 
+/** A plain left click; any other opens the link's own address, as links do. @param {MouseEvent} event */
+const plainClick = (event) =>
+  event.button === 0 &&
+  !event.metaKey &&
+  !event.ctrlKey &&
+  !event.shiftKey &&
+  !event.altKey;
+
 /** @param {string} path */
 const isOverview = (path) =>
   path.split("?")[0].replace(/\/$/, "") === "/insights";
@@ -75,8 +83,6 @@ class InsightsSite extends HTMLElement {
         ]),
       )
     );
-    /** @type {SiteList} the list the open panel's Issue came from */
-    this.panelList = "response";
     /** @type {Map<string, string>} */
     this.managerNames = new Map();
     this.generation = 0;
@@ -104,7 +110,7 @@ class InsightsSite extends HTMLElement {
       <div data-region="top"></div>
       <div data-region="period">${sitePeriodView({ label: periodName(interval), range: interval ? rangeLabel(interval) : "" })}</div>
       <div data-region="body"></div>
-      <footer data-region="footer"></footer>`;
+`;
     this.addEventListener("click", this.clicked);
     this.drawPeriod();
     void this.loadNames();
@@ -115,6 +121,11 @@ class InsightsSite extends HTMLElement {
   disconnectedCallback() {
     this.controller?.abort();
     this.removeEventListener("click", this.clicked);
+  }
+
+  /** The path an Issue record links back to: this Site at this period. */
+  here() {
+    return this.dataset.here ?? location.pathname;
   }
 
   /** @param {string} name @returns {HTMLElement} */
@@ -240,7 +251,7 @@ class InsightsSite extends HTMLElement {
     if (mine !== this.generation) return;
     this.removeAttribute("aria-busy");
     this.reply = reply;
-    this.tile = firstTile(reply);
+    for (const list of LISTS) this.lists[list].tile = SITE_LISTS[list].first;
     this.drawHead();
     this.region("freshness").innerHTML = freshnessView(reply.meta);
 
@@ -262,7 +273,7 @@ class InsightsSite extends HTMLElement {
       }),
     );
     for (const list of LISTS)
-      void this.loadIssues(list, back?.list === list ? back.issueId : "");
+      void this.loadIssues(list);
   }
 
   /** @param {SiteList} list @returns {HTMLElement | null} */
@@ -273,9 +284,8 @@ class InsightsSite extends HTMLElement {
   /**
    * Lists the selected tiles' Issues; a failure here keeps the counts above.
    * @param {SiteList} list
-   * @param {string} [focusId] the Issue to land on, coming back
    */
-  async loadIssues(list, focusId = "") {
+  async loadIssues(list) {
     const state = this.lists[list];
     const mine = ++state.generation;
     state.issues = null;
@@ -303,7 +313,7 @@ class InsightsSite extends HTMLElement {
         return;
       state.failed = failureText(err, t("admin.insights.issuesFailed"));
     }
-    this.drawIssues();
+    this.drawIssues(list);
   }
 
   /** @param {SiteList} list */
@@ -312,14 +322,15 @@ class InsightsSite extends HTMLElement {
     if (!region) return;
     const state = this.lists[list];
     region.innerHTML = siteIssuesView({
-      issues: this.issues,
-      failed: this.issuesFailed,
-      tile: this.tile,
+      list,
+      issues: state.issues,
+      failed: state.failed,
+      tile: state.tile,
       issueHref: (issue) => {
         const query = new URLSearchParams(carriedQuery(location.search));
         // Two Sites can share an Issue ID, so the record needs its Site.
         query.set("siteId", issue.siteId);
-        query.set("return", this.dataset.here ?? location.pathname);
+        query.set("return", this.here());
         return `/insights/raw/issues/${encodeURIComponent(issue.issueId)}?${query}`;
       },
     });
@@ -399,7 +410,25 @@ class InsightsSite extends HTMLElement {
 
   /** @param {Event} event */
   clicked = (event) => {
-    const button = /** @type {Element} */ (event.target).closest("button");
+    const target = /** @type {Element} */ (event.target);
+    // The app's router reloads the page on a hash change, so a concern's link scrolls here instead.
+    const jump = target.closest('a[href^="#insights-"]');
+    if (jump && plainClick(/** @type {MouseEvent} */ (event))) {
+      event.preventDefault();
+      const heading = /** @type {HTMLElement | null} */ (
+        this.querySelector(jump.getAttribute("href") ?? "")
+      );
+      heading?.scrollIntoView({ behavior: "smooth", block: "start" });
+      heading?.focus({ preventScroll: true });
+      return;
+    }
+    // A click anywhere on an Issue row opens it, as on Overview; the name stays the real link.
+    if (!target.closest("a, button, [popover]")) {
+      /** @type {HTMLElement | null | undefined} */ (
+        target.closest("[data-issue-row]")?.querySelector("a")
+      )?.click();
+    }
+    const button = target.closest("button");
     if (!button || !this.contains(button)) return;
     if (button.id === "insights-retry") return void this.load();
     const list = this.listOf(button);

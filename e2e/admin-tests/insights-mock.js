@@ -241,14 +241,7 @@ const SITES = [
     longUnresolved: 1,
     publicContact: contact("available"),
     siteContact: contact("missing"),
-    concerns: [
-      "fewChecks",
-      "repeatedSevere",
-      "manyIssues",
-      "longUnresolved",
-      "overdue",
-      "late",
-    ],
+    concerns: ["fewChecks", "repeatedSevere", "manyIssues", "slowResponse"],
     unknownEvidence: [],
   },
   {
@@ -341,10 +334,18 @@ const SITES = [
     longUnresolved: 0,
     publicContact: contact("missing"),
     siteContact: contact("unknown"),
-    concerns: ["fewChecks", "late"],
+    concerns: ["fewChecks", "slowResponse"],
     unknownEvidence: ["response", "siteContact"],
   },
 ];
+
+// Each Site's Issues by severity band, adding up to its issuesCreated and severeIssues.
+/** @type {Record<string, Record<string, number>>} */
+const SEVERITY = {
+  s1: { minor: 4, moderate: 3, severe: 2, unknown: 0 },
+  s3: { minor: 2, moderate: 0, severe: 0, unknown: 0 },
+  s4: { minor: 1, moderate: 1, severe: 1, unknown: 0 },
+};
 
 /** @param {Record<string, number>} counts */
 const zeros = (counts) =>
@@ -505,9 +506,22 @@ function siteReply(siteId, params) {
     json: {
       meta: meta(period),
       site: { ...dimsOnly, manageHref: `/sites/${siteId}` },
-      publicContact: row.publicContact,
+      publicContact: {
+        ...row.publicContact,
+        email:
+          row.publicContact.state === "available" ? "desk@example.org" : null,
+        phone: row.publicContact.state === "available" ? "415-555-0100" : null,
+        phoneExtension: null,
+      },
       siteContact: row.siteContact,
-      totals: { activity: row.activity, response: row.response },
+      totals: {
+        activity: row.activity,
+        response: row.response,
+        severity:
+          row.activity.issuesCreated && SEVERITY[siteId]
+            ? SEVERITY[siteId]
+            : zeros(SEVERITY.s1),
+      },
       checksPerDay: row.checksPerDay,
       checksOwedPerDay: row.checksOwedPerDay,
       checksPerOwedDay: row.checksPerOwedDay,
@@ -622,11 +636,14 @@ function issuesReply(params) {
   const period = requestedPeriod(params);
   if ("error" in period) return { status: 400, json: { error: period.error } };
   const ids = params.get("siteIds")?.split(",");
-  const state = params.get("responseState");
+  // Comma lists, as the Site page sends for several tiles.
+  const states = params.get("responseState")?.split(",");
+  const bands = params.get("severityBand")?.split(",");
   const rows = ISSUES.filter(
     (i) =>
       (!ids || ids.includes(i.siteId)) &&
-      (!state || i.responseState === state) &&
+      (!states || states.includes(i.responseState)) &&
+      (!bands || bands.includes(i.severityBand)) &&
       i.createdDay >= period.startDay &&
       i.createdDay < period.endDay,
   );

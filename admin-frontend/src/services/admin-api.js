@@ -609,7 +609,9 @@ export const adminApi = {
   /** @param {Record<string, string>} params @param {AbortSignal} [signal] */
   reportingIssues: (params, signal) =>
     adminFetch(`/admin/v1/reporting/issues${queryOf(params)}`, { signal }),
-  reportingScopeOptions: () => adminFetch("/admin/v1/reporting/scope-options"),
+  /** @param {Record<string, string>} [params] `include: "sites"` adds each Site's name */
+  reportingScopeOptions: (params = {}) =>
+    adminFetch(`/admin/v1/reporting/scope-options${queryOf(params)}`),
   /** @param {Record<string, unknown>} body @param {string} idempotencyKey the server makes one report per key */
   createInsightsReport: (body, idempotencyKey) =>
     adminFetch("/admin/v1/reports/insights", {

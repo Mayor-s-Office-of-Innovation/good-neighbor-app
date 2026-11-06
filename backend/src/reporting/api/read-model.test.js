@@ -303,7 +303,8 @@ describe("overview", () => {
       list: list("sites", { sort: "overdueLate", dir: "asc" }),
       now: NOW,
     });
-    expect(res.sites.map((s) => s.siteId)).toEqual(["s3", "s1", "s2"]);
+    // Long-unresolved Issues count too: s1 has two, s2 one.
+    expect(res.sites.map((s) => s.siteId)).toEqual(["s3", "s2", "s1"]);
   });
 
   /**
@@ -332,8 +333,8 @@ describe("overview", () => {
     // s1: two Severe Issues, two open since early October, one Overdue; s2: one open, late.
     const rows = shown({}, s3Contacted("unknown")).sites;
     expect(rows.map((r) => [r.siteId, r.concerns, r.unknownEvidence])).toEqual([
-      ["s1", ["repeatedSevere", "longUnresolved", "overdue"], []],
-      ["s2", ["longUnresolved", "late"], []],
+      ["s1", ["repeatedSevere", "slowResponse"], []],
+      ["s2", ["slowResponse"], []],
       ["s3", [], ["publicContact", "siteContact"]],
     ]);
     expect(rows.map((r) => r.longUnresolved)).toEqual([2, 1, 0]);
@@ -362,6 +363,15 @@ describe("overview", () => {
       now: NOW,
     }).sites.find((r) => r.siteId === siteId)?.concerns;
 
+  /** s1's count of Issues open over 14 days in October. @param {Snapshot} from */
+  const longOpen = (from) =>
+    overview(from, {
+      interval: october,
+      filter: {},
+      list: list("sites"),
+      now: NOW,
+    }).sites.find((r) => r.siteId === "s1")?.longUnresolved;
+
   /** @param {string} from @param {string} to exclusive */
   const days = (from, to) =>
     parsePeriodParams(
@@ -375,10 +385,7 @@ describe("overview", () => {
     expect([
       flagsOf(snap, days("2026-10-01", "2026-10-05"), "s1"),
       flagsOf(snap, october, "s1"),
-    ]).toEqual([
-      ["longUnresolved"],
-      ["repeatedSevere", "longUnresolved", "overdue"],
-    ]);
+    ]).toEqual([["slowResponse"], ["repeatedSevere", "slowResponse"]]);
   });
 
   /** s1 with `count` Issues created Oct 1–10, a period under 30 days. @param {number} count */
@@ -419,21 +426,16 @@ describe("overview", () => {
   it("flags an Issue created in the period and still open over 14 days at the data update", () => {
     const fourteenDays = CONCERN_RULES.unresolvedDays * 86_400_000;
     expect([
-      flagsOf(openFor(fourteenDays), october, "s1")?.includes("longUnresolved"),
-      flagsOf(openFor(fourteenDays + 1), october, "s1")?.includes(
-        "longUnresolved",
-      ),
-    ]).toEqual([false, true]);
+      longOpen(openFor(fourteenDays)),
+      longOpen(openFor(fourteenDays + 1)),
+    ]).toEqual([0, 1]);
   });
 
   it("doesn't count a resolved Issue as long unresolved", () => {
     const resolved = edited((t) => {
       for (const i of t.issues) i.resolvedAt ??= "2026-10-30T00:00:00.000Z";
     });
-    expect(flagsOf(resolved, october, "s1")).toEqual([
-      "repeatedSevere",
-      "overdue",
-    ]);
+    expect(longOpen(resolved)).toEqual(0);
   });
 
   it("shows only top concerns when asked, leaving out a quiet Site", () => {
@@ -836,11 +838,7 @@ describe("siteDetail", () => {
       now: NOW,
     }).sites.find((r) => r.siteId === "s1");
     const res = siteDetail(snap, "s1", { interval: october, now: NOW });
-    expect(res.concerns).toEqual([
-      "repeatedSevere",
-      "longUnresolved",
-      "overdue",
-    ]);
+    expect(res.concerns).toEqual(["repeatedSevere", "slowResponse"]);
     expect(res.concerns).toEqual(row?.concerns);
   });
 
@@ -872,6 +870,38 @@ describe("siteDetail", () => {
     ).toEqual(rows.map(pick));
     expect(report.map(pick)).toEqual(rows.map(pick));
     expect(rows.map((r) => r.checksPerDay)).toEqual([0.1, 0, 0]);
+  });
+
+  it("shows the Site's posted public contact, but not its Site manager's", () => {
+    const res = siteDetail(snap, "s1", { interval: october, now: NOW });
+    expect(res.publicContact).toMatchObject({
+      state: "available",
+      email: "desk@example.org",
+      phone: "415-555-0100",
+    });
+    expect(
+      siteDetail(snap, "s2", { interval: october, now: NOW }).publicContact,
+    ).toMatchObject({ state: "missing", email: null, phone: null });
+    expect(JSON.stringify(res)).not.toMatch(/primaryContact|firstName/);
+  });
+
+  it("counts the period's Issues by severity band, to match the Issue list", () => {
+    const res = siteDetail(snap, "s1", { interval: october, now: NOW });
+    const bands = LIST_FILTERS.issues.severityBand;
+    const listed = bands.map(
+      (severityBand) =>
+        listIssues(snap, {
+          interval: october,
+          filter: { siteIds: ["s1"] },
+          list: list("issues", { severityBand }),
+          now: NOW,
+        }).total,
+    );
+    expect(bands.map((band) => res.totals.severity[band])).toEqual(listed);
+    expect(res.totals.severity.severe).toBe(res.totals.activity.severeIssues);
+    expect(listed.reduce((a, b) => a + b, 0)).toBe(
+      res.totals.activity.issuesCreated,
+    );
   });
 
   it("answers 404 for a Site the snapshot doesn't have", () => {
@@ -908,6 +938,41 @@ describe("listIssues", () => {
     });
     expect(severe.issues.map((i) => i.issueId)).toEqual(["t3", "t1"]);
     expect(resolved.issues.map((i) => i.issueId)).toEqual(["t3"]);
+  });
+
+  it("lists every severity band in a comma list, as the Site page asks", () => {
+    /** @param {string} severityBand */
+    const ids = (severityBand) =>
+      listIssues(snap, {
+        interval: october,
+        filter: {},
+        list: list("issues", { severityBand }),
+        now: NOW,
+      }).issues.map((i) => i.issueId);
+    const both = ids("minor,severe");
+    expect(both.length).toBeGreaterThan(ids("severe").length);
+    expect([...both].sort()).toEqual(
+      [...ids("minor"), ...ids("severe")].sort(),
+    );
+  });
+
+  it("lists every response state in a comma list, as the Site page asks", () => {
+    /**
+     * @param {string} responseState
+     * @returns {string[]}
+     */
+    const ids = (responseState) =>
+      listIssues(snap, {
+        interval: october,
+        filter: {},
+        list: list("issues", { responseState }),
+        now: NOW,
+      }).issues.map((i) => i.issueId);
+    expect([ids("overdue"), ids("late"), ids("overdue,late")]).toEqual([
+      ["t2"],
+      ["t5"],
+      ["t2", "t5"],
+    ]);
   });
 
   it("pages through every Issue once with a cursor", () => {
@@ -1255,6 +1320,21 @@ describe("exportRows", () => {
       siteId: "s1",
       overdue: 1,
       publicContact: "available",
+      publicEmail: "desk@example.org",
+      publicPhone: "415-555-0100",
+    });
+    // Each posted part in its own column, right after the contact state.
+    const at = res.columns.indexOf("publicContact");
+    expect(res.columns.slice(at, at + 4)).toEqual([
+      "publicContact",
+      "publicEmail",
+      "publicPhone",
+      "publicPhoneExtension",
+    ]);
+    expect(res.rows.find((r) => r.siteId === "s2")).toMatchObject({
+      publicContact: "missing",
+      publicEmail: null,
+      publicPhone: null,
     });
   });
 });

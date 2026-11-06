@@ -387,8 +387,7 @@
 /* The page scrolls, not a box inside it, so the header sticks to the window (Bryan, 11/05). */
 @media (min-width: 761px) {
   .insights .insights__table {
-    max-height: calc(100dvh - 96px);
-    overflow: auto;
+    overflow: visible;
   }
 
   .insights__table thead th {
@@ -730,31 +729,21 @@
   white-space: nowrap;
 }
 
-.insights__issues {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border-top: 1px solid var(--line);
-}
-
-.insights__issues li {
-  margin: 0;
-}
-
-.insights__issues a {
-  display: grid;
-  grid-template-columns: 110px minmax(120px, 1fr) minmax(120px, 1.3fr) 64px 150px 16px;
-  gap: 12px;
+.insights__stale {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  padding: 10px 4px;
-  border-bottom: 1px solid var(--line);
-  font-size: 0.875rem;
-  color: inherit;
-  text-decoration: none;
+  gap: 8px 16px;
 }
 
-.insights__issues a:hover strong {
-  text-decoration: underline;
+.insights__stale p {
+  margin: 0;
+}
+
+.insights__table tbody th .insights__sev {
+  margin-right: 8px;
+}
+
 }
 
 /* Narrow screens show each row as a labelled card, so no column drops (plan §7). */
@@ -838,5 +827,134 @@
   .insights__tile,
   .insights__tile > button[data-tile] {
     padding: 10px;
+  }
+}
+
+/* Site Issues on phones: each row is a two-column card, so rows start on the first screen. */
+@media (max-width: 760px) {
+  .insights__table--paged thead {
+    display: none;
+  }
+
+  .insights__table--paged tbody tr[data-issue-row] {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .insights__table--paged tbody tr > th[scope="row"] {
+    grid-column: 1 / -1;
+  }
+}
+
+/* One gap between every section, so spacing doesn't depend on each block's margins. */
+:is(insights-overview, insights-site) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-m, 16px);
+}
+
+:is(insights-overview, insights-site)
+  > [data-region]:not([data-region="head"], [data-region="trail"]) {
+  display: contents;
+}
+
+:is(insights-overview, insights-site)
+  > [data-region]:not([data-region="head"], [data-region="trail"])
+  > * {
+  margin-block: 0;
+}
+
+/* An empty live region stays in the page for announcements but takes no gap. */
+:is(insights-overview, insights-site) [role="status"]:empty {
+  position: absolute;
+}
+
+/* Old results stay, dimmed, while new ones load. */
+.insights__stale > * {
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+
+/* Keeps a header's help "?" on the line with its last word. */
+.insights__nowrap {
+  white-space: nowrap;
+}
+
+.insights__meter-n {
+  display: inline-block;
+  min-inline-size: 2.5ch;
+}
+
+/* Fills at the Site's own required Checks a day. */
+.insights__meter {
+  display: inline-block;
+  vertical-align: middle;
+  inline-size: 48px;
+  block-size: 6px;
+  margin-inline-start: 6px;
+  border-radius: 3px;
+  background: var(--wa-color-neutral-fill-quiet, #e5e7eb);
+  overflow: hidden;
+}
+
+/* One neutral colour: the bars compare Sites, they don't grade them yet. */
+.insights__meter > span {
+  display: block;
+  block-size: 100%;
+  background: var(--wa-color-brand-fill-loud, #3b6fd4);
+}
+
+.insights__bar-mid {
+  text-align: center;
+}
+
+.insights__interval {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+@media (max-width: 640px) {
+  .insights__bar-mid {
+    text-align: start;
+  }
+}
+
+/* Set shares of the width, so a filter change never moves the columns (Bryan, 11/06). */
+@media (min-width: 761px) {
+  insights-overview .insights__table table {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  /* The base table clips with "…", which showed as a stray dot by the checkbox. */
+  insights-overview .insights__table th,
+  insights-overview .insights__table td {
+    padding-inline: 8px;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  insights-overview .insights__table thead th:nth-child(1) {
+    width: 40px;
+  }
+  insights-overview .insights__table thead th:nth-child(3) {
+    width: 16%;
+  }
+  insights-overview .insights__table thead th:nth-child(4) {
+    width: 15%;
+  }
+  insights-overview .insights__table thead th:nth-child(5) {
+    width: 13%;
+  }
+  insights-overview .insights__table thead th:nth-child(6) {
+    width: 14%;
+  }
+  insights-overview .insights__table thead th:nth-child(7) {
+    width: 32px;
+  }
+
+  insights-overview .insights__table tbody th {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 }

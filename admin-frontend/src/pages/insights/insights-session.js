@@ -60,6 +60,8 @@ export function createInsightsSession() {
   let names = null;
   /** @type {Promise<{ options: FilterOptions, names: Names }> | null} */
   let filters = null;
+  /** @type {Promise<Option[]> | null} */
+  let sites = null;
   const session = {
     reportJobs: createReportJobs({ api: adminApi }),
     /**
@@ -105,6 +107,26 @@ export function createInsightsSession() {
         },
       );
       return filters;
+    },
+    /** Every Site's name, so Overview can say how many Sites there are in all. @returns {Promise<Option[]>} */
+    siteOptions() {
+      sites ??= adminApi
+        .reportingScopeOptions({ include: "sites" })
+        .then((read) =>
+          (read.sites ?? [])
+            .map((/** @type {any} */ s) => ({
+              value: s.siteId,
+              label: s.name || s.siteId,
+            }))
+            .sort((/** @type {Option} */ a, /** @type {Option} */ b) =>
+              a.label.localeCompare(b.label),
+            ),
+        )
+        .catch((err) => {
+          sites = null;
+          throw err;
+        });
+      return sites;
     },
   };
   return session;

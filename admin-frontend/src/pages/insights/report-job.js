@@ -1,8 +1,8 @@
-// Lives outside the page, so leaving Overview and coming back still shows
-// how the report is going.
+// Lives outside the page, so leaving Overview or Raw data and coming back
+// still shows how the report or export is going.
 
-/** @typedef {{ jobId: string, state: string, error: string | null, expiresAt: string, downloadUrl: string | null, result: { filename: string } | null }} Job */
-/** @typedef {{ phase: "starting" | "queued" | "running" | "succeeded" | "failed" | "cancelled", siteCount: number, job: Job | null, error: string, linkAt?: number }} ReportState */
+/** @typedef {{ jobId: string, state: string, error: string | null, expiresAt: string, downloadUrl: string | null, result: { filename: string, rows?: number } | null }} Job */
+/** @typedef {{ phase: "starting" | "queued" | "running" | "succeeded" | "failed" | "cancelled", count: number, job: Job | null, error: string, linkAt?: number }} ReportState count is Sites in a report, rows in an export */
 /**
  * @typedef {{
  *   createInsightsReport: (body: Record<string, unknown>, key: string) => Promise<{ job: Job }>,
@@ -35,9 +35,10 @@ const same = (a, b) =>
   a.job?.downloadUrl === b.job?.downloadUrl &&
   a.linkAt === b.linkAt;
 
-/** @param {{ api: ReportApi, wait?: (ms: number) => Promise<void>, pollMs?: number, now?: () => number }} deps */
+/** @param {{ api: ReportApi, create?: ReportApi["createInsightsReport"], wait?: (ms: number) => Promise<void>, pollMs?: number, now?: () => number }} deps create starts the job; exports pass their own */
 export function createReportJobs({
   api,
+  create = api.createInsightsReport,
   wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   pollMs = 2000,
   now = Date.now,
@@ -64,18 +65,18 @@ export function createReportJobs({
   const codeOf = (err) =>
     err instanceof Error && err.message ? err.message : "job_failed";
 
-  /** @param {Job} job @param {number} siteCount */
-  const ended = (job, siteCount) =>
+  /** @param {Job} job @param {number} count */
+  const ended = (job, count) =>
     /** @type {ReportState} */ ({
       phase: job.state,
-      siteCount,
+      count,
       job,
       error: job.error || "",
       linkAt: job.downloadUrl ? now() : undefined,
     });
 
-  /** @param {Job} job @param {number} siteCount @param {number} mine */
-  const follow = async (job, siteCount, mine) => {
+  /** @param {Job} job @param {number} count @param {number} mine */
+  const follow = async (job, count, mine) => {
     let latest = job;
     let missed = 0;
     let error = "";
@@ -83,7 +84,7 @@ export function createReportJobs({
       set(
         {
           phase: /** @type {"queued" | "running"} */ (latest.state),
-          siteCount,
+          count,
           job: latest,
           error,
         },
@@ -99,14 +100,29 @@ export function createReportJobs({
         const code = codeOf(err);
         if (GONE.has(code))
           return set(
-            { phase: "failed", siteCount, job: latest, error: code },
+            { phase: "failed", count, job: latest, error: code },
             mine,
           );
         missed += 1;
         if (missed >= MAX_MISSED_POLLS) error = code;
       }
     }
-    set(ended(latest, siteCount), mine);
+    set(ended(latest, count), mine);
+  };
+
+  /** @param {Record<string, unknown>} body @param {number} count */
+  const startWith = async (body, count) => {
+    const mine = ++run;
+    last = { body, count };
+    set({ phase: "starting", count, job: null, error: "" }, mine);
+    try {
+      // A new key per click: the server treats a repeated key as the same job.
+      const key = crypto.randomUUID();
+      const { job } = await create(body, key);
+      await follow(job, count, mine);
+    } catch (err) {
+      set({ phase: "failed", count, job: null, error: codeOf(err) }, mine);
+    }
   };
 
   return {
@@ -120,44 +136,36 @@ export function createReportJobs({
       return () => listeners.delete(listener);
     },
     /** @param {string[]} siteIds @param {Record<string, string>} period API period params */
-    async start(siteIds, period) {
-      const mine = ++run;
-      const siteCount = siteIds.length;
-      set({ phase: "starting", siteCount, job: null, error: "" }, mine);
-      try {
-        // A new key per click: the server treats a repeated key as the same report.
-        const key = crypto.randomUUID();
-        const { job } = await api.createInsightsReport(
-          { siteIds, ...period },
-          key,
-        );
-        await follow(job, siteCount, mine);
-      } catch (err) {
-        set(
-          { phase: "failed", siteCount, job: null, error: codeOf(err) },
-          mine,
-        );
-      }
+    start: (siteIds, period) =>
+      startWith({ siteIds, ...period }, siteIds.length),
+    startWith,
+    retry: () => (last ? startWith(last.body, last.count) : Promise.resolve()),
+    /** The user has seen how the job ended, so a return to the page doesn't show it again. */
+    dismiss() {
+      run += 1;
+      if (!current) return;
+      current = null;
+      for (const listener of listeners) listener();
     },
     /** A finished report's link expires before the report does. */
     async refresh() {
       const mine = run;
       const job = current?.job;
       if (current?.phase !== "succeeded" || !job) return;
-      const siteCount = current.siteCount;
+      const count = current.count;
       // Cleared first, so a second failure is still told to the user.
       set({ ...current, error: "" }, mine);
       const before = current;
       try {
         const fresh = (await api.getReportJob(job.jobId)).job;
-        set(ended(fresh, siteCount), mine);
+        set(ended(fresh, count), mine);
       } catch (err) {
         // Another refresh already got a fresh link; this failure is old news.
         if (current !== before) return;
         const error = codeOf(err);
         if (GONE.has(error))
           return set(
-            { phase: "failed", siteCount, job, error: "job_not_found" },
+            { phase: "failed", count, job, error: "job_not_found" },
             mine,
           );
         // Anything else may pass, so the fresh-link button stays to try again.

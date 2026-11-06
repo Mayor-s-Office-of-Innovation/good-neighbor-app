@@ -250,7 +250,7 @@ test("a click elsewhere on a Site Issue row opens the Issue", async () => {
   await click(
     '[data-list="response"] [data-issue-row="t2"] [data-issue-created]',
   );
-  assert.ok($("#insights-panel-close"));
+  assert.match(url(), /^\/insights\/raw\/issues\/t2\?/);
 });
 
 /** Mounts with the Response list's Issue t2 changed. @param {Record<string, any>} change */
@@ -433,7 +433,7 @@ test("five response tiles count each state, and Overdue and Responded late list 
   );
 });
 
-test("picking a tile lists its Issues, and picking it again closes the list", async () => {
+test("picking a tile adds its Issues to the list, and picking it again takes them off", async () => {
   const { api } = await mountAdmin("/insights/sites/s1?period=2026-10", {
     insights: true,
   });
