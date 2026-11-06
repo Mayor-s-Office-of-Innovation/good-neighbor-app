@@ -4,7 +4,6 @@ import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { adminApi } from "../../services/admin-api.js";
 import { debounce } from "../../debounce.js";
 import {
-  MAX_REPORT_SITES,
   OVERVIEW_FILTERS,
   SHOW,
   keptSelection,
@@ -18,16 +17,25 @@ import {
 import { carriedQuery } from "./insights-routes.js";
 import { sessionOf } from "./insights-session.js";
 import { JobAction } from "./job-action.js";
+import { LatestLoad, superseded } from "./latest-load.js";
 import {
   drawPeriodControl,
   failedView,
   failureText,
   freshnessView,
   drawInterval,
+  monthOfToday,
   showLoaded,
   showLoading,
   periodClicked,
 } from "./insights.templates.js";
+import {
+  arrival,
+  pickAll,
+  pickOne,
+  plainClick,
+  siteToFocus,
+} from "./overview-rules.js";
 import {
   countText,
   filtersView,
@@ -55,17 +63,16 @@ class InsightsOverview extends HTMLElement {
     this.reportAsk = null;
     /** @type {number | null} every Site, for "22 Sites (out of 500)" */
     this.allSites = null;
+    /** @type {Period | null} */
+    this.fallback = null;
     this.periodKind = this.period?.kind ?? "month";
     this.periodError = "";
-    // Picks come back with the view they were made on; a new period has other rows.
     const back = this.session.overview;
-    const here = this.currentPath();
-    const same = back.path === here;
-    const returning = same || (!!back.alsoPath && back.alsoPath === here);
-    if (same) this.state.selected = [...back.selected];
+    const { selected, returning } = arrival(back, this.currentPath());
+    this.state.selected = selected;
     // A Site left by another way mustn't pull focus on a later load.
     if (!returning) back.siteId = "";
-    this.generation = 0;
+    this.loads = new LatestLoad();
     /** @type {import("./insights-session.js").Names} */
     this.names = { managerId: new Map(), providerId: new Map() };
     // <admin-app> gives <admin-insights-page> the signed-in admin's session.
@@ -105,7 +112,7 @@ class InsightsOverview extends HTMLElement {
   }
 
   disconnectedCallback() {
-    this.controller?.abort();
+    this.loads?.abort();
     this.search?.cancel();
     this.unsubscribe?.();
     this.report?.destroy();
@@ -140,12 +147,13 @@ class InsightsOverview extends HTMLElement {
         );
         select.value = /** @type {any} */ (this.state)[name];
       }
-      // Mid-load, the table on screen is the spinner, not old rows. A user
-      // already in the table keeps their place until they leave it.
-      if (!this.reply || this.hasAttribute("aria-busy")) return;
-      if (this.region("results").contains(document.activeElement))
-        this.drawWhenFocusLeaves();
-      else this.drawResults();
+      // Filled in place, so a user working in the table keeps their place.
+      for (const line of /** @type {NodeListOf<HTMLElement>} */ (
+        this.querySelectorAll("[data-manager]")
+      )) {
+        const id = line.dataset.manager ?? "";
+        line.textContent = names.managerId.get(id) ?? id;
+      }
     } catch {
       // The table still works; filters then list only what a link chose.
     }
@@ -161,31 +169,8 @@ class InsightsOverview extends HTMLElement {
     if (this.isConnected) this.drawBar();
   }
 
-  /** Names arrived while the user was in the table; show them on the way out. */
-  drawWhenFocusLeaves() {
-    const results = this.region("results");
-    this.stopWaitingForFocus();
-    const left = (/** @type {FocusEvent} */ event) => {
-      // Switching windows blurs the page but leaves focus where it was.
-      if (
-        results.contains(/** @type {Node | null} */ (event.relatedTarget)) ||
-        results.contains(document.activeElement)
-      )
-        return;
-      this.stopWaitingForFocus();
-      if (this.reply && !this.hasAttribute("aria-busy")) this.drawResults();
-    };
-    results.addEventListener("focusout", left);
-    this.stopWaitingForFocus = () =>
-      results.removeEventListener("focusout", left);
-  }
-
-  stopWaitingForFocus = () => {};
-
   async load() {
-    const mine = ++this.generation;
-    this.controller?.abort();
-    this.controller = new AbortController();
+    const { signal, current } = this.loads.start();
     // An old table and interval would claim to match the new filters, so they go now.
     showLoading(this.region("results"));
     drawInterval(this, null);
@@ -198,16 +183,14 @@ class InsightsOverview extends HTMLElement {
     try {
       reply = await adminApi.reportingOverview(
         overviewApiParams(this.state, this.period),
-        this.controller.signal,
+        signal,
       );
     } catch (err) {
-      if (
-        mine !== this.generation ||
-        /** @type {any} */ (err)?.name === "AbortError"
-      )
-        return;
+      if (superseded(err, current)) return;
       this.removeAttribute("aria-busy");
       this.reply = null;
+      // Without a period from the server, the controls step from this month.
+      if (!this.period) this.fallback = monthOfToday();
       // The old data time and notes describe a period no longer shown.
       this.region("freshness").innerHTML = freshnessView(null);
       showLoaded(
@@ -221,7 +204,7 @@ class InsightsOverview extends HTMLElement {
       this.restoreFocus();
       return;
     }
-    if (mine !== this.generation) return;
+    if (!current()) return;
     this.removeAttribute("aria-busy");
     this.reply = reply;
     this.state.selected = keptSelection(this.state.selected, this.listedIds());
@@ -236,7 +219,6 @@ class InsightsOverview extends HTMLElement {
   }
 
   drawResults() {
-    this.stopWaitingForFocus();
     if (!this.reply) return;
     showLoaded(
       this.region("results"),
@@ -252,10 +234,12 @@ class InsightsOverview extends HTMLElement {
 
   drawBar() {
     const count = this.querySelector("#insights-count");
+    // The old reply's count would be announced as if it matched the new filters.
     if (count)
-      count.textContent = this.reply
-        ? countText(this.reply, this.state, this.allSites)
-        : "";
+      count.textContent =
+        this.reply && !this.loading()
+          ? countText(this.reply, this.state, this.allSites)
+          : "";
     const all = /** @type {any} */ (this.querySelector("#insights-select-all"));
     if (!all) return;
     const ids = this.listedIds();
@@ -384,25 +368,16 @@ class InsightsOverview extends HTMLElement {
     if (siteId) this.select(siteId, target.checked);
   };
 
-  /** Keeps the user's own picks first, in the order they made them. @param {boolean} on */
+  /** @param {boolean} on */
   selectAll(on) {
     if (this.loading()) return;
-    const ids = this.listedIds();
-    const mine = this.state.selected;
-    const picked = new Set(mine);
-    this.state.selected = on
-      ? [...mine, ...ids.filter((id) => !picked.has(id))].slice(
-          0,
-          MAX_REPORT_SITES,
-        )
-      : [];
+    this.state.selected = pickAll(this.state.selected, this.listedIds(), on);
     this.selectionChanged();
   }
 
   /** @param {string} siteId @param {boolean} on */
   select(siteId, on) {
-    const rest = this.state.selected.filter((id) => id !== siteId);
-    this.state.selected = on ? [...rest, siteId] : rest;
+    this.state.selected = pickOne(this.state.selected, siteId, on);
     this.selectionChanged();
   }
 
@@ -423,28 +398,35 @@ class InsightsOverview extends HTMLElement {
   clicked = (event) => {
     const target = /** @type {Element} */ (event.target);
     const button = target.closest("button, a");
-    if (!button) return this.rowClicked(target);
+    if (!button) return this.rowClicked(/** @type {MouseEvent} */ (event));
     if (!this.contains(button)) return;
-    // A control in the table goes with the redraw; focus then goes to the count.
-    if (this.region("results").contains(button)) this.refocus = true;
+    // A button in the table goes with the reload's redraw; focus then goes to the count.
+    const inTable = this.region("results").contains(button);
     const show = button.getAttribute("data-show");
     if (show && SHOW.includes(show)) {
       // Pressing the shown view again mustn't drop the picks.
-      if (show !== this.state.show) this.refine({ show });
-      return;
+      if (show === this.state.show) return;
+      this.refocus = inTable;
+      return this.refine({ show });
     }
     if (this.region("period").contains(button)) {
       periodClicked(this, button, this.region("period"));
       return;
     }
-    if (button.id === "insights-retry") return void this.load();
-    if (button.id === "insights-clear-filters")
+    if (button.id === "insights-retry") {
+      this.refocus = inTable;
+      return void this.load();
+    }
+    if (button.id === "insights-clear-filters") {
+      this.refocus = inTable;
       return this.refine(
         Object.fromEntries(["q", ...OVERVIEW_FILTERS].map((key) => [key, ""])),
       );
+    }
     if (button.id === "insights-report") return this.openReportDialog();
     const site = button.getAttribute("data-site-link");
-    if (site)
+    // A new tab or window leaves this view open, so it has nothing to return to.
+    if (site && plainClick(/** @type {MouseEvent} */ (event)))
       this.session.overview = {
         path: this.currentPath(),
         siteId: site,
@@ -453,9 +435,12 @@ class InsightsOverview extends HTMLElement {
       };
   };
 
-  /** A click anywhere on a row opens its Site; the name stays the real link. @param {Element} target */
-  rowClicked(target) {
+  /** A click anywhere on a row opens its Site; the name stays the real link. @param {MouseEvent} event */
+  rowClicked(event) {
+    const target = /** @type {Element} */ (event.target);
     if (target.closest("wa-checkbox, [popover]")) return;
+    // The forwarded click drops modifier keys, and a drag selects text, not the row.
+    if (!plainClick(event) || String(document.getSelection?.() ?? "")) return;
     /** @type {HTMLElement | null | undefined} */ (
       target.closest("[data-site-row]")?.querySelector("[data-site-link]")
     )?.click();
@@ -485,9 +470,8 @@ class InsightsOverview extends HTMLElement {
   }
 
   returnFocus() {
-    const { siteId, path, alsoPath } = this.session.overview;
-    const here = this.currentPath();
-    if (!siteId || (path !== here && alsoPath !== here)) return;
+    const siteId = siteToFocus(this.session.overview, this.currentPath());
+    if (!siteId) return;
     this.session.overview.siteId = "";
     /** @type {HTMLElement | null} */ (
       this.querySelector(`[data-site-link="${CSS.escape(siteId)}"]`)

@@ -19,16 +19,44 @@ import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import {
   formatDay,
   formatInstant,
+  monthOfToday,
   periodLabel,
 } from "./pages/insights/insights.templates.js";
+import {
+  intervalOf,
+  periodSearch,
+  stepPeriod,
+} from "./pages/insights/insights-query.js";
 import { LINK_MS } from "./pages/insights/report-job.js";
 
 const url = () => window.location.pathname + window.location.search;
+/** @type {string[]} */
+const downloads = [];
 // A download link would navigate the test's window away from the page.
 window.addEventListener("click", (/** @type {any} */ event) => {
-  if (event.target.closest?.('a[href^="/mock-downloads/"]'))
-    event.preventDefault();
+  const link = event.target.closest?.('a[href^="/mock-downloads/"]');
+  if (!link) return;
+  event.preventDefault();
+  downloads.push(link.getAttribute("href"));
 });
+/**
+ * A click with modifier keys, as for a new tab; held back so the test window stays put.
+ * @param {string} selector
+ * @param {Record<string, boolean>} keys
+ */
+async function modifiedClick(selector, keys) {
+  const stay = (/** @type {Event} */ event) => event.preventDefault();
+  window.addEventListener("click", stay, true);
+  $(selector).dispatchEvent(
+    new window.MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      ...keys,
+    }),
+  );
+  window.removeEventListener("click", stay, true);
+  await settle();
+}
 const rows = () => $$("[data-site-row]").map((row) => row.dataset.siteRow);
 /** @param {any} api */
 const overviewCalls = (api) =>
@@ -82,8 +110,16 @@ test("Overview opens on Top concerns for the last full month", async () => {
   assert.equal($('[data-show="top"]').getAttribute("aria-pressed"), "true");
 });
 
+/** A running period's data ends at the snapshot time. */
+const runningToSnapshot = overviewReply((json) => {
+  json.meta.interval.observedTo = json.meta.asOf;
+});
+
 test("Overview says when its data was updated and that a running period is still running", async () => {
-  await mountAdmin("/insights?period=2026-11", { insights: true });
+  await mountAdmin("/insights?period=2026-11", {
+    insights: true,
+    setup: runningToSnapshot,
+  });
   assert.equal(
     text("[data-insights-freshness]"),
     t("admin.insights.dataAsOf", {
@@ -94,21 +130,27 @@ test("Overview says when its data was updated and that a running period is still
   assert.equal(
     text("[data-period-incomplete]"),
     t("admin.insights.period.incomplete", {
-      time: formatInstant("2026-11-04T19:00:00.000Z"),
+      time: formatInstant("2026-11-04T18:00:00.000Z"),
     }),
   );
   assert.ok(missing("[data-insights-quality]"));
 });
 
 test("each Site row shows late responses, worst Issue and Issues per 30 days", async () => {
-  await mountAdmin("/insights?period=2026-10", { insights: true });
+  await mountAdmin("/insights?period=2026-10", {
+    insights: true,
+    setup: overviewReply((json) => {
+      for (const row of json.sites) row.issuesPer30Days = 4.9;
+    }),
+  });
   assert.equal(cell("s1", "[data-late-count]"), "2");
   assert.equal(
     cell("s4", "[data-issues]"),
     t("admin.insights.severity.severe"),
   );
   assert.ok(missing("[data-site-row] [data-concerns]"));
-  assert.match(cell("s4", "[data-issues-per-30d]"), /^\d+(\.\d)?$/);
+  // The server's rate, so the column matches its Many Issues flag.
+  assert.equal(cell("s4", "[data-issues-per-30d]"), "4.9");
   // Shows the number Few Checks is judged on, not only the total.
   assert.equal(cell("s4", "[data-checks-per-day]"), "0.4");
   // Contacts aren't columns; a missing public contact is a chip under the name.
@@ -131,16 +173,6 @@ test("a column header's ? explains it", async () => {
     text("#insights-tip-col-response"),
     t("admin.insights.colHelp.response"),
   );
-});
-
-test("a response with no response time is never shown in the row", async () => {
-  await mountAdmin("/insights?period=2026-10", {
-    insights: true,
-    setup: overviewReply((json) => {
-      json.sites[0].response.notTimed = 2;
-    }),
-  });
-  assert.ok(missing('[data-response="notTimed"]'));
 });
 
 test("a period before the data begins shows Unavailable, not zeros", async () => {
@@ -171,7 +203,8 @@ test("a filter narrows the table, goes in the URL and clears the selection", asy
     insights: true,
   });
   const before = rows();
-  await fill('[data-select-site="s1"]', true);
+  // s4 is pm2's, so it's still listed after the filter.
+  await fill('[data-select-site="s4"]', true);
   // Picks stay out of the URL, so a 1,000-Site pick can't overflow a link.
   assert.equal(url(), "/insights?period=2026-10&show=all");
   await fill('wa-select[data-filter="managerId"]', "pm2");
@@ -179,7 +212,8 @@ test("a filter narrows the table, goes in the URL and clears the selection", asy
   assert.equal(lastOverviewCall(api).managerId, "pm2");
   assert.notDeepEqual(rows(), before);
   assert.deepEqual(rows(), ["s4"]);
-  // Nothing picked survives, so a report can't carry a hidden Site.
+  // A new population starts unpicked, so a report can't carry a Site picked for another reason.
+  assert.equal($('[data-select-site="s4"]').checked, false);
   assert.equal($("#insights-report").getAttribute("aria-disabled"), "true");
 });
 
@@ -193,7 +227,7 @@ test("a compliance manager finds their own name first in the Manager filter", as
   const items = [...select.children].map((el) =>
     el.tagName === "WA-DIVIDER" ? "--" : el.textContent,
   );
-  // The mock's profile is linked to manager pm1.
+  // The fake API's profile is linked to manager pm1.
   const own = [...select.querySelectorAll("wa-option")].find(
     (o) => o.getAttribute("value") === "pm1",
   );
@@ -202,7 +236,10 @@ test("a compliance manager finds their own name first in the Manager filter", as
   assert.match(own.textContent, /\(me\)$/);
   assert.equal(items[2], "--");
   const others = items.slice(3);
-  assert.deepEqual(others, [...others].sort((x, y) => x.localeCompare(y)));
+  assert.deepEqual(
+    others,
+    [...others].sort((x, y) => x.localeCompare(y)),
+  );
   assert.ok(missing("#insights-mine"));
   // Picking it shows their own Sites and keeps the choice in the URL; s4 is pm2's.
   await fill('wa-select[data-filter="managerId"]', "pm1");
@@ -223,18 +260,24 @@ test("Overview names the exact interval under the count, and no version", async 
   await mountAdmin("/insights?period=2026-10", { insights: true });
   assert.equal(
     text("[data-insights-interval]"),
-    "Between Oct 1, 2026 12:00 AM and Nov 1, 2026 12:00 AM PT",
+    t("admin.insights.interval", {
+      from: formatDay("2026-10-01"),
+      to: formatDay("2026-11-01"),
+    }),
   );
   assert.doesNotMatch(text("insights-overview"), /version|rulebook/i);
 });
 
 test("a running period's footer ends at the data time, as its period pill does", async () => {
-  await mountAdmin("/insights?period=2026-11", { insights: true });
+  await mountAdmin("/insights?period=2026-11", {
+    insights: true,
+    setup: runningToSnapshot,
+  });
   assert.equal(
     text("[data-insights-interval]"),
     t("admin.insights.intervalSoFar", {
       from: formatDay("2026-11-01"),
-      to: formatInstant("2026-11-04T19:00:00.000Z"),
+      to: formatInstant("2026-11-04T18:00:00.000Z"),
     }),
   );
 });
@@ -267,7 +310,7 @@ test("a new sort keeps the picks, since every Site is still listed", async () =>
   assert.ok($('[data-select-site="s1"]').checked);
 });
 
-test("the controls follow the mock: Search, Period, Site status, then Filter", async () => {
+test("the controls read Search, Period, Site status, then Filter", async () => {
   await mountAdmin("/insights", { insights: true });
   assert.deepEqual(
     $$("[data-control-label]").map((l) => l.textContent),
@@ -279,7 +322,7 @@ test("the controls follow the mock: Search, Period, Site status, then Filter", a
     $$("[data-region='filters'] [data-show]").map((b) => b.dataset.show),
     ["all", "top", "unknown"],
   );
-  // The response and contact filters were cut from the mock.
+  // Responses and contacts show on each row, so they have no filter.
   assert.deepEqual(
     $$("wa-select[data-filter]").map((el) => el.dataset.filter),
     ["managerId", "providerId", "department", "sort"],
@@ -409,22 +452,6 @@ test("a failed load shows why, hides old rows and retries", async () => {
   assert.equal(rows().length, 4);
 });
 
-test("select all keeps the Sites already picked first, then picks the rest of the list", async () => {
-  const { api } = await mountAdmin("/insights", {
-    insights: true,
-    setup: manySites(12),
-  });
-  await fill('[data-select-site="m12"]', true);
-  await fill("#insights-select-all", true);
-  await click("#insights-report");
-  await click("#insights-report-confirm");
-  const [sent] = api.calls("POST", /^reports\/insights$/);
-  assert.deepEqual(sent.body.siteIds, [
-    "m12",
-    ...Array.from({ length: 11 }, (_, i) => `m${i + 1}`),
-  ]);
-});
-
 test("every Site is on one page, with no pager", async () => {
   // One past the old 50-row page.
   await mountAdmin("/insights", { insights: true, setup: manySites(51) });
@@ -469,15 +496,16 @@ test("a shared link that names a quarter opens that quarter", async () => {
 });
 
 test("select all sits in the table header and picks every Site, with no cap", async () => {
-  await mountAdmin("/insights", { insights: true, setup: manySites(50) });
+  // One past the old 50-Site cap.
+  await mountAdmin("/insights", { insights: true, setup: manySites(51) });
   assert.ok($("thead").contains($("#insights-select-all")));
   await fill("#insights-select-all", true);
   const boxes = $$("[data-select-site]");
-  assert.equal(boxes.filter((b) => b.checked).length, 50);
+  assert.equal(boxes.filter((b) => b.checked).length, 51);
   assert.ok(boxes.every((b) => !b.disabled));
   assert.equal(
     text("#insights-report"),
-    t("admin.insights.report.buttonCount", { count: 50 }),
+    t("admin.insights.report.buttonCount", { count: 51 }),
   );
   await fill("#insights-select-all", false);
   assert.equal(boxes.filter((b) => b.checked).length, 0);
@@ -731,7 +759,7 @@ test("a report still running keeps its button busy, and pressing it asks for not
   assert.equal(api.calls("POST", /^reports\/insights$/).length, 1);
 });
 
-test("manager names that arrive while the user is in the table show once they leave it", async () => {
+test("manager names that arrive while the user is in the table fill in without moving focus", async () => {
   const held = gate();
   const { api } = await mountAdmin("/insights?period=2026-10&show=all", {
     insights: true,
@@ -741,15 +769,15 @@ test("manager names that arrive while the user is in the table show once they le
         return api.reply(r);
       }),
   });
-  $('[data-select-site="s1"]').focus();
+  const box = $('[data-select-site="s1"]');
+  box.focus();
   held.release();
   await settle();
   const casey = api.data.programManagers[0].firstName;
-  assert.ok(focused('[data-select-site="s1"]'));
-  assert.ok(!cell("s1", "th").includes(casey));
-  $("#insights-search").focus();
-  await settle();
   assert.ok(cell("s1", "th").includes(casey));
+  // Same box, not a redrawn copy, so focus never left it.
+  assert.ok($('[data-select-site="s1"]') === box);
+  assert.ok(focused('[data-select-site="s1"]'));
 });
 
 test("a reattached Overview still shows the report running, then its dialog", async () => {
@@ -809,7 +837,7 @@ test("with no period in the link, the period control names no month until the se
   });
   held.release();
   await settle();
-  // The mock's default, as the server's: October has 31 days of data.
+  // The fake API picks the server's default: the last full month, October.
   assert.deepEqual(periodControl(), {
     label: periodLabel({
       kind: "month",
@@ -822,23 +850,26 @@ test("with no period in the link, the period control names no month until the se
   });
 });
 
-test("after the first load fails with no period, the period control stays unpicked, but Custom works", async () => {
+test("after the first load fails with no period, the period control falls back to this month", async () => {
   const { api } = await mountAdmin("/insights", {
     insights: true,
     setup: (api) =>
       api.fail("GET", /^reporting\/overview/, 503, "snapshot_unavailable"),
   });
+  const month = monthOfToday();
   assert.deepEqual(periodControl(), {
-    label: t("common.loading"),
-    disabled: ["month", "quarter", "year", "financialYear", "-1", "1"],
+    label: periodLabel(intervalOf(month)),
+    // This month is still running, so there's no Next.
+    disabled: ["1"],
+    // No reply has said how far the data goes.
     incomplete: false,
   });
-  const loads = overviewCalls(api).length;
-  await click('[data-period-kind="year"]');
+  // Retry still asks for the server's own default period.
+  await click("#insights-retry");
+  assert.equal(lastOverviewCall(api).month, undefined);
   await click('[data-period-step="-1"]');
-  assert.equal(overviewCalls(api).length, loads);
-  await click('[data-period-kind="custom"]');
-  assert.ok(!missing("#insights-period-from"));
+  const previous = stepPeriod(month, -1);
+  assert.equal(url(), `/insights?${periodSearch(previous)}`);
 });
 
 test("Download after the link runs out fetches a fresh one first", async () => {
@@ -852,8 +883,14 @@ test("Download after the link runs out fetches a fresh one first", async () => {
   // The fake clock moves Date too, so the link runs out on schedule.
   await tick(LINK_MS);
   const reads = statusChecks(api);
+  api.on("GET", /^reports\/(?!insights$)/, (/** @type {any} */ r) => {
+    const reply = api.reply(r);
+    reply.json.job.downloadUrl = "/mock-downloads/fresh.csv";
+    return reply;
+  });
   await click("#insights-report-download");
   assert.equal(statusChecks(api), reads + 1);
+  assert.equal(downloads.at(-1), "/mock-downloads/fresh.csv");
   assert.ok(missing("#insights-report-done"));
 });
 
@@ -902,29 +939,6 @@ for (const maxSeverity of [null, 0]) {
     );
   });
 }
-
-test("switching windows while names arrive leaves the table and focus alone", async () => {
-  const held = gate();
-  await mountAdmin("/insights?period=2026-10&show=all", {
-    insights: true,
-    setup: (api) =>
-      api.on("GET", /^program-managers$/, async (/** @type {any} */ r) => {
-        await held.promise;
-        return api.reply(r);
-      }),
-  });
-  const box = $('[data-select-site="s1"]');
-  box.focus();
-  held.release();
-  await settle();
-  // A window blur: focus leaves the page, so nothing new takes it.
-  box.dispatchEvent(
-    new window.FocusEvent("focusout", { bubbles: true, relatedTarget: null }),
-  );
-  await settle();
-  assert.ok($('[data-select-site="s1"]') === box);
-  assert.ok(focused('[data-select-site="s1"]'));
-});
 
 test("browser Back from a Site whose period changed returns to the view left, with its picks", async () => {
   await mountAdmin("/insights?period=2026-10&show=all", { insights: true });
@@ -994,9 +1008,16 @@ test("while new Sites load, select all can't pick the old ones", async () => {
   // The old rows stay in view but inert, so nothing can pick them.
   assert.ok($("#insights-select-all").closest("[inert]"));
   assert.equal(url(), "/insights?period=2026-10");
+  await fill("#insights-select-all", true);
   held.release();
   await settle();
   assert.equal($("#insights-select-all").disabled, false);
+  assert.deepEqual(
+    $$("[data-select-site]")
+      .filter((b) => b.checked)
+      .map((b) => b.dataset.selectSite),
+    [],
+  );
 });
 
 test("pressing the view already shown keeps the picks and asks for nothing", async () => {
@@ -1050,7 +1071,7 @@ test("a ready report with no download link yet fetches one on Download", async (
   assert.ok(missing("#insights-report-done"));
 });
 
-test("a report whose status can't be read stays busy, and opens its dialog once it can", async () => {
+test("a report whose status can't be read says so, keeps trying, and opens its dialog once it can", async () => {
   const { api } = await mountAdmin("/insights?period=2026-10", {
     insights: true,
   });
@@ -1059,8 +1080,13 @@ test("a report whose status can't be read stays busy, and opens its dialog once 
   await click("#insights-report-confirm");
   api.fail("GET", /^reports\/(?!insights$)/, 503, "reporting_failed");
   // Reads back off: 2, 4 then 8 seconds apart.
-  for (const ms of [2000, 4000, 8000]) await tick(ms);
-  assert.equal(text("#insights-report"), t("admin.insights.report.generating"));
+  const reads = [];
+  for (const ms of [2000, 4000, 8000]) {
+    await tick(ms);
+    reads.push(statusChecks(api));
+  }
+  assert.deepEqual(reads, [1, 2, 3]);
+  assert.equal(text("#insights-report"), t("admin.insights.job.cantCheck"));
   assert.ok(missing("#insights-report-done"));
   api.on("GET", /^reports\/(?!insights$)/, (/** @type {any} */ r) =>
     api.reply(r),
@@ -1089,4 +1115,65 @@ test("changing a filter keeps the old rows until the new ones arrive, so the pag
   held.release();
   await settle();
   assert.notDeepEqual(rows(), before);
+});
+
+test("a Site opened in a new tab doesn't pull focus on a later load", async () => {
+  await mountAdmin("/insights?period=2026-10&show=all", { insights: true });
+  await modifiedClick('[data-site-link="s1"]', { metaKey: true });
+  assert.equal(url(), "/insights?period=2026-10&show=all");
+  await fill('wa-select[data-filter="sort"]', "issuesCreated");
+  assert.ok(!focused('[data-site-link="s1"]'));
+});
+
+/** Holds every Overview reply after the first until `held` is released. @param {{ promise: Promise<unknown> }} held */
+const holdLaterLoads = (held) => (/** @type {any} */ api) => {
+  let first = true;
+  api.on("GET", /^reporting\/overview/, async (/** @type {any} */ r) => {
+    const reply = api.reply(r);
+    if (!first) await held.promise;
+    first = false;
+    return reply;
+  });
+};
+
+test("while a new view loads, the count is blank, not the old view's", async () => {
+  const held = gate();
+  await mountAdmin("/insights?period=2026-10", {
+    insights: true,
+    setup: holdLaterLoads(held),
+  });
+  assert.equal(
+    text("#insights-count"),
+    t("admin.insights.siteCountOf", { count: 2, total: 4 }),
+  );
+  await click('[data-show="all"]');
+  assert.equal(text("#insights-count"), "");
+  held.release();
+  await settle();
+  assert.equal(
+    text("#insights-count"),
+    t("admin.insights.siteCount", { count: 4 }),
+  );
+});
+
+test("opening a column's ? doesn't send focus to the count on a later load", async () => {
+  await mountAdmin("/insights?period=2026-10", { insights: true });
+  const tip = '[popovertarget="insights-tip-col-response"]';
+  $(tip).focus();
+  await click(tip);
+  await fill('wa-select[data-filter="sort"]', "issuesCreated");
+  assert.ok(!focused("#insights-count"));
+});
+
+test("a row click with a modifier key, or after selecting text, stays on Overview", async () => {
+  await mountAdmin("/insights?period=2026-10", { insights: true });
+  await modifiedClick('[data-site-row="s4"] [data-checks]', { ctrlKey: true });
+  assert.equal(url(), "/insights?period=2026-10");
+  const name = $('[data-site-row="s4"] th');
+  window.getSelection().selectAllChildren(name);
+  await click('[data-site-row="s4"] [data-checks]');
+  assert.equal(url(), "/insights?period=2026-10");
+  window.getSelection().removeAllRanges();
+  await click('[data-site-row="s4"] [data-checks]');
+  assert.equal(text("h1"), "Pier Example Site");
 });
