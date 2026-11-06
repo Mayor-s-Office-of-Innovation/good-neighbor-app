@@ -2,7 +2,6 @@
 import { resolutionTime } from "../../../../frontend/src/domain/reports-issues.js";
 import { hasKey, t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
-import { rulebookText } from "../../../../frontend/src/i18n/rulebook.js";
 import { phoneWithExtension } from "../shared.templates.js";
 import { activityChart, chartUnit } from "./activity-chart.js";
 import { CONCERN_RULES } from "./concern-rules.js";
@@ -23,7 +22,7 @@ import {
   severityBand,
 } from "./insights.templates.js";
 import { bandView } from "./overview.templates.js";
-import { openColumnHead } from "./raw.templates.js";
+import { categoryWord, openColumnHead } from "./raw.templates.js";
 import { contactShown, showsTotal } from "./site-rules.js";
 
 /** @typedef {Record<string, any>} Reply */
@@ -523,7 +522,7 @@ export function siteIssuesView({
       <tbody role="rowgroup">${rows
         .map((i) => {
           return `<tr role="row" data-issue-row="${escapeHtml(i.issueId)}">
-        <th role="rowheader" scope="row" data-label="${escapeHtml(colLabel("issue"))}"><a href="${escapeHtml(issueHref(i))}" data-route data-panel-kind="issue" data-panel-id="${escapeHtml(i.issueId)}" data-panel-site="${escapeHtml(i.siteId)}">${bandView(severityBand(i.severity))} ${escapeHtml(i.category ? rulebookText(i.category, "rulebook.category") : t("admin.insights.issue.categoryUnknown"))}</a></th>
+        <th role="rowheader" scope="row" data-label="${escapeHtml(colLabel("issue"))}"><a href="${escapeHtml(issueHref(i))}" data-route data-panel-kind="issue" data-panel-id="${escapeHtml(i.issueId)}" data-panel-site="${escapeHtml(i.siteId)}">${bandView(severityBand(i.severity))} ${escapeHtml(categoryWord(i.category))}</a></th>
         <td role="cell" data-label="${escapeHtml(colLabel("createdAt"))}" data-issue-created>${escapeHtml(formatInstant(i.createdAt))}</td>
         <td role="cell" data-label="${escapeHtml(colLabel("responseTime"))}" data-issue-took>${responseTimeCell(i)}</td>
         <td role="cell" data-label="${escapeHtml(colLabel("onTime"))}" data-issue-on-time>${onTimeCell(i)}</td>

@@ -822,7 +822,7 @@
   gap: 8px 16px;
 }
 
-/* Only phones fold the filters away. */
+/* Wide screens have room for every filter, so there's nothing to unfold. */
 .insights__filters-toggle {
   display: none;
 }
@@ -831,13 +831,13 @@
   display: contents;
 }
 
-/* The trail's phone stand-in. */
+/* Wide screens show the whole trail, so the single back link would repeat it. */
 .insights__trail-back {
   display: none;
 }
 
 /* A help line, not a missing-data note, so it isn't in italics. */
-.insights [data-insights-empty="filtered"] {
+insights-raw-list [data-insights-empty="filtered"] {
   font-style: normal;
 }
 
@@ -908,10 +908,14 @@
 .insights__panel h3 > .insights__tip-body,
 insights-record h2 > .insights__tip-body {
   position-area: top span-right;
-  position-try-fallbacks: flip-inline;
+  /* Below too, so near the top of a phone the tip isn't cut off. */
+  position-try-fallbacks:
+    flip-inline,
+    flip-block,
+    flip-block flip-inline;
 }
 
-/* Five columns don't fit the panel, so its Issues show as labelled cards. */
+/* A Check's Issue table is too wide for the panel, so its Issues show as labelled cards. */
 .insights__panel .insights__table thead {
   display: none;
 }
@@ -953,7 +957,18 @@ insights-record h2 > .insights__tip-body {
 
 .insights__panel .insights__table td[data-label]::before {
   content: attr(data-label) ": ";
+  display: inline;
+  font-size: inherit;
   color: var(--muted);
+}
+
+/* Phone card rules would otherwise add a label line, hide the open marker and stack each label. */
+.insights__panel .insights__table tbody th[data-label]::before {
+  content: none;
+}
+
+.insights__panel .insights__table td.insights__chev {
+  display: block;
 }
 
 .insights__panel [data-panel-body] {

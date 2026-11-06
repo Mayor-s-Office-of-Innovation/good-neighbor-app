@@ -1327,3 +1327,51 @@ test("Back from Open in Raw data on a Severe Issue keeps both lists' picks", asy
   assert.deepEqual(pressed(), ["overdue", "late", "onTime"]);
   assert.ok(focused('[data-list="severity"] [data-issue-row="t1"] a'));
 });
+
+test("after one way back, a later Back from elsewhere starts with the default tiles", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
+  const site = url();
+  await click('[data-list="response"] [data-tile="onTime"]');
+  await click('[data-list="response"] [data-issue-row="t2"] a');
+  await click("#insights-panel-full");
+  window.history.back();
+  await settle();
+  assert.deepEqual(pressed(), ["overdue", "late", "onTime"]);
+  await click("#insights-site-checks");
+  assert.match(url(), /^\/insights\/raw\/checks\?/);
+  window.history.back();
+  await settle();
+  assert.equal(url(), site);
+  assert.deepEqual(pressed(), ["overdue", "late"]);
+  assert.ok(!focused('[data-issue-row="t2"] a'));
+});
+
+test("Back from Open in Raw data keeps a list with every tile turned off", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
+  await click('[data-list="response"] [data-tile="overdue"]');
+  await click('[data-list="response"] [data-tile="late"]');
+  assert.deepEqual(pressed(), []);
+  await click('[data-list="severity"] [data-issue-row="t1"] a');
+  await click("#insights-panel-full");
+  window.history.back();
+  await settle();
+  assert.deepEqual(pressed(), []);
+  assert.ok(focused('[data-list="severity"] [data-issue-row="t1"] a'));
+});
+
+test("an Issue row without its Site opens the full record instead of the panel", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", {
+    insights: true,
+    setup: (api) =>
+      api.on("GET", /^reporting\/issues\?/, (/** @type {any} */ r) => {
+        const reply = api.reply(r);
+        for (const issue of reply.json.issues) issue.siteId = "";
+        return reply;
+      }),
+  });
+  await click(
+    '[data-list="response"] [data-issue-row="t2"] [data-issue-created]',
+  );
+  assert.ok(missing("[data-record-panel]"));
+  assert.match(url(), /^\/insights\/raw\/issues\/t2\?/);
+});

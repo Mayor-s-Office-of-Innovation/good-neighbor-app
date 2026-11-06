@@ -7,7 +7,8 @@ import { carriedQuery, safeReturnPath } from "./insights-routes.js";
 import { reportSignInError, sessionOf } from "./insights-session.js";
 import { LatestLoad, superseded } from "./latest-load.js";
 import { recordHref } from "./record-links.js";
-import { RecordPanel, hopOf } from "./record-panel.js";
+import { plainClick } from "./overview-rules.js";
+import { RecordPanel, cameBack, hopOf, markWayBack } from "./record-panel.js";
 import {
   drawPeriodControl,
   incompletePill,
@@ -50,14 +51,6 @@ import {
  */
 
 const LISTS = /** @type {SiteList[]} */ (Object.keys(SITE_LISTS));
-
-/** A plain left click; any other opens the link's own address, as links do. @param {MouseEvent} event */
-const plainClick = (event) =>
-  event.button === 0 &&
-  !event.metaKey &&
-  !event.ctrlKey &&
-  !event.shiftKey &&
-  !event.altKey;
 
 class InsightsSite extends HTMLElement {
   connectedCallback() {
@@ -128,7 +121,7 @@ class InsightsSite extends HTMLElement {
       siteId: this.siteId,
       // Back from Raw data finds the same tiles and Issue, as Raw data's own list does.
       left: (hop) => {
-        history.replaceState({ ...history.state, insightsReturn: true }, "");
+        markWayBack();
         this.session.siteFocus = {
           path: this.here(),
           issueId: hop.id,
@@ -140,11 +133,11 @@ class InsightsSite extends HTMLElement {
       },
     });
     const focus = this.session.siteFocus;
-    const returning =
-      history.state?.insightsReturn || this.session.returning === this.here();
-    this.session.returning = "";
     /** @type {{ issueId: string, list: string, tiles: Record<string, string> } | null} the row to land on, coming back */
-    this.returnTo = returning && focus.path === this.here() ? focus : null;
+    this.returnTo =
+      cameBack(this.session, this.here()) && focus.path === this.here()
+        ? focus
+        : null;
     this.addEventListener("click", this.clicked);
     this.drawPeriod();
     void this.loadNames();
@@ -286,8 +279,13 @@ class InsightsSite extends HTMLElement {
     this.reply = reply;
     const back = this.returnTo;
     this.returnTo = null;
+    // Used once, so a later Back by another way starts with the default tiles.
+    if (back)
+      this.session.siteFocus = { path: "", issueId: "", list: "", tiles: {} };
     for (const list of LISTS) {
-      this.lists[list].tile = back?.tiles?.[list] || SITE_LISTS[list].first;
+      // "" is a pick too: every tile in the list turned off.
+      this.lists[list].tile =
+        back && list in back.tiles ? back.tiles[list] : SITE_LISTS[list].first;
       this.lists[list].concern = "";
     }
     this.drawHead();
@@ -564,6 +562,9 @@ class InsightsSite extends HTMLElement {
         this.panel.open(hop, /** @type {HTMLElement} */ (link));
         return;
       }
+      // A row without its Site can't open in the panel, so it opens the full record.
+      if (link !== target.closest("a"))
+        return void (/** @type {HTMLElement} */ (link).click());
     }
     const button = target.closest("button");
     if (!button || !this.contains(button)) return;

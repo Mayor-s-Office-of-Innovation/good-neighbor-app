@@ -274,13 +274,13 @@ test("Program options share the scope read and fall back to IDs until the names 
     .spyOn(adminApi, "listPrograms")
     .mockImplementation(async () => {
       if (fail) throw new Error("network");
-      return { programs: [{ programId: "g1", name: "Safe Spaces" }] };
+      return { programs: [{ programId: "g1", name: "Example Program" }] };
     });
   const session = createInsightsSession();
   await session.filterOptions();
   assert.equal((await session.programOptions())[0].label, "g1");
   fail = false;
-  assert.equal((await session.programOptions())[0].label, "Safe Spaces");
+  assert.equal((await session.programOptions())[0].label, "Example Program");
   const reads = programs.mock.calls.length;
   await session.programOptions();
   assert.equal(programs.mock.calls.length, reads);
