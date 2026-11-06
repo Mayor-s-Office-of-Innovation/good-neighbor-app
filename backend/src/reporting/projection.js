@@ -1,6 +1,7 @@
 // Built once per snapshot; nothing downstream recounts, so screens, CSVs and
 // reports agree. Only `sites` holds names (of Sites); no table holds
-// addresses, contact details, people or free text.
+// addresses, people or free text. The one contact detail is the public email
+// and phone in `site_contacts`, which Sites post for neighbors.
 
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -20,7 +21,7 @@ import {
   RULE_VERSION,
   assertNoJudgementFields,
 } from "./contract.js";
-import { publicContactState, siteContactState } from "./indicators.js";
+import { publicContactState, siteContactState, text } from "./indicators.js";
 import { RULES_SQL, TABLE_ORDER, snapshotMacrosSql } from "./projection-sql.js";
 
 // Promoted columns where the converter has them, raw JSON otherwise. Copied
@@ -87,13 +88,6 @@ function reportCategory(category) {
 }
 
 /**
- * @param {unknown} value
- * @returns {string | null}
- */
-const filled = (value) =>
-  typeof value === "string" && value.trim() ? value.trim() : null;
-
-/**
  * Contacts are labelled "current", because the app keeps no contact history.
  * @param {Record<string, any>[]} sites
  * @param {string} evaluatedAt
@@ -124,10 +118,10 @@ function buildSiteTables(sites, evaluatedAt) {
         siteId: String(s.siteId),
         publicContact: pub.state,
         publicContactReasons: pub.reasonCodes.join(","),
-        // Reports print the public contact; the Site manager's stays out (plan §8).
-        publicEmail: filled(s.publicContact?.email),
-        publicPhone: filled(s.publicContact?.phone),
-        publicPhoneExtension: filled(s.publicContact?.phoneExtension),
+        // Reports print the public contact; the Site manager's is private.
+        publicEmail: text(s.publicContact?.email) || null,
+        publicPhone: text(s.publicContact?.phone) || null,
+        publicPhoneExtension: text(s.publicContact?.phoneExtension) || null,
         siteContact: site.state,
         siteContactReasons: site.reasonCodes.join(","),
         basis: "current",
@@ -139,7 +133,8 @@ function buildSiteTables(sites, evaluatedAt) {
 
 /**
  * One row per Site per day it owed Checks, using getChecksReport's rule so
- * Few Checks agrees with the Check report.
+ * Few Checks agrees with the Check report. A row a day is no bigger than
+ * site_days: 1,000 Sites for a year is 366,000 rows, about 56 MB loaded.
  * @param {Record<string, any>[]} sites
  * @param {Record<string, any>[]} terms every COMPLIANCE_TERMS# version
  * @param {string} evaluatedAt
@@ -166,12 +161,45 @@ export function buildChecksOwed(sites, terms, evaluatedAt) {
       .sort()[0];
     if (!first) continue;
     const { owedOn } = checksOwedResolver(site, own, today);
-    for (const day of dayKeysBetween(first, addDays(today, 1))) {
+    // Closing a Site leaves its terms open, so owing stops at the close.
+    const last = site.status === "inactive" ? closedOn(site) : today;
+    if (!last || last < first) continue;
+    for (const day of dayKeysBetween(
+      first,
+      addDays(earlierOf(last, today), 1),
+    )) {
       const checksOwed = owedOn(day);
       if (checksOwed > 0) rows.push({ siteId, day, checksOwed });
     }
   }
   return rows;
+}
+
+/**
+ * The app records no close date, so a closed Site's last update stands in.
+ * @param {Record<string, any>} site
+ * @returns {string} Pacific day key, or "" when the update time doesn't parse
+ */
+const closedOn = (site) => pacificDateKey(site.updatedAt ?? "");
+
+/**
+ * @param {string} a
+ * @param {string} b day keys
+ */
+const earlierOf = (a, b) => (b < a ? b : a);
+
+/**
+ * Open Sites with no compliance terms owe no Checks, so Few Checks can't fire
+ * for them; counted so a missing export shows.
+ * @param {Record<string, any>[]} sites
+ * @param {Record<string, any>[]} terms
+ * @returns {number}
+ */
+function openSitesWithoutTerms(sites, terms) {
+  const termed = new Set(terms.map((t) => String(t.siteId)));
+  return sites.filter(
+    (s) => s.status !== "inactive" && !termed.has(String(s.siteId)),
+  ).length;
 }
 
 const V = "VARCHAR";
@@ -481,9 +509,12 @@ async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
     evaluatedAt,
     timezone: PACIFIC_TIME_ZONE,
     rowCounts,
-    dataQuality: Object.fromEntries(
-      Object.entries(quality).map(([k, v]) => [k, Number(v)]),
-    ),
+    dataQuality: {
+      ...Object.fromEntries(
+        Object.entries(quality).map(([k, v]) => [k, Number(v)]),
+      ),
+      openSitesWithoutTerms: openSitesWithoutTerms(siteRecords, termRecords),
+    },
   };
   const written = await swapIn(dir, async (partial) => {
     const names = [];

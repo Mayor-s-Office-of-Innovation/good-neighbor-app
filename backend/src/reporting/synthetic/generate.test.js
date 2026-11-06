@@ -4,11 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { classifyItem } from "../../analytics/entity-keys.js";
-import {
-  addDays,
-  pacificDateKey,
-  pacificDayStartIso,
-} from "../../lib/pacific-dates.js";
+import { pacificDateKey, pacificDayStartIso } from "../../lib/pacific-dates.js";
 import { createLocalViews, writeLocalLake } from "../local-lake.js";
 import { buildProjection } from "../projection.js";
 import { readProjection } from "../test-build.js";
@@ -79,8 +75,11 @@ describe("generateYear", () => {
     expect(terms.every((i) => classifyItem(i) === "compliance_terms")).toBe(
       true,
     );
-    const site = (/** @type {string} */ key) =>
-      `syn-site-${String(PROFILES.findIndex((p) => p.key === key) + 1).padStart(2, "0")}`;
+    const site = (/** @type {string} */ key) => {
+      const at = PROFILES.findIndex((p) => p.key === key);
+      if (at < 0) throw new Error(`no profile ${key}`);
+      return `syn-site-${String(at + 1).padStart(2, "0")}`;
+    };
     /** @param {string} key */
     const termsOf = (key) =>
       terms
@@ -101,15 +100,12 @@ describe("generateYear", () => {
       // One Site with no terms, so the pages show a Site that owes nothing.
       [],
     ]);
-    // A closed Site's terms end the day after it was archived.
+    // Closing a Site leaves its terms open, as the app does.
     const [closed] = terms.filter((i) => i.siteId === site("closed-site"));
-    const archived = items.find(
-      (i) => i.siteId === site("closed-site") && i.sk === "#META",
-    );
-    expect(closed).toMatchObject({ status: "expired" });
-    expect(closed.expiresOnExclusive).toBe(
-      addDays(pacificDateKey(String(archived?.updatedAt)), 1),
-    );
+    expect([closed.status, closed.expiresOnExclusive]).toEqual([
+      "active",
+      undefined,
+    ]);
     // Terms live on their own items, never on the Site record.
     expect(items.some((i) => i.sk === "#META" && "compliance" in i)).toBe(
       false,

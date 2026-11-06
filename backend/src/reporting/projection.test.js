@@ -138,7 +138,14 @@ describe("Site tables in the projection", () => {
               phone: "415-555-0101",
             },
           },
-          { siteId: "s2", publicContact: { email: "", phone: "  " } },
+          {
+            siteId: "s2",
+            publicContact: { email: "", phone: "  " },
+            primaryContact: {
+              email: "lead2@example.org",
+              phone: "415-555-0102",
+            },
+          },
         ],
       },
       EVALUATED,
@@ -154,7 +161,9 @@ describe("Site tables in the projection", () => {
       ["desk@example.org", "415-555-0100", "12"],
       [null, null, null],
     ]);
-    expect(JSON.stringify(siteContacts)).not.toContain("lead@example.org");
+    expect(JSON.stringify(siteContacts)).not.toMatch(
+      /lead2?@example\.org|415-555-010[12]/,
+    );
   });
 });
 
@@ -222,6 +231,48 @@ describe("buildChecksOwed", () => {
         EVALUATED,
       ),
     ).toEqual([]);
+  });
+
+  it("owes a past term with no number of its own the default, whatever today's term says", () => {
+    const rows = buildChecksOwed(
+      [{ siteId: "s1" }],
+      [
+        terms("s1", "2026-10-16", {
+          requiredChecksPerDay: undefined,
+          expiresOnExclusive: "2026-10-18",
+        }),
+        terms("s1", "2026-10-18", { requiredChecksPerDay: 5 }),
+      ],
+      EVALUATED,
+    );
+    expect(owedByDay(rows)).toEqual({
+      "s1 2026-10-16": 3,
+      "s1 2026-10-17": 3,
+      "s1 2026-10-18": 5,
+      "s1 2026-10-19": 5,
+    });
+  });
+
+  it("stops owing after the day a Site was closed, though its terms stay open", () => {
+    const rows = buildChecksOwed(
+      [
+        // Closed at 10 PM Pacific on Oct 16.
+        {
+          siteId: "s1",
+          status: "inactive",
+          updatedAt: "2026-10-17T05:00:00.000Z",
+        },
+        // Closed before its terms began.
+        {
+          siteId: "s2",
+          status: "inactive",
+          updatedAt: "2026-10-01T17:00:00.000Z",
+        },
+      ],
+      [terms("s1", "2026-10-15"), terms("s2", "2026-10-15")],
+      EVALUATED,
+    );
+    expect(owedByDay(rows)).toEqual({ "s1 2026-10-15": 3, "s1 2026-10-16": 3 });
   });
 
   it("stops at the snapshot's day and skips terms that start after it", () => {
@@ -307,6 +358,21 @@ describe("buildProjection over a lake written like an export", () => {
       { siteId: "s1", day: "2026-10-18", checksOwed: 4 },
       { siteId: "s1", day: "2026-10-19", checksOwed: 4 },
     ]);
+  });
+
+  it("counts open Sites with no compliance terms, so terms missing from the lake show", async () => {
+    // Exports only carry changed items, so terms written before the first export never arrive.
+    const count = async (/** @type {Record<string, any>[]} */ kept) => {
+      await writeLocalLake(conn, dir, [...items, ...kept], {
+        exportedAt: "2026-10-19T18:00:00.000Z",
+        exportId: "e1",
+      });
+      await createLocalViews(conn, dir);
+      return (await build()).manifest.dataQuality.openSitesWithoutTerms;
+    };
+    expect([await count([]), await count([terms("s1", "2026-10-18")])]).toEqual(
+      [1, 0],
+    );
   });
 
   it("times each Issue by the window its rule stored on the task", async () => {

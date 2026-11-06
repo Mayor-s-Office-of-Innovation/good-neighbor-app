@@ -142,7 +142,8 @@ function syntheticInputs() {
       },
       location: null,
     }),
-    site("s3", { status: "inactive" }),
+    // Closed on the snapshot's day, so it still owes Checks in every period.
+    site("s3", { status: "inactive", updatedAt: "2026-11-04T18:00:00.000Z" }),
   ];
   return {
     tasks: /** @type {any[]} */ (tasks),

@@ -2,6 +2,7 @@
 // conveniences, never evidence that a compliance period exists.
 import { getDynamoTableName } from "../config.js";
 import {
+  DEFAULT_REQUIRED_CHECKS_PER_DAY,
   requirementFromCompliance,
   requiredOnResolver,
 } from "../domain/check-compliance.js";
@@ -164,8 +165,10 @@ export function checksOwedResolver(site, periods, today) {
   requirement.assumed = false;
   return {
     requirement,
+    // A past term with no number of its own owes the default, so starting a
+    // new term doesn't change what past months owed.
     owedOn: requiredOnResolver(
-      requirement,
+      { ...requirement, requiredPerDay: DEFAULT_REQUIRED_CHECKS_PER_DAY },
       /** @type {import("../domain/check-compliance.js").ComplianceTermsVersion[]} */ (
         periods
       ),

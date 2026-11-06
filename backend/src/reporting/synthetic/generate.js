@@ -587,11 +587,11 @@ export function generateYear(opts = {}) {
         : at(createdDay, 0),
     });
     answers.profiles[siteId] = profile.key;
-    // Terms from the day the Site opens; an archived Site's terms end with it.
+    // Terms from the day the Site opens. Closing a Site leaves them open, as
+    // deactivateSite does, so the projection must stop owing at the close.
     const owedPerDay = profile.checksOwed ?? 3;
     if (owedPerDay) {
       const termsVersionId = `syn-terms-${pad(s + 1)}`;
-      const ends = archived ? addDays(days[last], 1) : null;
       items.push({
         pk,
         sk: `COMPLIANCE_TERMS#${createdDay}#${termsVersionId}`,
@@ -603,8 +603,7 @@ export function generateYear(opts = {}) {
         underEnhancedMonitoring: false,
         requiredChecksPerDay: owedPerDay,
         effectiveStart: createdDay,
-        ...(ends ? { expiresOnExclusive: ends } : {}),
-        status: ends ? "expired" : "active",
+        status: "active",
         createdAt: at(createdDay, 0),
         createdBy: "syn-admin",
       });

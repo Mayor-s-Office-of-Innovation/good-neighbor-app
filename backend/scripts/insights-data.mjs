@@ -512,11 +512,7 @@ try {
   // Check the written files, not the in-memory rows, so a Parquet bug shows.
   /** @type {Record<string, Record<string, any>[]>} */
   const extracts = {};
-  for (const name of [
-    "site_days",
-    "site_contacts",
-    "checks_owed",
-  ])
+  for (const name of ["site_days", "site_contacts", "checks_owed"])
     extracts[name] = (
       await conn.runAndReadAll(
         `SELECT * FROM ${sqlString(join(projectionDir, `${name}.parquet`))}`,
