@@ -14,7 +14,8 @@
   margin: 0;
 }
 
-.insights [data-region] {
+/* :where keeps this below each region's own class, such as the contacts' wider gap. */
+.insights :where([data-region]) {
   display: grid;
   gap: 12px;
 }
@@ -22,13 +23,6 @@
 .insights__freshness {
   margin: 0;
   font-size: 0.875rem;
-}
-
-.insights__foot {
-  margin: 32px 0 0;
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
-  font-size: 0.8125rem;
 }
 
 .insights__quality {
@@ -54,7 +48,7 @@
   font-style: italic;
 }
 
-/* Controls: one labelled row per kind, as the mock lays them out. */
+/* Controls: one labelled row per kind, so each kind is easy to find. */
 .insights__controls {
   border-top: 1px solid var(--line);
 }
@@ -103,15 +97,8 @@
 }
 
 .insights__ptabs button {
-  min-height: 0;
-  background: none;
-  border: 0;
-  border-radius: 0;
   border-bottom: 2px solid transparent;
   padding: 8px 10px;
-  font: inherit;
-  color: var(--muted);
-  cursor: pointer;
 }
 
 .insights__ptabs button[aria-pressed="true"] {
@@ -143,14 +130,10 @@
 }
 
 .insights__seg button {
-  background: none;
-  border: 0;
   border-radius: 9999px;
   padding: 0 16px;
   min-height: 36px;
   font: 500 0.875rem/1 var(--font-sans);
-  color: var(--muted);
-  cursor: pointer;
 }
 
 .insights__seg button[aria-pressed="true"] {
@@ -158,22 +141,18 @@
   color: var(--on-ink);
 }
 
-/* "?" help */
+/* "?" help, 24px so a finger can hit it (WCAG 2.5.8). */
 .insights__tip {
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
-  min-height: 0;
+  width: 24px;
+  height: 24px;
   margin-left: 6px;
-  padding: 0;
   border: 1px solid var(--muted);
   border-radius: 50%;
-  background: none;
-  color: var(--muted);
-  font: 500 0.6875rem/1 var(--font-sans);
+  font: 500 0.75rem/1 var(--font-sans);
   vertical-align: middle;
   cursor: help;
 }
@@ -303,12 +282,6 @@
   white-space: nowrap;
 }
 
-.insights__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
 .insights__chip {
   display: inline-block;
   border: 1px solid var(--muted);
@@ -338,16 +311,21 @@
   background: var(--line);
 }
 
+/* Darker than the chart colours: on Site Issue rows the dot is the only visible severity, so it needs 3:1. */
 [data-severity="severe"] .insights__dot {
   background: var(--insights-red);
 }
 
 [data-severity="moderate"] .insights__dot {
-  background: var(--insights-orange);
+  background: #c47f00;
 }
 
 [data-severity="minor"] .insights__dot {
-  background: var(--insights-blue);
+  background: #2f80d8;
+}
+
+[data-severity="unknown"] .insights__dot {
+  background: #8a8a8a;
 }
 
 .insights__table td,
@@ -375,7 +353,7 @@
   font-weight: 400;
 }
 
-/* The mock's table has rules between rows but no outer frame. */
+/* Rules between rows but no outer frame, so the table reads as part of the page. */
 .insights .insights__table {
   /* Holds hidden screen-reader text inside the scroll box, not past the page edge. */
   position: relative;
@@ -384,7 +362,7 @@
   border-bottom: 1px solid var(--line);
 }
 
-/* The page scrolls, not a box inside it, so the header sticks to the window (Bryan, 11/05). */
+/* The page scrolls, not a box inside it, so the header sticks to the window. */
 @media (min-width: 761px) {
   .insights .insights__table {
     overflow: visible;
@@ -408,7 +386,8 @@
   min-width: 11rem;
 }
 
-.insights__table tbody tr {
+/* Only Overview's Site rows open a page. */
+.insights__table tbody tr[data-site-row] {
   cursor: pointer;
 }
 
@@ -418,23 +397,12 @@
 }
 
 /* A tint under the pointer or keyboard focus shows the whole row opens. */
-.insights__table
-  tbody
-  tr:is([data-site-row], [data-issue-row], [data-check-row]):is(
-    :hover,
-    :focus-within
-  ) {
+.insights__table tbody tr[data-site-row]:is(:hover, :focus-within) {
   background: var(--surface-subtle, #f2f3f5);
 }
 
 /* The row's name cell paints its own white, so it takes the tint too. */
-.insights__table
-  tbody
-  tr:is([data-site-row], [data-issue-row], [data-check-row]):is(
-    :hover,
-    :focus-within
-  )
-  > * {
+.insights__table tbody tr[data-site-row]:is(:hover, :focus-within) > * {
   background: inherit;
 }
 
@@ -528,8 +496,9 @@
   padding: 10px 28px 10px 12px;
 }
 
+/* The right column holds the "?", so the tile's button never sits under it. */
 .insights__tile:has(> button[data-tile]) {
-  padding: 0;
+  padding: 0 36px 0 0;
 }
 
 .insights__tile > button[data-tile] {
@@ -539,15 +508,11 @@
   gap: 2px;
   width: 100%;
   height: 100%;
-  border: 0;
   border-radius: 12px;
-  padding: 10px 28px 10px 12px;
-  background: none;
-  font: inherit;
+  padding: 10px 0 10px 12px;
   color: var(--text);
   text-align: left;
   white-space: normal;
-  cursor: pointer;
 }
 
 .insights__tile:has(> button[data-tile][aria-pressed="true"]) {
@@ -557,8 +522,8 @@
 
 .insights__tile > .insights__tip {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 6px;
+  right: 6px;
   margin: 0;
 }
 
@@ -577,10 +542,10 @@
   color: var(--insights-warn);
 }
 
-/* Each calendar sits under its tile, as the mock lines them up. */
+/* Each calendar sits under its tile; minmax(0) lets a column shrink below the calendar's width. */
 .insights__charts {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0 8px;
 }
 
@@ -628,6 +593,12 @@
   font-size: 0.5625rem;
   font-weight: 400;
   color: var(--muted);
+}
+
+/* Grey day numbers are too faint on the two darker fills. */
+.insights__cal-2 span,
+.insights__cal-3 span {
+  color: var(--text);
 }
 
 .insights__cal-0 {
@@ -716,6 +687,11 @@
   background: var(--insights-orange);
 }
 
+/* Lighter, so a week or month with days cut off or missing isn't read as a quiet one. */
+.insights__bar--partial i {
+  opacity: 0.5;
+}
+
 .insights__bar-x {
   display: flex;
   gap: 2px;
@@ -729,24 +705,11 @@
   white-space: nowrap;
 }
 
-.insights__stale {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 16px;
-}
-
-.insights__stale p {
-  margin: 0;
-}
-
 .insights__table tbody th .insights__sev {
   margin-right: 8px;
 }
 
-}
-
-/* Narrow screens show each row as a labelled card, so no column drops (plan §7). */
+/* Narrow screens show each row as a labelled card, so no column drops. */
 @media (max-width: 760px) {
   .insights__crow {
     grid-template-columns: minmax(0, 1fr);
@@ -828,6 +791,10 @@
   .insights__tile > button[data-tile] {
     padding: 10px;
   }
+
+  .insights__tile:has(> button[data-tile]) {
+    padding: 0 36px 0 0;
+  }
 }
 
 /* Site Issues on phones: each row is a two-column card, so rows start on the first screen. */
@@ -854,18 +821,20 @@
 }
 
 :is(insights-overview, insights-site)
-  > [data-region]:not([data-region="head"], [data-region="trail"]) {
+  > [data-region]:not([data-region="head"]) {
   display: contents;
 }
 
 :is(insights-overview, insights-site)
-  > [data-region]:not([data-region="head"], [data-region="trail"])
+  > [data-region]:not([data-region="head"])
   > * {
   margin-block: 0;
 }
 
-/* An empty live region stays in the page for announcements but takes no gap. */
-:is(insights-overview, insights-site) [role="status"]:empty {
+/* An empty live region stays in the page for announcements but takes no gap.
+   The count keeps its line, so the bar doesn't jump while it's blank. */
+:is(insights-overview, insights-site)
+  [role="status"]:empty:not(#insights-count) {
   position: absolute;
 }
 
@@ -919,7 +888,7 @@
   }
 }
 
-/* Set shares of the width, so a filter change never moves the columns (Bryan, 11/06). */
+/* Set shares of the width, so a filter change never moves the columns. */
 @media (min-width: 761px) {
   insights-overview .insights__table table {
     table-layout: fixed;
