@@ -13,10 +13,8 @@ import {
   helpTip,
   noDataFor,
   oneDecimal,
-  perDayText,
-  per30Days,
   periodLabel,
-  severityKnown,
+  severityBand,
 } from "./insights.templates.js";
 
 /** @typedef {import("./insights-query.js").OverviewState} OverviewState */
@@ -82,7 +80,7 @@ export function filtersView(state, options, me = "") {
       "status",
       `<div class="insights__seg" role="group" aria-labelledby="insights-label-status">${SHOW.map(
         (value) =>
-          `<button type="button" data-show="${value}" aria-pressed="${state.show === value}">${escapeHtml(t(`admin.insights.show.${value}`))}</button>`,
+          `<button type="button" class="btn-plain" data-show="${value}" aria-pressed="${state.show === value}">${escapeHtml(t(`admin.insights.show.${value}`))}</button>`,
       ).join("")}</div>${helpTip(
         "insights-tip-status",
         t("admin.insights.label.status"),
@@ -103,32 +101,11 @@ export function filtersView(state, options, me = "") {
   </div>`;
 }
 
-// Worst first, so Overdue never hides behind On time; no response time is never a concern, so it isn't shown.
-const RESPONSE_SHOWN = ["overdue", "late", "awaiting", "unknown", "onTime"];
-const WARN = new Set(["overdue", "late"]);
-
 /** @param {string} key */
 const muted = (key) => `<span class="muted">${escapeHtml(t(key))}</span>`;
-// Before the records begin, a zero would claim a quiet period (plan §4).
-const UNAVAILABLE = `<span class="insights__unknown">${escapeHtml(t("admin.insights.unavailable"))}</span>`;
-
-/** @param {SiteRow} row */
-function responseSummary(row) {
-  const parts = RESPONSE_SHOWN.filter((k) => row.response[k] > 0).map(
-    (k) =>
-      `<span data-response="${k}" class="${WARN.has(k) ? "insights__warn" : k === "unknown" ? "insights__unknown" : ""}">${escapeHtml(t("admin.insights.responseCount", { count: row.response[k], state: t(`admin.insights.response.${k}`) }))}</span>`,
-  );
-  if (parts.length)
-    return `<span class="insights__stack">${parts.join("")}</span>`;
-  return muted(
-    row.activity.issuesCreated
-      ? "admin.insights.none"
-      : "admin.insights.noIssues",
-  );
-}
-
-// The citywide daily number when a Site's terms set none, as check-compliance uses.
-const DEFAULT_CHECKS_PER_DAY = 3;
+// Before the records begin, a zero would claim a quiet period.
+const unavailable = () =>
+  `<span class="insights__unknown">${escapeHtml(t("admin.insights.unavailable"))}</span>`;
 
 /** Overdue and late both missed the response time, so they count together. @param {SiteRow} row */
 const late = (row) => row.response.overdue + row.response.late;
@@ -148,22 +125,25 @@ function checksMeter(row) {
   const perDay = row.checksPerOwedDay ?? row.checksPerDay;
   if (perDay === null || perDay === undefined)
     return muted("admin.insights.none");
-  const owed = row.checksOwedPerDay ?? DEFAULT_CHECKS_PER_DAY;
-  const full = owed > 0 ? Math.min(perDay / owed, 1) : 1;
   const value = oneDecimal(perDay);
-  return `<span class="insights__meter-n" data-checks-per-day>${escapeHtml(value)}</span><span class="insights__meter" role="img" aria-label="${escapeHtml(t("admin.insights.checksMeter", { value, owed }))}"><span style="inline-size:${Math.round(full * 100)}%"></span></span>`;
+  const number = `<span class="insights__meter-n" data-checks-per-day>${escapeHtml(value)}</span>`;
+  const owed = row.checksOwedPerDay;
+  // A Site that owes no Checks has no target, so a bar would invent one.
+  if (owed === null || owed === undefined) return number;
+  const full = owed > 0 ? Math.min(perDay / owed, 1) : 1;
+  return `${number}<span class="insights__meter" role="img" data-checks-meter aria-label="${escapeHtml(t("admin.insights.checksMeter", { value, owed }))}"><span style="inline-size:${Math.round(full * 100)}%"></span></span>`;
 }
 
 /** @param {string} word @param {string} [kind] */
 const chip = (word, kind = "") =>
   `<span class="insights__chip${kind ? ` insights__chip--${kind}` : ""}">${escapeHtml(word)}</span>`;
 
-/** @param {SiteRow} row @param {{ startDay: string, endDay: string }} interval */
-const per30 = (row, interval) =>
-  per30Days(row.activity.issuesCreated, interval);
+/** The server's rate, so the column matches the Many Issues flag. @param {SiteRow} row @returns {number | null} */
+const per30 = (row) => row.issuesPer30Days ?? null;
 
-/** The bar is full at the busiest Site shown, so rows compare at a glance. @param {number} value @param {number} most */
+/** The bar is full at the busiest Site shown, so rows compare at a glance. @param {number | null} value @param {number} most */
 function issuesPer30(value, most) {
+  if (value === null) return muted("admin.insights.none");
   const shown = oneDecimal(value);
   const full = most > 0 ? value / most : 0;
   return `<span class="insights__meter-n" data-issues-per-30d>${escapeHtml(shown)}</span><span class="insights__meter" role="img" aria-label="${escapeHtml(t("admin.insights.issuesMeter", { value: shown, most: oneDecimal(most) }))}"><span style="inline-size:${Math.round(full * 100)}%"></span></span>`;
@@ -175,51 +155,43 @@ export function bandView(band) {
 }
 
 /** @param {number | null} severity */
-export const severityBand = (severity) =>
-  severityKnown(severity)
-    ? Number(severity) >= 4
-      ? "severe"
-      : Number(severity) === 3
-        ? "moderate"
-        : "minor"
-    : "unknown";
-
-/** @param {number | null} severity */
 export function severityView(severity) {
   return bandView(severityBand(severity));
 }
 
-/** @param {SiteRow} row @param {{ selected: Set<string>, noData: boolean, siteHref: (id: string) => string, names: Record<string, Map<string, string>>, interval: { startDay: string, endDay: string }, most: { issues: number, late: number } }} view */
-function siteRow(row, { selected, noData, siteHref, names, interval, most }) {
-  // Phones show each row as a labelled card (plan §7), so cells carry their column name.
+/** @param {SiteRow} row @param {{ selected: Set<string>, noData: boolean, siteHref: (id: string) => string, names: Record<string, Map<string, string>>, most: { issues: number, late: number } }} view */
+function siteRow(row, { selected, noData, siteHref, names, most }) {
+  // Phones show each row as a labelled card, so cells carry their column name.
   const label = (/** @type {string} */ key) =>
     `data-label="${escapeHtml(t(`admin.insights.col.${key}`))}"`;
   const manager =
     row.managerId && (names.managerId.get(row.managerId) ?? row.managerId);
-  // Flagged but not counted as a concern (plan §0.2 Q3); a closed Site needs none.
+  // A closed Site needs no public contact, so it gets no chip.
   const noPublic =
     row.status !== "inactive" && row.publicContact?.state === "missing";
   return `<tr role="row" data-site-row="${escapeHtml(row.siteId)}">
     <td role="cell"><wa-checkbox data-select-site="${escapeHtml(row.siteId)}" aria-label="${escapeHtml(t("admin.insights.selectSite", { name: row.name ?? row.siteId }))}" ${selected.has(row.siteId) ? "checked" : ""}></wa-checkbox></td>
     <th role="rowheader" scope="row" ${label("site")}><a href="${escapeHtml(siteHref(row.siteId))}" data-route data-site-link="${escapeHtml(row.siteId)}">${escapeHtml(row.name ?? row.siteId)}</a>${
-      manager ? `<div class="muted">${escapeHtml(manager)}</div>` : ""
+      manager
+        ? `<div class="muted" data-manager="${escapeHtml(row.managerId)}">${escapeHtml(manager)}</div>`
+        : ""
     }${row.status === "inactive" ? `<div class="muted">${escapeHtml(t("admin.insights.inactive"))}</div>` : ""}${
       noPublic
         ? `<div data-no-public>${chip(t("admin.insights.noPublicContact"), "flag")}</div>`
         : ""
     }</th>
     <td role="cell" class="insights__num" ${label("checks")} data-checks>${
-      noData ? UNAVAILABLE : checksMeter(row)
+      noData ? unavailable() : checksMeter(row)
     }</td>
-    <td role="cell" class="insights__num" ${label("response")} data-response-cell>${noData ? UNAVAILABLE : lateCount(row, most.late)}</td>
+    <td role="cell" class="insights__num" ${label("response")} data-response-cell>${noData ? unavailable() : lateCount(row, most.late)}</td>
     <td role="cell" ${label("severity")} data-issues>${
       noData
-        ? UNAVAILABLE
+        ? unavailable()
         : row.activity.issuesCreated
           ? severityView(row.maxSeverity)
           : muted("admin.insights.none")
     }</td>
-    <td role="cell" class="insights__num" ${label("issuesPer30d")}>${noData ? UNAVAILABLE : issuesPer30(per30(row, interval), most.issues)}</td>
+    <td role="cell" class="insights__num" ${label("issuesPer30d")} data-issues-rate>${noData ? unavailable() : issuesPer30(per30(row), most.issues)}</td>
     <td role="cell" class="insights__chev" aria-hidden="true"><wa-icon name="chevron-right"></wa-icon></td>
   </tr>`;
 }
@@ -282,7 +254,7 @@ export function resultsView({ reply, state, siteHref, names }) {
   const noData = noDataFor(reply.meta);
   if (!rows.length) return emptyView(reply, state);
   const most = {
-    issues: Math.max(...rows.map((row) => per30(row, interval))),
+    issues: Math.max(0, ...rows.map((row) => per30(row) ?? 0)),
     late: Math.max(...rows.map(late)),
   };
   return `<div class="table-wrap insights__table" data-insights-table>
@@ -293,7 +265,7 @@ export function resultsView({ reply, state, siteHref, names }) {
         ${columnHead("site")}${columnHead("checks", true)}${columnHead("response", true)}${columnHead("severity")}${columnHead("issuesPer30d", true)}
         <th role="columnheader" scope="col"><span class="visually-hidden">${escapeHtml(t("admin.insights.col.open"))}</span></th>
       </tr></thead>
-      <tbody role="rowgroup">${rows.map((row) => siteRow(row, { selected, noData, siteHref, names, interval, most })).join("")}</tbody>
+      <tbody role="rowgroup">${rows.map((row) => siteRow(row, { selected, noData, siteHref, names, most })).join("")}</tbody>
     </table>
   </div>`;
 }
