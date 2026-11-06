@@ -327,15 +327,20 @@ site's name and the first filed SR shown on the card. It uses HUB UpdateSR's
 Add Notes contract (`UpdateType: 5`, `NumericSubType: 2`), not a closure update;
 the task remains in progress until the external resolution flow completes.
 
-The event and task are saved atomically before note delivery. `cityNoteStatus`
+The event, task, and `SF311_OUTBOX` job are saved atomically before note delivery.
+The job uses `SF311_JOB#<taskId>#note-<updateId>`, `trigger: city_note`, and
+`updateSk` to reference the immutable timeline payload. Streams dispatches it to
+the dedicated 311 queue. Resolution events use a `cityNotes` array with the same
+per-ticket payloads and checkpoints for all eligible open City tickets. `cityNoteStatus`
 tracks `pending`, `sending`, `sent`, `unknown`, or terminal `suppressed`; `cityNoteLeaseExpiresAt` gives
 one sender a 60-second lease. The client reuses the same idempotency key when
 retrying an unchanged draft. Successful retries reuse the event and do not
 resend the note. Explicit HUB validation rejections return to `pending`.
 Timeouts, ambiguous responses, and expired attempts are reconciled against the
-City feed using the SR, sending agency, note text, and effective time. If delivery
-cannot be confirmed, the API returns `502` with `updateSaved: true`; it does not
-blindly resend an uncertain note. Such records may need operational investigation
+City feed using the SR, sending agency, note text, and effective time. The API
+returns success after the local transaction; the worker independently retries
+unconfirmed delivery and ultimately dead-letters the job. It does not blindly
+resend an uncertain note. Such records may need operational investigation
 if the City feed never exposes the matching update. Sending respects
 `GNP_311_SUBMISSION_ENABLED`. Suppressed silent notes are never replayed or
 reported as sent. Suppression clears an owned or expired lease conditionally and

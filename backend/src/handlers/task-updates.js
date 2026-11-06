@@ -13,7 +13,6 @@ import {
   cityHelpTicket,
   logCityNoteFailure,
   prepareCityHelpNote,
-  deliverCityHelpNote,
 } from "../task-updates/city-help-note.js";
 import { randomUUID } from "node:crypto";
 import { getConfig } from "../config.js";
@@ -30,6 +29,7 @@ import {
   responseExpectedAt,
 } from "../domain/task-updates.js";
 import {
+  ensureCityNoteJob,
   readCheckHeader,
   readLegacyUpdateById,
   readTask,
@@ -163,12 +163,7 @@ export const createTaskUpdate = async (event, retry = true) => {
     updateId,
   );
   if (priorUpdate) {
-    if (!(await deliverCityHelpNote(dynamoTable, siteId, priorUpdate)))
-      return jsonResponse(502, {
-        error: "City update not confirmed",
-        updateSaved: true,
-        retryable: true,
-      });
+    await ensureCityNoteJob(dynamoTable, siteId, priorUpdate);
     return jsonResponse(200, {
       task: detail(task, [priorUpdate]).task,
       update: priorUpdate,
@@ -194,11 +189,13 @@ export const createTaskUpdate = async (event, retry = true) => {
       taskId,
       updateId,
     );
-    if (legacyRetry)
+    if (legacyRetry) {
+      await ensureCityNoteJob(dynamoTable, siteId, legacyRetry);
       return jsonResponse(200, {
         task: detail(task, [legacyRetry]).task,
         update: legacyRetry,
       });
+    }
     return jsonResponse(409, { error: "Task is not in progress" });
   }
 
@@ -367,12 +364,7 @@ export const createTaskUpdate = async (event, retry = true) => {
         updateId,
       );
       if (legacyRetry) {
-        if (!(await deliverCityHelpNote(dynamoTable, siteId, legacyRetry)))
-          return jsonResponse(502, {
-            error: "City update not confirmed",
-            updateSaved: true,
-            retryable: true,
-          });
+        await ensureCityNoteJob(dynamoTable, siteId, legacyRetry);
         return jsonResponse(200, {
           task: detail(task, [legacyRetry]).task,
           update: legacyRetry,
@@ -385,12 +377,6 @@ export const createTaskUpdate = async (event, retry = true) => {
     }
     throw error;
   }
-  if (!(await deliverCityHelpNote(dynamoTable, siteId, update)))
-    return jsonResponse(502, {
-      error: "City update not confirmed",
-      updateSaved: true,
-      retryable: true,
-    });
   return jsonResponse(201, { task: detail(updated, [update]).task, update });
 };
 

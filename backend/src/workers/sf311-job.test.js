@@ -4,7 +4,8 @@ import {
   UpdateCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
-const { send, execute, sendSqs } = vi.hoisted(() => ({
+const { send, execute, sendSqs, deliverNote } = vi.hoisted(() => ({
+  deliverNote: vi.fn(),
   send: vi.fn(),
   sendSqs: vi.fn(),
   execute: vi.fn(),
@@ -14,6 +15,9 @@ vi.mock("@aws-sdk/client-sqs", async (original) => ({
   SQSClient: class {
     send = sendSqs;
   },
+}));
+vi.mock("../task-updates/city-help-note.js", () => ({
+  deliverCityHelpNote: deliverNote,
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../config.js", () => ({
@@ -1012,3 +1016,44 @@ it("does not create a silent ticket for an edited action on a later resolution j
   await runJob({ ...message, jobSk: "SF311_JOB#task#resolved-edit" });
   expect(execute).not.toHaveBeenCalled();
 });
+
+it.each([true, false])(
+  "runs saved City notes independently of task state (confirmed: %s)",
+  async (confirmed) => {
+    job = {
+      status: "dispatched",
+      trigger: "city_note",
+      updateSk: "TASK#task#UPDATE#saved",
+    };
+    const update = {
+      taskId: "task",
+      updateId: "saved",
+      cityNotes: [{ cityNoteStatus: "unknown" }],
+    };
+    send.mockReset().mockImplementation(async (command) => {
+      if (command instanceof GetCommand)
+        return { Item: command.input.Key?.sk === message.jobSk ? job : update };
+      if (command instanceof UpdateCommand) {
+        job.status = command.input.ExpressionAttributeValues?.[":complete"];
+        return {};
+      }
+      throw new Error("Unexpected command");
+    });
+    deliverNote.mockReset().mockResolvedValue(confirmed);
+    if (confirmed) {
+      await runJob(message);
+      expect(job.status).toBe("complete");
+      await runJob(message);
+      expect(deliverNote).toHaveBeenCalledOnce();
+    } else {
+      await expect(runJob(message)).rejects.toThrow("unconfirmed");
+      expect(job.status).toBe("dispatched");
+      deliverNote.mockResolvedValue(true);
+      await runJob(message);
+      expect(job.status).toBe("complete");
+    }
+    expect(deliverNote).toHaveBeenCalledWith("test", "site", update);
+    expect(execute).not.toHaveBeenCalled();
+    expect(finalWrites).toEqual([]);
+  },
+);

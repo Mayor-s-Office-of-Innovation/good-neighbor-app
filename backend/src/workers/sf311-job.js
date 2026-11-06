@@ -1,3 +1,4 @@
+import { deliverCityHelpNote } from "../task-updates/city-help-note.js";
 import {
   evidenceDeletionKey,
   evidenceIds,
@@ -165,6 +166,25 @@ export async function runJob(message, delivery = {}) {
   if (!job || ["complete", "failed"].includes(job.status)) return;
   if (!is311SubmissionEnabled())
     throw new Error("SF311 processing is disabled");
+  if (job.trigger === "city_note") {
+    // Always reload the timeline event: stream/SQS duplicates must observe the
+    // latest per-ticket claims and checkpoints, never the enqueue snapshot.
+    const update = await read({ pk: jobKey.pk, sk: job.updateSk });
+    if (!update || update.taskId !== message.taskId)
+      throw new Error("SF311 note update unavailable");
+    if (!(await deliverCityHelpNote(tableName, message.siteId, update)))
+      throw new Error("SF311 note delivery unconfirmed");
+    await ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: jobKey,
+        UpdateExpression: "SET #status = :complete",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":complete": "complete" },
+      }),
+    );
+    return;
+  }
   const key = taskKey(message.siteId, message.taskId);
   const lockKey = { pk: jobKey.pk, sk: `SF311_LOCK#${message.taskId}` };
   const token = randomUUID();

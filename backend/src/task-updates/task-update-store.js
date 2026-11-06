@@ -1,6 +1,7 @@
 import { sf311Job } from "../analysis/guidance/sf311-job.js";
 import {
   GetCommand,
+  PutCommand,
   QueryCommand,
   TransactWriteCommand,
   UpdateCommand,
@@ -155,6 +156,64 @@ export async function readUpdatePointer(tableName, siteId, taskId, updateId) {
   return null;
 }
 
+/** The immutable timeline payload and delivery job commit together.
+ * @param {string} tableName @param {string} siteId @param {Record<string, any>} update
+ * @returns {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>}
+ */
+function cityNoteJob(tableName, siteId, update) {
+  const notes = update.cityNotes || [update];
+  if (
+    !notes.some(
+      (/** @type {Record<string, any>} */ note) =>
+        note.cityNotePayload &&
+        !["sent", "suppressed"].includes(note.cityNoteStatus),
+    )
+  )
+    return [];
+  return [
+    {
+      Put: {
+        TableName: tableName,
+        Item: {
+          pk: `SITE#${siteId}`,
+          sk: `SF311_JOB#${update.taskId}#note-${update.updateId}`,
+          entityType: "SF311_OUTBOX",
+          status: "pending",
+          trigger: "city_note",
+          siteId,
+          taskId: update.taskId,
+          updateSk: taskUpdateKey(
+            siteId,
+            update.taskId,
+            update.occurredAt,
+            update.updateId,
+          ).sk,
+          createdAt: update.occurredAt,
+        },
+        ConditionExpression: "attribute_not_exists(pk)",
+      },
+    },
+  ];
+}
+
+/** Recover pre-outbox notes on idempotent API retries without resetting a job.
+ * @param {string} tableName @param {string} siteId @param {Record<string, any>} update
+ */
+export async function ensureCityNoteJob(tableName, siteId, update) {
+  for (const entry of cityNoteJob(tableName, siteId, update)) {
+    if (!entry.Put) continue;
+    try {
+      await ddb.send(new PutCommand(entry.Put));
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.name !== "ConditionalCheckFailedException"
+      )
+        throw error;
+    }
+  }
+}
+
 /**
  * Claim an in-progress resolution before invoking non-idempotent integrations.
  * An expired claim may be recovered; an active claim remains exclusive.
@@ -249,6 +308,11 @@ export async function writeTaskTransition(input) {
   await ddb.send(
     new TransactWriteCommand({
       TransactItems: [
+        ...cityNoteJob(input.tableName, input.siteId, {
+          ...input.update,
+          taskId: input.taskId,
+          occurredAt: input.occurredAt,
+        }),
         ...(input.update.type !== "resolution_proof" &&
         !(
           input.expectedStatus === "completed" &&
