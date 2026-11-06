@@ -386,6 +386,3 @@ export function createAdminCatalog() {
 }
 
 /** @typedef {ReturnType<typeof createAdminCatalog>} AdminCatalog */
-
-// One per dashboard: <admin-app> gives it to every page, so a save on one page shows on the others.
-export const adminCatalog = createAdminCatalog();

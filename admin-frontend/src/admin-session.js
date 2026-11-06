@@ -64,6 +64,3 @@ export function createAdminSession() {
 }
 
 /** @typedef {ReturnType<typeof createAdminSession>} AdminSession */
-
-// One per dashboard: <admin-app> reads the role once and gives it to every page.
-export const adminSession = createAdminSession();

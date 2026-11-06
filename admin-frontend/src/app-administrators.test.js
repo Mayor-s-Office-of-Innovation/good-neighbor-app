@@ -19,7 +19,6 @@ import {
 } from "../test-support/admin-dom.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
-import { adminSession } from "./admin-session.js";
 import "./pages/admin-user/admin-users-page.js";
 
 // pages/admin-user/admin-user.templates.js has no catalog key for this copy, so tests match its English.
@@ -190,7 +189,7 @@ for (const [action, path, toast, next] of [
   });
 }
 
-test("a failed user action shows the API's error", async () => {
+test("a failed user action shows an error message", async () => {
   const { api } = await openUsers();
   api.fail(
     "POST",
@@ -199,17 +198,46 @@ test("a failed user action shows the API's error", async () => {
     "last_active_supervisor",
   );
   await click(actionButton("suspend", "plain1"));
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "last_active_supervisor");
+  assert.equal(pageError(), t("admin.errors.lastSupervisor"));
 });
 
-test("a failed user action makes its button usable again", async () => {
-  const { api } = await openUsers();
-  api.fail("POST", /^admin-users\/plain1\/suspend$/, 409, "busy");
+test("a user action inside <admin-app> redraws the row with its new status", async () => {
+  await openUsers();
   await click(actionButton("suspend", "plain1"));
+  const button = actionButton("reinstate", "plain1");
+  assert.equal(button.disabled, false);
+  assert.equal(button.getAttribute("aria-busy"), null);
+});
+
+test("a failed user action leaves its button ready for another try", async () => {
+  const { api } = await openUsers();
+  api.fail("POST", /^admin-users\/plain1\/suspend$/, 500, "unavailable");
+  await click(actionButton("suspend", "plain1"));
+  assert.equal(pageError(), t("admin.toast.requestFailed"));
   const button = actionButton("suspend", "plain1");
   assert.equal(button.disabled, false);
   assert.equal(button.getAttribute("aria-busy"), null);
+});
+
+test("a user action whose list reread fails shows it worked and frees its button", async () => {
+  const { api } = await openUsers();
+  api.on("GET", /^admin-users$/, {
+    status: 503,
+    json: { error: "unavailable" },
+  });
+  await click(actionButton("suspend", "plain1"));
+  const toasts = toastText();
+  assert.match(toasts, new RegExp(t("admin.toast.adminSuspended")));
+  assert.match(toasts, new RegExp(t("admin.toast.refreshFailed")));
+  assert.doesNotMatch(toasts, new RegExp(t("admin.toast.failed")));
+  // The row shows the account as suspended, from the action's own reply.
+  assert.ok(
+    missing('[data-admin-user-action="suspend"][data-username="plain1"]'),
+  );
+  const button = actionButton("reinstate", "plain1");
+  assert.equal(button.textContent, t("admin.users.reinstate"));
+  assert.equal(button.getAttribute("aria-busy"), null);
+  assert.equal(button.disabled, false);
 });
 
 test("a user action that finishes after the user leaves doesn't reread the list", async () => {
@@ -239,7 +267,7 @@ test("an unknown user action sends nothing", async () => {
   );
 });
 
-test("changing a role saves it, and a failure shows the API's error", async () => {
+test("changing a role saves it, and a failure shows an error message", async () => {
   const { api } = await openUsers();
   await fill(
     '[data-admin-role][data-username="plain1"]',
@@ -251,13 +279,48 @@ test("changing a role saves it, and a failure shows the API's error", async () =
   });
   api.fail("PUT", /^admin-users\/plain1\/role$/, 400, "invalid_role");
   await fill('[data-admin-role][data-username="plain1"]', "compliance-manager");
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "invalid_role");
+  assert.equal(pageError(), t("admin.users.invalidRole"));
   // The select goes back to the role that was saved.
   assert.equal(
     $('[data-admin-role][data-username="plain1"]').value,
     "compliance-supervisor",
   );
+});
+
+test("a role change whose list reread fails shows it saved but not refreshed", async () => {
+  const { api } = await openUsers();
+  api.on("GET", /^admin-users$/, {
+    status: 503,
+    json: { error: "unavailable" },
+  });
+  await fill(
+    '[data-admin-role][data-username="plain1"]',
+    "compliance-supervisor",
+  );
+  const toasts = toastText();
+  assert.match(toasts, new RegExp(t("admin.toast.roleUpdated")));
+  assert.match(toasts, new RegExp(t("admin.toast.refreshFailed")));
+  assert.doesNotMatch(toasts, new RegExp(t("admin.toast.failed")));
+  assert.equal(
+    $('[data-admin-role][data-username="plain1"]').value,
+    "compliance-supervisor",
+  );
+});
+
+test("a list reread that fails after the user leaves shows nothing on the next page", async () => {
+  const held = gate();
+  const { api } = await openUsers();
+  api.on("GET", /^admin-users$/, async () => {
+    await held.promise;
+    return { status: 503, json: { error: "unavailable" } };
+  });
+  await click(actionButton("suspend", "plain1"));
+  await routeTo("/profile");
+  held.release();
+  await settle();
+  assert.doesNotMatch(toastText(), new RegExp(t("admin.toast.refreshFailed")));
+  assert.equal(pageError(), "");
+  assert.ok(!missing("#profile-title"));
 });
 
 test("inviting a user returns to the list with the new account", async () => {
@@ -321,12 +384,27 @@ test("leaving the invite form for Sites reads the users again on return", async 
   assert.ok(!missing("#administrators-title"));
 });
 
-test("opening the invite form from Sites reads the users again on return", async () => {
+test("leaving the invite form for My profile reads the users again on return", async () => {
+  const held = gate();
   const { api } = await openUsers();
-  await routeTo("/sites");
-  await routeTo("/administrators/new");
+  await click('[data-navigate="/administrators/new"]');
+  // Holds My profile's own reads, so only leave() can drop the invite form's cached users.
+  api.on("GET", /^oversight-options$/, async (request) => {
+    await held.promise;
+    return api.reply(request);
+  });
+  await routeTo("/profile");
   await routeTo("/administrators");
   assert.equal(api.calls("GET", /^admin-users$/).length, 2);
+  held.release();
+  await settle();
+});
+
+test("the invite form reports typed details as unsaved, with no app around it", async () => {
+  const { page } = await openAdminUsersPage("/administrators/new");
+  assert.equal(page.hasUnsavedChanges(), false);
+  await fillInvite();
+  assert.equal(page.hasUnsavedChanges(), true);
 });
 
 /** Open the invite form with its POST held until `held` is released. @param {ReturnType<typeof gate>} held */
@@ -355,6 +433,15 @@ test("an invite that finishes after the user left stays where they went", async 
   held.release();
   await settle();
   assert.equal(window.location.pathname, "/sites");
+});
+
+test("an invite still sending reports itself as saving, with no app around it", async () => {
+  const held = gate();
+  const { page } = await holdInvite(held);
+  assert.equal(page.isSaving(), true);
+  held.release();
+  await settle();
+  assert.equal(page.isSaving(), false);
 });
 
 test("an invite that finishes after leave() doesn't navigate, even at the same address", async () => {
@@ -528,12 +615,11 @@ test("a manager's profile labels unnamed Sites by their record", async () => {
   assert.equal($('a[href="/sites/s7"]').textContent, "s7");
 });
 
-test("the mounted users page saves a profile to its own session, not adminSession", async () => {
+test("the mounted users page saves a profile to its own session", async () => {
   const { session } = await openAdminUsersPage("/profile");
   await fill(profileField("phone"), "4155550199");
   await submit("#my-profile-form");
   assert.equal(session.profile?.phone, "4155550199");
-  assert.equal(adminSession.profile, null);
 });
 
 test("a redraw after the URL moves on still draws the route open() was given", async () => {

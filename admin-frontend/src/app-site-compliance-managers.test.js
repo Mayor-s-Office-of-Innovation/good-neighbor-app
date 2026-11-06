@@ -259,10 +259,9 @@ test("an invited manager missing from the directory reports the sync failure", a
       t("admin.toast.refreshFailed"),
     ),
   );
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
   assert.equal(
     text(`${inviteDialog} [data-form-save-error]`),
-    "program_manager_directory_sync_failed",
+    t("admin.errors.programManagerSync"),
   );
   assert.equal(managers().length, 1);
 });

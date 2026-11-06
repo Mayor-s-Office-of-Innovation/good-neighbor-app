@@ -4,11 +4,11 @@ import { adminApi } from "../../services/admin-api.js";
 import { attachCreatedEnrollmentUrl } from "../../enrollment-links.js";
 import { beginEnrollmentRequest } from "../../enrollment-request.js";
 import { navigate } from "../../router.js";
-import { dataAttr } from "../../dom.js";
 import { formValue } from "../../form-state.js";
 import { removeProviderManagerAccess } from "../../provider-manager-directory.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { upsertRecord } from "../../save-feedback.js";
+import { appMessageError } from "../../admin-error-messages.js";
 
 export const providerActions = {
   /**
@@ -114,14 +114,6 @@ export const providerActions = {
       );
       this.state.siteSaveMessage = "";
       this.render();
-      if (membershipId) {
-        [...this.querySelectorAll("[data-edit-provider-manager]")]
-          .find(
-            (button) =>
-              dataAttr(button, "data-edit-provider-manager") === membershipId,
-          )
-          ?.focus();
-      }
     } catch (error) {
       feedback.failure(error);
       throw error;
@@ -163,6 +155,7 @@ export const providerActions = {
     if (!release) return;
     const feedback = actionFeedback("admin.enrollment.emailed");
     const providerId = this.state.provider?.providerId;
+    const visit = this.visit;
     try {
       if (!this.state.provider) return;
       const created = await adminApi.createProviderManagerGrant(
@@ -192,22 +185,26 @@ export const providerActions = {
       this.render();
     } catch (error) {
       if (error.message === "provider_manager_grant_already_active") {
-        error.message = t("admin.enrollment.alreadyActive");
-        feedback.failure(error);
-        if (this.state.provider?.providerId === providerId) {
-          this.state.providerManagerGrantErrors = {
-            ...this.state.providerManagerGrantErrors,
-            [membershipId]: error.message,
-          };
-          this.render();
-        }
+        const message = t("admin.enrollment.alreadyActive");
+        // The manager's row says it; a user who left the page gets the alert.
+        if (
+          visit !== this.visit ||
+          this.state.provider?.providerId !== providerId
+        )
+          return feedback.failure(error, { message });
+        this.state.providerManagerGrantErrors = {
+          ...this.state.providerManagerGrantErrors,
+          [membershipId]: message,
+        };
+        this.render();
         return;
       } else if (
         ["provider_manager_grant_conflict", "manager_grant_conflict"].includes(
           error.message,
         )
       ) {
-        error.message = t("admin.enrollment.conflict");
+        feedback.failure(error, { message: t("admin.enrollment.conflict") });
+        throw appMessageError(t("admin.enrollment.conflict"));
       }
       feedback.failure(error);
       throw error;

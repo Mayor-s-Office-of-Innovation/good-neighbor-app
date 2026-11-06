@@ -2,9 +2,11 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import {
   $,
+  $$,
   adminData,
   click,
   fill,
+  pageError,
   pageText,
   revisitPage,
   settle,
@@ -16,6 +18,7 @@ import {
 import { openSitePage } from "../test-support/site-pages.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
+import { createAdminCatalog } from "./admin-catalog.js";
 
 // pages/site/save-error-messages.js has no catalog key for this copy, so tests match its English.
 const SITE_CONFLICT =
@@ -299,8 +302,7 @@ test("lead program errors stay on the form", async () => {
   });
   await fill('wa-select[name="lead-program-id"]', "p3");
   await click("[data-save-lead-program]");
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(saveError(), "site_reassignment_conflict");
+  assert.equal(saveError(), t("admin.errors.siteChanged"));
   let previewed = false;
   api.on("POST", /^sites\/s1\/reassign$/, () => {
     if (previewed)
@@ -466,4 +468,250 @@ test("a redraw after the URL moves on still draws the route open() was given", a
   window.history.replaceState({}, "", "/profile");
   page.render();
   assert.ok(!missing("admin-site-page h1"));
+});
+
+test("the Site page asks in its own dialog before its edits are dropped", async () => {
+  const { page } = await openSitePage("/sites/s1");
+  await fill('wa-input[name="site-name"]', "Harbor House");
+  assert.equal(page.hasUnsavedChanges(), true);
+  const keep = page.confirmLeave();
+  await settle();
+  assert.equal($("#site-unsaved-dialog").open, true);
+  await click('#site-unsaved-dialog button[value="keep"]');
+  assert.equal(await keep, false);
+  const discard = page.confirmLeave();
+  await click('#site-unsaved-dialog button[value="discard"]');
+  assert.equal(await discard, true);
+});
+
+const crumbs = `nav[aria-label="${t("admin.breadcrumb.label")}"]`;
+const url = () => window.location.pathname + window.location.search;
+
+/** Hold the first GET matching `pattern` until released. @param {any} api @param {RegExp} pattern */
+function holdFirst(api, pattern) {
+  const held = gate();
+  let reads = 0;
+  api.on("GET", pattern, async () => {
+    reads += 1;
+    if (reads === 1) await held.promise;
+    return undefined;
+  });
+  return held;
+}
+
+test("breadcrumbs fall back to generic labels for unnamed parents", async () => {
+  await openSitePage("/sites/s1", {
+    setup: (api) => {
+      api.data.providers.push({ providerId: "v9", name: "", status: "active" });
+      api.data.programs.push({
+        programId: "p9",
+        name: "",
+        providerId: "v9",
+        status: "active",
+      });
+      api.data.sites[0] = {
+        ...api.data.sites[0],
+        providerId: "v9",
+        providerName: "",
+        leadProgramId: "p9",
+        programName: "",
+      };
+    },
+  });
+  assert.equal(
+    $(`${crumbs} a[href="/providers/v9"]`).textContent,
+    t("admin.breadcrumb.provider"),
+  );
+  assert.equal(
+    $(`${crumbs} a[href="/programs/p9"]`).textContent,
+    t("admin.breadcrumb.program"),
+  );
+});
+
+test("breadcrumbs show a provider's name as text and encode parent IDs", async () => {
+  await openSitePage("/sites/s1", {
+    setup: (api) => {
+      api.data.providers.push({
+        providerId: "v/9",
+        name: "<b>Bold</b> & Co",
+        status: "active",
+      });
+      api.data.programs.push({
+        programId: "p/9",
+        name: "Slash Program",
+        providerId: "v/9",
+        status: "active",
+      });
+      api.data.sites[0] = {
+        ...api.data.sites[0],
+        providerId: "v/9",
+        providerName: "<b>Bold</b> & Co",
+        leadProgramId: "p/9",
+      };
+    },
+  });
+  assert.equal(
+    $(`${crumbs} a[href="/providers/v%2F9"]`).textContent,
+    "<b>Bold</b> & Co",
+  );
+  assert.ok(!missing(`${crumbs} a[href="/programs/p%2F9"]`));
+});
+
+test("a site page's breadcrumb names the site as the current page", async () => {
+  await openSitePage("/sites/s1");
+  assert.equal(
+    $(`${crumbs} [aria-current="page"]`).textContent,
+    t("admin.breadcrumb.site"),
+  );
+});
+
+test("a Site with no provider or Program shows no parent links", async () => {
+  await openSitePage("/sites/s1", {
+    setup: (api) => {
+      api.data.sites[0] = {
+        ...api.data.sites[0],
+        providerId: undefined,
+        providerName: undefined,
+        leadProgramId: undefined,
+      };
+    },
+  });
+  assert.deepEqual(
+    $$(`${crumbs} a`).map((link) => link.getAttribute("href")),
+    ["/sites"],
+  );
+});
+
+test("a Site read that finishes after leave() doesn't let the page open, even at the same address", async () => {
+  const { page, api } = await openSitePage("/sites/s1");
+  // The lead Program read comes after the Site read, which leave() aborts.
+  const held = holdFirst(api, /^programs\//);
+  const opening = page.open({ name: "site", id: "s1" });
+  // <admin-app> calls leave() as the user goes; the page mustn't wait for the URL to change.
+  page.leave();
+  held.release();
+  assert.equal(await opening, false);
+});
+
+test("a redraw after leave() empties the Site page", async () => {
+  const { page } = await openSitePage("/sites/s1");
+  page.leave();
+  // A save that ends after the user goes still calls render().
+  page.render();
+  assert.ok(missing("#site-details-form"));
+  assert.equal(page.innerHTML, "");
+});
+
+test("a Site page mount given a catalog shows that catalog's Providers", async () => {
+  const catalog = createAdminCatalog();
+  catalog.seed({
+    providers: [
+      { providerId: "v9", name: "Seeded Provider", status: "active" },
+    ],
+    programs: [],
+    oversightOptions: { departments: [], systemsOfCare: [] },
+    programManagers: [],
+  });
+  await openSitePage("/sites/s1", { catalog });
+  const provider = 'wa-select[name="lead-provider-id"] wa-option';
+  assert.ok(!missing(`${provider}[value="v9"]`));
+  assert.ok(missing(`${provider}[value="v1"]`));
+});
+
+test("modified, non-primary and already handled clicks skip in-app routing", async () => {
+  await openSitePage("/sites/s1");
+  const link = $('admin-site-page a[href="/sites/s1?section=oversight"]');
+  // Stop happy-dom from following the links routeClick skips.
+  const stop = (/** @type {Event} */ event) => event.preventDefault();
+  window.addEventListener("click", stop);
+  try {
+    for (const init of [
+      { button: 1 },
+      { metaKey: true },
+      { ctrlKey: true },
+      { shiftKey: true },
+      { altKey: true },
+    ]) {
+      link.dispatchEvent(
+        new window.MouseEvent("click", {
+          bubbles: true,
+          cancelable: true,
+          ...init,
+        }),
+      );
+      await settle();
+      assert.equal(url(), "/sites/s1", JSON.stringify(init));
+    }
+    window.addEventListener("click", stop, { capture: true });
+    link.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+    window.removeEventListener("click", stop, { capture: true });
+    await click("admin-site-page h1");
+    assert.equal(url(), "/sites/s1");
+  } finally {
+    window.removeEventListener("click", stop);
+  }
+});
+
+for (const [section, view, form] of [
+  ["staff", "details", "#site-details-form"],
+  ["terms", "compliance", "#site-perimeter-form"],
+  ["letters", "compliance", "#site-perimeter-form"],
+  ["perimeter", "compliance", "#site-perimeter-form"],
+])
+  test(`the legacy ${section} section opens the ${view} tab`, async () => {
+    const { api } = await openSitePage(`/sites/s1?section=${section}`);
+    assert.ok(!missing(form));
+    assert.equal(
+      $(`a[href="/sites/s1?section=${view}"]`).getAttribute("aria-current"),
+      "page",
+    );
+    assert.equal(
+      api.calls("GET", new RegExp(`^sites/s1\\?view=${view}$`)).length,
+      1,
+    );
+  });
+
+test("a Site without a lead program skips the program read", async () => {
+  const { api } = await openSitePage("/sites/s1", {
+    setup: (api) => {
+      api.data.sites[0] = { ...api.data.sites[0], leadProgramId: undefined };
+    },
+  });
+  // Any program ID, so a read of programs/undefined fails the test too.
+  assert.equal(api.calls("GET", /^programs\//).length, 0);
+  assert.equal(pageError(), "");
+});
+
+test("a failed deactivation stays on the Site with an error", async () => {
+  await openSitePage("/sites/s1", {
+    setup: (api) => api.fail("DELETE", /^sites\/s1$/),
+  });
+  await fill(
+    '#deactivate-site-form wa-input[name="confirmation"]',
+    "Example Site",
+  );
+  await click('#deactivate-site-form button[type="submit"]');
+  assert.equal(
+    $("#deactivate-site-form [data-form-save-error]").textContent.trim(),
+    t("admin.site.deactivateError"),
+  );
+  assert.equal(url(), "/sites/s1");
+});
+
+test("a Compliance manager who may edit a Site keeps its edit controls", async () => {
+  await openSitePage("/sites/s1", {
+    role: "compliance-manager",
+    setup: (api) =>
+      api.on("GET", /^sites\/s1(\?|$)/, () => ({
+        json: {
+          items: [{ ...api.data.sites[0], sk: "#META" }],
+          permissions: { canEdit: true },
+        },
+      })),
+  });
+  assert.equal(heading(), "Example Site");
+  assert.equal($("#site-details-form wa-input").disabled, false);
+  assert.ok(missing("[data-deactivate-site]"));
 });

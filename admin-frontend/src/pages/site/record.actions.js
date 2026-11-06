@@ -216,10 +216,6 @@ export const siteRecordActions = {
       this.state.perimeterSaving = true;
       this.state.perimeterMessage = "";
       this.state.perimeterError = "";
-      this.state.physicalDeviceRevocationPreview = null;
-      this.state.emergencyRevocationSites = [];
-      this.state.emergencyRevocationPreview = null;
-      this.state.suspensionTarget = null;
       this.state.revocationMessage = "";
       this.render();
       const visit = this.visit;

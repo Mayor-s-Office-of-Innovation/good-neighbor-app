@@ -39,6 +39,14 @@ export function syncDirtyForm(form, initialize = false) {
   }
 }
 
+/**
+ * Whether a form in `root` has edits not yet saved, which leaving would lose.
+ * @param {ParentNode} root
+ */
+export function hasDirtyForm(root) {
+  return Boolean(root.querySelector("[data-dirty-form][data-is-dirty='true']"));
+}
+
 /** @param {HTMLFormElement} form */
 export function syncProviderDetailsForm(form) {
   const nameInput = form.querySelector("wa-input[name='provider-name']");

@@ -12,15 +12,16 @@ import { addExtension, removeExtension } from "../../phone-extension.js";
 import { navigate } from "../../router.js";
 import { saveWithFeedback } from "../../save-feedback.js";
 import {
+  copyEnrollmentLink,
   enrollmentCodeActions,
-  siteManagerAccessActions,
-} from "../site/manager.actions.js";
+} from "../enrollment-code.actions.js";
 import {
   providerManagerPath,
   removeProviderManagerAccess,
   revokeProviderDevices,
 } from "../../provider-manager-directory.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
+import { appMessageError } from "../../admin-error-messages.js";
 
 /**
  * @typedef {import("./provider-page.js").ProviderPageElement} ProviderPageElement
@@ -91,8 +92,7 @@ export const providerEvents = {
         button.getAttribute("data-show-enrollment-code"),
       ),
     "[data-copy-enrollment-url]": (page, button) => {
-      if (button instanceof HTMLButtonElement)
-        void siteManagerAccessActions.copyManagerGrant(button);
+      if (button instanceof HTMLButtonElement) void copyEnrollmentLink(button);
     },
     "[data-cancel-provider-manager-grant]": (page, button) =>
       page
@@ -161,7 +161,8 @@ export const providerEvents = {
         const person = page.state.people.find(
           (p) => p.personId === controlValue(form, "person-id"),
         );
-        if (!person) throw new Error(t("admin.relationships.choosePerson"));
+        if (!person)
+          throw appMessageError(t("admin.relationships.choosePerson"));
         await adminApi.createProviderManager(
           page.state.provider.providerId,
           person,
@@ -183,7 +184,7 @@ export const providerEvents = {
           controlValue(form, "confirmation").trim().toLowerCase() !==
           member.email.toLowerCase()
         )
-          throw new Error(t("admin.relationships.confirmationMismatch"));
+          throw appMessageError(t("admin.relationships.confirmationMismatch"));
         const { manager } = await adminApi.transferProviderManager(
           page.state.provider.providerId,
           member.membershipId,
@@ -203,15 +204,7 @@ export const providerEvents = {
       event.preventDefault();
       page
         .addProgramToProvider(asForm(form))
-        .catch((error) =>
-          page.reportError(
-            error.message === "program_has_sites"
-              ? new Error(
-                  "This Program has active Sites. Reassign those Sites before moving the Program to another provider.",
-                )
-              : error,
-          ),
-        );
+        .catch((error) => page.reportError(error));
     },
   },
   input: edits,
@@ -245,7 +238,7 @@ export const providerEvents = {
           page.reportError(
             error instanceof Error
               ? error
-              : new Error("The provider could not be deactivated."),
+              : appMessageError("The provider could not be deactivated."),
           ),
         );
     },

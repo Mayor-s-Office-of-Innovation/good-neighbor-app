@@ -52,6 +52,35 @@ export const adminUserActions = {
       throw error;
     }
   },
+  /**
+   * After a change worked: reread the list, or redraw the old one if the reread fails.
+   * @param {{ failure: (error: any) => void }} feedback the change's own, so a failure reads as refresh-failed
+   */
+  rereadAfterChange(feedback) {
+    const reread = this.reloadAdminUsers();
+    // Read after the reread starts, since its open() bumps visit; a later bump means the user left.
+    const visit = this.visit;
+    reread.catch((error) => {
+      if (error?.name === "AbortError" || visit !== this.visit) return;
+      // Redrawn, so a button left on "Working…" is usable again.
+      this.render();
+      feedback.failure(error);
+    });
+  },
+  /**
+   * Put a changed account in the list, so a failed reread still shows the change.
+   * @param {any} user
+   */
+  keepChangedUser(user) {
+    if (!user?.username) return;
+    // Suspend and Reinstate answer with an empty role, which mustn't blank the row's role.
+    const { role, ...rest } = user;
+    this.state.adminUsers = upsertRecord(
+      this.state.adminUsers,
+      role ? user : rest,
+      "username",
+    );
+  },
   /** Reread the list after a change, as a fresh visit would. */
   async reloadAdminUsers() {
     // <admin-app> reloads whatever route is now on screen, even if the user moved on.
@@ -81,23 +110,29 @@ export const adminUserActions = {
     const request = requests[action]?.();
     if (!request) return;
     const visit = this.visit;
+    const label = button.textContent;
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
     button.textContent = "Working…";
-    request
-      .then(() => {
+    request.then(
+      (result) => {
+        this.keepChangedUser(result?.user);
         this.catalog.invalidate("programManagers");
         feedback.success();
         this.state.adminUserMessage = "";
         // A reread after the user left would redraw the page they moved to.
-        if (visit === this.visit) return this.reloadAdminUsers();
-      })
-      .catch((error) => {
+        if (visit !== this.visit) return;
+        this.rereadAfterChange(feedback);
+      },
+      (error) => {
+        // The row stays on screen after a failure, so the user can try again.
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+        button.textContent = label;
         feedback.failure(error);
         this.reportError(error);
-        // <admin-app> skips a redraw for a repeated error, so reset the button here.
-        if (visit === this.visit) this.render();
-      });
+      },
+    );
   },
   /** @param {HTMLElement & { value: string }} select */
   changeAdminRole(select) {
@@ -108,16 +143,20 @@ export const adminUserActions = {
         dataAttr(select, "data-username"),
         String(select.value),
       )
-      .then(() => {
-        feedback.success();
-        if (visit === this.visit) return this.reloadAdminUsers();
-      })
-      .catch((error) => {
-        feedback.failure(error);
-        this.reportError(error);
-        // Redrawn, so the select shows the saved role again, not the failed one.
-        if (visit === this.visit) this.render();
-      });
+      .then(
+        (result) => {
+          this.keepChangedUser(result?.user);
+          feedback.success();
+          if (visit !== this.visit) return;
+          this.rereadAfterChange(feedback);
+        },
+        (error) => {
+          feedback.failure(error);
+          this.reportError(error);
+          // Redrawn, so the select shows the saved role again, not the failed one.
+          if (visit === this.visit) this.render();
+        },
+      );
   },
   /** @param {HTMLFormElement} profileForm */
   async saveMyProfile(profileForm) {
