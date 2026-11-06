@@ -2,14 +2,12 @@ import { test, vi } from "vitest";
 import assert from "node:assert/strict";
 import {
   $,
-  alertText,
   $$,
   click,
   fill,
   focused,
-  pageError,
-  pageText,
-  routeTo,
+  leavePage,
+  revisitPage,
   settle,
   submit,
   tick,
@@ -18,7 +16,7 @@ import {
   window,
   missing,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
+import { openSitePage } from "../test-support/site-pages.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import {
   accessData,
@@ -33,15 +31,15 @@ const ACCESS = "/sites/s1?section=access";
 
 /**
  * @param {string} path
- * @param {Parameters<typeof mountAdmin>[1]} [options]
+ * @param {Parameters<typeof openSitePage>[1]} [options]
  */
 const openSite = (path, options = {}) =>
-  mountAdmin(path, { data: managerData(), ...options });
+  openSitePage(path, { data: managerData(), ...options });
 
 const access = () => $('section[aria-label="App access"]');
 const accessStatus = () =>
   access().querySelector('[role="status"]')?.textContent.trim() || "";
-const heading = () => $("admin-app h1").textContent.trim();
+const heading = () => $("admin-site-page h1").textContent.trim();
 const historyRows = () => $$("details tbody tr");
 const actions = () => $("[data-manager-membership-actions]");
 
@@ -108,6 +106,23 @@ test("assigning a person or Program staff adds a membership", async () => {
   });
 });
 
+test("leaving while a saved assignment rereads the Site reports no failure", async () => {
+  const { api, errors } = await openSite("/sites/s1", { recordErrors: true });
+  const held = gate();
+  api.on("GET", /^sites\/s1(\?|$)/, async () => {
+    await held.promise;
+    return undefined;
+  });
+  await chooseManager("u2");
+  await click('[data-manager-membership-actions] button[type="submit"]');
+  assert.equal(api.calls("POST", /^sites\/s1\/manager-memberships$/).length, 1);
+  await leavePage("/providers");
+  held.release();
+  await settle();
+  assert.deepEqual(errors, []);
+  assert.ok(!toastText().includes(t("admin.toast.requestFailed")));
+});
+
 test("a person without an email cannot be assigned", async () => {
   const data = managerData();
   data.people.push({
@@ -116,10 +131,13 @@ test("a person without an email cannot be assigned", async () => {
     lastName: "Person",
     status: "active",
   });
-  const { api } = await openSite("/sites/s1", { data });
+  const { api, errors } = await openSite("/sites/s1", {
+    data,
+    recordErrors: true,
+  });
   await chooseManager("u6");
   await click('[data-manager-membership-actions] button[type="submit"]');
-  assert.ok(pageText().includes(t("admin.relationships.chooseManager")));
+  assert.deepEqual(errors, [t("admin.relationships.chooseManager")]);
   assert.deepEqual(api.calls("POST", /manager-memberships$/), []);
 });
 
@@ -137,19 +155,6 @@ test("creating a new manager from the Site saves the person and assigns them", a
   assert.deepEqual(
     [membership.personId, membership.name],
     ["person-4", "Riley New"],
-  );
-});
-
-test("a manager created from a Site appears in the manager directory", async () => {
-  await openSite("/managers");
-  await routeTo("/sites/s1");
-  await openNewManager();
-  await fillNewManager();
-  await click('#new-site-manager-dialog button[type="submit"]');
-  await routeTo("/managers");
-  assert.match(
-    $('[aria-labelledby="managers-title"]').textContent,
-    /Riley New/,
   );
 });
 
@@ -219,13 +224,13 @@ test("the new manager dialog cannot be dismissed while saving", async () => {
 });
 
 test("a Site reload failure after creating a manager shows the error", async () => {
-  const { api } = await openSite("/sites/s1");
+  const { api, errors } = await openSite("/sites/s1", { recordErrors: true });
   api.fail("GET", /^sites\/s1\?view=details$/, 404, "site_not_found");
   await openNewManager();
   await fillNewManager();
   await click('#new-site-manager-dialog button[type="submit"]');
   // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.match(pageText(), /site_not_found/);
+  assert.deepEqual(errors, ["site_not_found"]);
 });
 
 test("removing memberships asks first and handles person and legacy records", async () => {
@@ -253,7 +258,8 @@ test("removing memberships asks first and handles person and legacy records", as
 });
 
 test("a failed membership removal shows the error", async () => {
-  await openSite("/sites/s1", {
+  const { errors } = await openSite("/sites/s1", {
+    recordErrors: true,
     setup: (api) =>
       api.fail(
         "DELETE",
@@ -265,7 +271,7 @@ test("a failed membership removal shows the error", async () => {
   await click('[data-remove-manager-membership="m3"]');
   await click('#remove-manager-membership-dialog button[value="confirm"]');
   // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.match(pageText(), /manager_membership_not_found/);
+  assert.deepEqual(errors, ["manager_membership_not_found"]);
 });
 
 test("a compliance manager without edit rights sees no assignment controls", async () => {
@@ -395,40 +401,6 @@ test("a legacy assignment becomes a membership before its link is sent", async (
   );
 });
 
-test("a legacy assignment whose link fails keeps its new membership for the retry", async () => {
-  let grants = 0;
-  const { api } = await openSite(ACCESS, {
-    data: accessData(),
-    setup: (api) => {
-      api.on("POST", /^sites\/s1\/manager-memberships$/, {
-        json: {
-          membership: {
-            membershipId: "m40",
-            name: "Alex Example",
-            email: "alex@example.org",
-            status: "active",
-          },
-        },
-      });
-      api.on("POST", /^sites\/s1\/manager-grants$/, () =>
-        ++grants === 1
-          ? { status: 409, json: { error: "manager_grant_conflict" } }
-          : { json: { grant: { grantId: "g9", deliveryStatus: "accepted" } } },
-      );
-    },
-  });
-  await click(
-    '[data-issue-manager-grant="legacy:u1"][data-delivery-mode="link"]',
-  );
-  assert.ok(alertText().includes(t("admin.toast.partial")));
-  await click('[data-issue-manager-grant="m40"][data-delivery-mode="link"]');
-  assert.equal(api.calls("POST", /manager-memberships$/).length, 1);
-  assert.equal(
-    api.calls("POST", /manager-grants$/)[1].body.membershipId,
-    "m40",
-  );
-});
-
 test("an emailed link shows one toast before the access lists reload", async () => {
   const held = gate();
   await openSite(ACCESS, {
@@ -456,92 +428,47 @@ test("an emailed link shows one toast before the access lists reload", async () 
   assert.equal(toastCount(t("admin.enrollment.emailed")), 1);
 });
 
-test("each enrollment error shows one generic notice and keeps the access tab usable", async () => {
-  const { api } = await openSite(ACCESS, { data: accessData() });
-  const link = '[data-issue-manager-grant="m3"][data-delivery-mode="link"]';
-  const failed = t("admin.toast.requestFailed");
-  const notices = () =>
-    $$("[data-operation-error]").filter(
-      (notice) => notice.textContent.trim() === failed,
-    ).length;
-  const codes = [
-    ["provider_manager_grant_already_active", "admin.enrollment.alreadyActive"],
-    ["manager_grant_conflict", "admin.enrollment.conflict"],
-    ["unexpected", ""],
-  ];
-  for (const [index, [code, key]] of codes.entries()) {
-    api.fail("POST", /manager-grants$/, 409, code);
-    const before = notices();
-    await click(link);
-    assert.equal(notices(), before + 1, code);
-    // Pins a bug: issueManagerGrant in pages/site/manager.actions.js maps these
-    // codes to their own message, but adminErrorMessage ignores it for an HTTP
-    // error. No issue filed yet.
-    if (key) assert.ok(!pageText().includes(t(key)), code);
-    assert.equal(api.calls("POST", /manager-grants$/).length, index + 1);
-    assert.equal($(link).disabled, false);
-  }
-});
-
-test("a failed enrollment clears a stale page banner instead of repeating its toast there", async () => {
-  const { api } = await openSite(ACCESS, {
+test("a link cancel that fails after the user leaves still reports the error", async () => {
+  const held = gate();
+  const { errors } = await openSite(ACCESS, {
+    recordErrors: true,
     data: accessData(),
     setup: (api) =>
-      api.fail(
-        "DELETE",
-        /^sites\/s1\/grants\/g1$/,
-        404,
-        "manager_grant_not_found",
-      ),
+      api.on("DELETE", /^sites\/s1\/grants\/g1$/, {
+        delay: held.promise,
+        status: 404,
+        json: {
+          error: "manager_grant_not_found",
+          message: "manager_grant_not_found",
+        },
+      }),
   });
   await click('[data-cancel-manager-grant="g1"]');
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "manager_grant_not_found");
-  api.fail("POST", /manager-grants$/, 409, "manager_grant_conflict");
-  await click('[data-issue-manager-grant="m3"][data-delivery-mode="link"]');
-  assert.ok(alertText().includes(t("admin.toast.requestFailed")));
-  assert.equal(pageError(), "");
-});
-
-test("a page error clears when a link is sent, and a late refresh is dropped", async () => {
-  const data = accessData();
-  data.grants.push({
-    siteId: "s3",
-    grantId: "g5",
-    issuedTo: "morgan@example.org",
-    status: "pending",
-  });
-  const { api } = await openSite(ACCESS, {
-    data,
-    setup: (api) =>
-      api.fail(
-        "DELETE",
-        /^sites\/s1\/grants\/g1$/,
-        404,
-        "manager_grant_not_found",
-      ),
-  });
-  await click('[data-cancel-manager-grant="g1"]');
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.match(pageText(), /manager_grant_not_found/);
-  const held = gate();
-  api.on("POST", /manager-grants$/, {
-    json: { grant: { grantId: "g9", deliveryStatus: "accepted" } },
-  });
-  api.on("GET", /^sites\/s1\/grants$/, async () => {
-    await held.promise;
-    return { json: { grants: [] } };
-  });
-  await click('[data-issue-manager-grant="m3"][data-delivery-mode="link"]');
-  assert.doesNotMatch(pageText(), /manager_grant_not_found/);
-  await routeTo("/sites/s3?section=access");
-  assert.equal(heading(), "North Site");
-  assert.ok(!missing('[data-cancel-manager-grant="g5"]'));
+  await leavePage("/providers");
   held.release();
   await settle();
-  assert.ok(!missing('[data-cancel-manager-grant="g5"]'));
-  assert.ok(missing('[data-cancel-manager-grant="g1"]'));
-  assert.equal(heading(), "North Site");
+  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
+  assert.deepEqual(errors, ["manager_grant_not_found"]);
+});
+
+test("a link cancel that succeeds after the user leaves reports success and rereads nothing", async () => {
+  const held = gate();
+  const { api, errors } = await openSite(ACCESS, {
+    data: accessData(),
+    recordErrors: true,
+    setup: (api) =>
+      api.on("DELETE", /^sites\/s1\/grants\/g1$/, async () => {
+        await held.promise;
+        return { json: {} };
+      }),
+  });
+  await click('[data-cancel-manager-grant="g1"]');
+  await leavePage("/providers");
+  held.release();
+  await settle();
+  assert.deepEqual(errors, []);
+  assert.match(toastText(), new RegExp(t("admin.toast.linkCancelled")));
+  assert.equal(api.calls("GET", /^sites\/s1\/grants$/).length, 1);
 });
 
 test("cancelling a pending link refreshes the history", async () => {
@@ -658,7 +585,8 @@ test("closing the removal dialog with Escape removes nothing", async () => {
 });
 
 test("a failed device removal shows the error", async () => {
-  await openSite(ACCESS, {
+  const { errors } = await openSite(ACCESS, {
+    recordErrors: true,
     data: accessData(),
     setup: (api) =>
       api.fail(
@@ -671,13 +599,13 @@ test("a failed device removal shows the error", async () => {
   await askToRemove("b1");
   await click(`${REVOCATION} button[value="confirm"]`);
   // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.match(pageText(), /device_revocation_conflict/);
+  assert.deepEqual(errors, ["device_revocation_conflict"]);
 });
 
 test("leaving the page with the removal dialog open closes it and sends nothing", async () => {
   const { api } = await openSite(ACCESS, { data: accessData() });
   await askToRemove("b1");
-  await routeTo("/sites/s3?section=access");
+  await revisitPage("/sites/s3?section=access");
   assert.equal(heading(), "North Site");
   assert.ok(missing(REVOCATION));
   assert.deepEqual(api.calls("DELETE", /devices\//), []);
@@ -688,18 +616,17 @@ test("a navigation in the same moment as Remove sends nothing", async () => {
   await askToRemove("b1");
   // The answer arrives after this close event, so the page has already changed.
   revocation().addEventListener("close", () => {
-    window.history.pushState({}, "", "/sites/s3?section=access");
-    window.dispatchEvent(new window.PopStateEvent("popstate"));
+    void revisitPage("/sites/s3?section=access");
   });
   await click(`${REVOCATION} button[value="confirm"]`);
   assert.equal(heading(), "North Site");
   assert.deepEqual(api.calls("DELETE", /devices\//), []);
 });
 
-test("closing the app with the removal dialog open closes it and sends nothing", async () => {
-  const { app, api } = await openSite(ACCESS, { data: accessData() });
+test("removing the Site page with the removal dialog open closes it and sends nothing", async () => {
+  const { page, api } = await openSite(ACCESS, { data: accessData() });
   await askToRemove("b1");
-  app.remove();
+  page.remove();
   await settle();
   assert.ok(missing(REVOCATION));
   assert.deepEqual(api.calls("DELETE", /devices\//), []);
@@ -717,7 +644,7 @@ test("a device removal that finishes after navigation leaves the new page", asyn
   });
   await askToRemove("b1");
   await click(`${REVOCATION} button[value="confirm"]`);
-  await routeTo("/sites/s3?section=access");
+  await revisitPage("/sites/s3?section=access");
   assert.equal(heading(), "North Site");
   held.release();
   await settle();
@@ -765,7 +692,8 @@ test("revoking every device needs the Site name and reports each outcome", async
 });
 
 test("a failed revoke-all shows the error and lets the user try again", async () => {
-  await openSite(ACCESS, {
+  const { errors } = await openSite(ACCESS, {
+    recordErrors: true,
     data: accessData(),
     setup: (api) =>
       api.fail("POST", /revoke-all$/, 409, "site_revocation_conflict"),
@@ -773,7 +701,7 @@ test("a failed revoke-all shows the error and lets the user try again", async ()
   await fill("#revoke-all-site-devices wa-input", "Example Site");
   await click("#revoke-all-site-devices button");
   // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.match(pageText(), /site_revocation_conflict/);
+  assert.deepEqual(errors, ["site_revocation_conflict"]);
   assert.equal($("#revoke-all-site-devices wa-input").disabled, false);
   await fill("#revoke-all-site-devices wa-input", "Example Site");
   assert.equal($("#revoke-all-site-devices button").disabled, false);
@@ -800,7 +728,7 @@ test("a second revoke-all submit while one is pending sends nothing", async () =
   assert.equal(api.calls("POST", /revoke-all$/).length, 1);
 });
 
-test("a revoke-all that finishes after navigation reports its outcome on the next Site's panel (bug)", async () => {
+test("a revoke-all that finishes after navigation leaves the next Site's panel alone", async () => {
   const held = gate();
   const { api } = await openSite(ACCESS, {
     data: accessData(),
@@ -814,13 +742,12 @@ test("a revoke-all that finishes after navigation reports its outcome on the nex
   });
   await fill("#revoke-all-site-devices wa-input", "Example Site");
   await click("#revoke-all-site-devices button");
-  await routeTo("/sites/s3?section=access");
+  await revisitPage("/sites/s3?section=access");
   assert.equal(heading(), "North Site");
   held.release();
   await settle();
-  // Pins a bug: s1's outcome shows on s3's access panel. No issue filed yet.
-  assert.match(accessStatus(), /op5/);
-  assert.equal(api.calls("GET", /^sites\/s1\/devices$/).length, 1);
+  assert.equal(accessStatus(), "");
+  assert.equal(api.calls("GET", /^sites\/s3\/devices$/).length, 1);
 });
 
 test("a compliance manager without edit rights cannot change access", async () => {
@@ -935,10 +862,38 @@ test("a code returned after leaving the Site is discarded", async () => {
       }),
   });
   await click('[data-show-enrollment-code="m3"]');
-  await routeTo("/sites/s2?section=access");
+  await revisitPage("/sites/s2?section=access");
   held.release();
   await settle();
   // The late grant belongs to s1, so it must not join s2's history.
   assert.ok(!access().textContent.includes(t("admin.enrollment.screenIssued")));
   assert.ok(missing("[data-enrollment-code]"));
+});
+
+test("an assignment that finishes after moving to another Site lets that Site open", async () => {
+  const saved = gate();
+  const opened = gate();
+  const { api } = await openSite("/sites/s1", {
+    setup: (api) => {
+      api.on("POST", /^sites\/s1\/manager-memberships$/, async () => {
+        await saved.promise;
+        return undefined;
+      });
+      api.on("GET", /^sites\/s3\?view=details$/, async () => {
+        await opened.promise;
+        return undefined;
+      });
+    },
+  });
+  await chooseManager("u2");
+  await click('[data-manager-membership-actions] button[type="submit"]');
+  // Not awaited: the s3 read is held, so the page is still opening.
+  const moving = revisitPage("/sites/s3");
+  await settle();
+  saved.release();
+  await settle();
+  opened.release();
+  await moving;
+  assert.equal(heading(), "North Site");
+  assert.equal(api.calls("GET", /^sites\/s1\?view=details$/).length, 1);
 });

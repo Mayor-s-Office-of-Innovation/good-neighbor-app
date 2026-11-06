@@ -1,5 +1,3 @@
-import { adminCatalog } from "../../admin-catalog.js";
-
 /** @param {Record<string, any>[]} programs @param {string} providerId */
 export function siteProviderPrograms(programs, providerId) {
   return programs.filter((program) => program.status !== "inactive");
@@ -48,7 +46,7 @@ export function bindSiteProgramCreation(
           name: String(name.value || "").trim(),
         });
         feedback.success();
-        adminCatalog.addProgram(program);
+        root.catalog.addProgram(program);
         if (!select.isConnected) return;
         const option = document.createElement("wa-option");
         option.value = program.programId;

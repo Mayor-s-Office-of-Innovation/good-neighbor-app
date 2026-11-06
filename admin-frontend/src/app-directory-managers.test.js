@@ -6,6 +6,8 @@ import {
   click,
   fill,
   missing,
+  pageError,
+  pageText,
   routeTo,
   settle,
   tick,
@@ -14,6 +16,7 @@ import {
 import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { failTimes } from "../../e2e/admin-tests/directory-helpers.js";
+import { managerData } from "../../e2e/admin-tests/site-access-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
 // These tests need <admin-app>: it holds the Site manager list the directory searches,
@@ -148,6 +151,21 @@ test("a manager lookup that returns after the search is cleared does not redraw 
   await settle();
   assert.ok($(tabs) === nav);
   assert.ok(missing("#directory-results-title"));
+});
+
+test("the new manager form shares a manager read the directory started", async () => {
+  /** @type {any} */
+  let held;
+  const { api } = await mountAdmin("/managers", {
+    setup: (api) => (held = holdPeople(api)),
+  });
+  const programReads = api.calls("GET", /^programs\/[^/]+$/).length;
+  // GET people is still held, so a second manager read would repeat these program reads.
+  await routeTo("/managers/new");
+  held.release();
+  await settle();
+  assert.equal(api.calls("GET", /^programs\/[^/]+$/).length, programReads);
+  assert.ok(!missing("#manager-record-title"));
 });
 
 test("manager filters narrow the Site manager list", async () => {
@@ -368,6 +386,19 @@ test("a manager's breadcrumb leads back through the manager directory and their 
   );
 });
 
+test("an error in <admin-app>'s error line keeps a Site manager's unsaved edits", async () => {
+  await mountAdmin("/managers/u1");
+  const firstName =
+    '#site-manager-record-form wa-input[name="manager-first-name"]';
+  await fill(firstName, "Edited");
+  // What a failed manager action does; <admin-app> redraws and reattaches the page.
+  $("admin-site-manager-page").reportError(new Error("Something failed"));
+  await settle();
+  assert.equal(pageError(), "Something failed");
+  assert.equal($(firstName).value, "Edited");
+  assert.equal($("#site-manager-record-form").dataset.isDirty, "true");
+});
+
 test("search lists managers by email and Sites by address", async () => {
   await mountAdmin("/sites?q=nameless", {
     setup: (api) => {
@@ -410,4 +441,123 @@ test("an app moved in the page lists the managers again", async () => {
   await settle();
   assert.equal(api.calls("GET", /^people$/).length, 2);
   assert.ok(listText("managers-title").includes("Alex Example"));
+});
+
+// The managers directory, with the Site managers <admin-app> reads for it.
+
+/** @param {string} path @param {Parameters<typeof mountAdmin>[1]} [options] */
+const openManagersInApp = (path, options = {}) =>
+  mountAdmin(path, { data: managerData(), ...options });
+
+const directoryRows = () =>
+  $$('[aria-labelledby="managers-title"] li').map((row) =>
+    row.textContent.replace(/\s+/g, " ").trim(),
+  );
+const managerTitle = () => $("#manager-record-title").textContent.trim();
+
+test("the manager directory lists people and legacy staff and filters them", async () => {
+  const data = managerData();
+  data.people.push({
+    personId: "u5",
+    firstName: "Sam",
+    lastName: "North",
+    email: "sam@example.org",
+    siteManager: true,
+    status: "active",
+  });
+  data.siteItems.s3 = [
+    {
+      sk: "MEMBERSHIP#m5",
+      type: "managerMembership",
+      membershipId: "m5",
+      personId: "u5",
+      name: "Sam North",
+      email: "sam@example.org",
+      status: "active",
+    },
+  ];
+  await openManagersInApp("/managers", { data });
+  assert.equal(directoryRows().length, 3);
+  assert.match(directoryRows()[0], /Alex Example/);
+  assert.match(directoryRows()[2], /Sam North/);
+  await routeTo("/managers?program=p3");
+  assert.match(pageText(), /No site managers match these filters\./);
+  await routeTo("/managers?site=s1&program=p1");
+  assert.equal(directoryRows().length, 2);
+  assert.match(directoryRows()[0], /Alex Example/);
+  assert.match(directoryRows()[1], /Morgan Person/);
+  await fill('#manager-directory-filters wa-select[name="program"]', "");
+  assert.equal(
+    window.location.pathname + window.location.search,
+    "/managers?site=s1",
+  );
+  await fill('#manager-directory-filters wa-select[name="site"]', "");
+  assert.equal(window.location.pathname + window.location.search, "/managers");
+});
+
+test("legacy staff join the directory through an email-only Site membership", async () => {
+  const data = managerData();
+  data.programUsers.p1.push({
+    userId: "u10",
+    firstName: "Former",
+    lastName: "Staff",
+    email: "former@example.org",
+    status: "inactive",
+    siteManager: true,
+  });
+  // Older memberships carry only an email; they still match Program staff.
+  data.siteItems.s3 = [
+    {
+      sk: "MEMBERSHIP#m50",
+      type: "managerMembership",
+      membershipId: "m50",
+      name: "Jordan Staff",
+      email: "JORDAN@example.org",
+      status: "active",
+    },
+  ];
+  await openManagersInApp("/managers", { data });
+  // The Site must land on Jordan's own row, not just somewhere in the list.
+  assert.match(
+    directoryRows().find((row) => row.includes("Jordan Staff")) || "",
+    /North Site/,
+  );
+  assert.ok(!directoryRows().some((row) => row.includes("Former Staff")));
+});
+
+test("opening a manager while the directory loads waits for that load", async () => {
+  const held = gate();
+  const { api } = await openManagersInApp("/managers", {
+    setup: (api) =>
+      api.on("GET", /^people$/, async () => {
+        await held.promise;
+        return undefined;
+      }),
+  });
+  assert.equal(api.calls("GET", /^people$/).length, 1);
+  // admin-api shares a repeated people read, so a second directory load would
+  // show only as an extra programs/p1 read.
+  const programReads = api.calls("GET", /^programs\/p1$/).length;
+  await routeTo("/managers/u3");
+  held.release();
+  await settle();
+  assert.equal(managerTitle(), "Morgan Person");
+  assert.equal(api.calls("GET", /^people$/).length, 1);
+  assert.equal(api.calls("GET", /^programs\/p1$/).length, programReads);
+});
+
+test("an unassigned manager shows a placeholder and a missing manager an error", async () => {
+  const data = managerData();
+  data.people.push({
+    personId: "u5",
+    firstName: "Sam",
+    lastName: "Unassigned",
+    email: "sam@example.org",
+    siteManager: true,
+    status: "active",
+  });
+  await openManagersInApp("/managers", { data });
+  assert.ok(directoryRows().some((row) => row.includes("No site assigned")));
+  await routeTo("/managers/missing");
+  assert.equal(pageError(), "Site manager not found.");
 });

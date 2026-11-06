@@ -1,9 +1,9 @@
-// AdminApp.bind() adds these again after each render() replaces the HTML.
+// Site details, perimeter and deactivation handlers, keyed by their control,
+// so a redraw of the Site page never drops or doubles one.
 import { actionFeedback } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
 import { asForm, dataAttr } from "../../dom.js";
 import { bindSiteProgramCreation } from "./site-program.js";
-import { saveWithFeedback } from "../../save-feedback.js";
 import {
   controlValue,
   markSiteDetailsSectionEdited,
@@ -12,54 +12,122 @@ import {
   syncDirtyForm,
   syncSiteDetailsForm,
 } from "../../form-state.js";
+import { addExtension, removeExtension } from "../../phone-extension.js";
+import { saveWithFeedback } from "../../save-feedback.js";
 import { siteManagerContactDetails } from "./manager.templates.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 
 /**
- * @typedef {import("../../admin-types.js").AdminAppElement} AdminAppElement
+ * @typedef {import("./site-page.js").SitePageElement} SitePageElement
+ * @typedef {(page: SitePageElement, control: any, event: any) => void} SiteAction
  */
 
-/** @param {AdminAppElement} app */
-export function bindSiteRecord(app) {
-  const siteDetailsForm = app.querySelector("#site-details-form");
-  siteDetailsForm?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const form = asForm(event.currentTarget);
-    if (
-      !reportNamedControlsValidity(form, [
-        "site-name",
-        "public-contact-email",
-        "public-contact-phone",
-        "public-contact-extension",
-      ])
-    )
-      return;
-    app.updateSite(form, "details").catch((error) => {
-      app.state.error = error.message;
-      app.render();
-    });
-  });
-  app.querySelector("[data-save-address]")?.addEventListener("click", () => {
-    if (
-      !(siteDetailsForm instanceof HTMLFormElement) ||
-      !reportNamedControlsValidity(siteDetailsForm, [
-        "street-address",
-        "city",
-        "state",
-        "zip",
-      ])
-    )
-      return;
-    app.updateSite(siteDetailsForm, "address").catch((error) => {
-      app.state.error = error.message;
-      app.render();
-    });
-  });
-  app
-    .querySelector("[data-save-lead-program]")
-    ?.addEventListener("click", async () => {
+// Forms the unsaved-changes check watches; the details form keeps its own dirty state.
+const TRACKED_FORMS =
+  "#site-oversight-form, #site-compliance-form, #site-perimeter-form, #site-deliberate-311-form";
+
+/** @param {SitePageElement} page */
+function detailsForm(page) {
+  return page.querySelector("#site-details-form");
+}
+
+/** @param {SitePageElement} page @param {HTMLFormElement} form @param {Event} [event] */
+function syncDetails(page, form, event) {
+  markSiteDetailsSectionEdited(form, event);
+  syncSiteDetailsForm(form);
+}
+
+/** @param {SitePageElement} page @param {Element | null} form */
+function confirmedSiteName(page, form) {
+  const confirmation = form?.querySelector("[name='confirmation']");
+  return (
+    Boolean(page.state.site?.name) &&
+    String(confirmation?.value || "") === page.state.site.name
+  );
+}
+
+/** @param {SitePageElement} page @param {Element | null} form */
+function syncDeactivateSubmit(page, form) {
+  const submit = form?.querySelector("button[type='submit']");
+  if (submit)
+    submit.disabled =
+      form.dataset.saving === "true" || !confirmedSiteName(page, form);
+}
+
+/** @param {SitePageElement} page @param {Element} control */
+function syncDeactivateFrom(page, control) {
+  syncDeactivateSubmit(page, control.closest("#deactivate-site-form"));
+}
+
+/** @type {Record<string, Record<string, SiteAction>>} */
+export const siteRecordEvents = {
+  submit: {
+    "#site-details-form": (page, control, event) => {
+      event.preventDefault();
+      const form = asForm(control);
       if (
-        !reportNamedControlsValidity(siteDetailsForm, [
+        !reportNamedControlsValidity(form, [
+          "site-name",
+          "public-contact-email",
+          "public-contact-phone",
+          "public-contact-extension",
+        ])
+      )
+        return;
+      page
+        .updateSite(form, "details")
+        .catch((error) => page.reportError(error));
+    },
+    "#site-deliberate-311-form": (page, form, event) => {
+      event.preventDefault();
+      void page.updateSiteDeliberate311(asForm(form));
+    },
+    "#site-perimeter-form": (page, form, event) => {
+      event.preventDefault();
+      page.updatePerimeter(asForm(form));
+    },
+    "#deactivate-site-form": async (page, form, event) => {
+      event.preventDefault();
+      if (
+        !page.state.capabilities.createEntities ||
+        !confirmedSiteName(page, form) ||
+        form.dataset.saving === "true"
+      )
+        return;
+      form.dataset.saving = "true";
+      syncDeactivateSubmit(page, form);
+      try {
+        await page.deactivateSite(page.state.site.siteId);
+      } catch {
+        if (form.isConnected)
+          showFormSaveError(form, t("admin.site.deactivateError"));
+      } finally {
+        delete form.dataset.saving;
+        if (form.isConnected) syncDeactivateSubmit(page, form);
+      }
+    },
+  },
+  click: {
+    "[data-save-address]": (page) => {
+      const form = detailsForm(page);
+      if (
+        !(form instanceof HTMLFormElement) ||
+        !reportNamedControlsValidity(form, [
+          "street-address",
+          "city",
+          "state",
+          "zip",
+        ])
+      )
+        return;
+      page
+        .updateSite(form, "address")
+        .catch((error) => page.reportError(error));
+    },
+    "[data-save-lead-program]": async (page) => {
+      const form = detailsForm(page);
+      if (
+        !reportNamedControlsValidity(form, [
           "lead-program-id",
           "lead-provider-id",
         ])
@@ -67,16 +135,15 @@ export function bindSiteRecord(app) {
         return;
       try {
         const { preview } = await adminApi.reassignSite(
-          app.state.site.siteId,
-          controlValue(siteDetailsForm, "lead-provider-id"),
-          controlValue(siteDetailsForm, "lead-program-id"),
+          page.state.site.siteId,
+          controlValue(form, "lead-provider-id"),
+          controlValue(form, "lead-program-id"),
           { preview: true },
         );
-        siteDetailsForm.dataset.reassignmentVersion = preview.updatedAt || "";
-        const dialog = app.querySelector("#lead-program-confirmation-dialog");
+        form.dataset.reassignmentVersion = preview.updatedAt || "";
+        const dialog = page.querySelector("#lead-program-confirmation-dialog");
         const providerChanged =
-          controlValue(siteDetailsForm, "lead-provider-id") !==
-          app.state.site.providerId;
+          controlValue(form, "lead-provider-id") !== page.state.site.providerId;
         dialog.querySelector("#lead-program-confirmation-copy").hidden =
           !providerChanged;
         if (providerChanged)
@@ -87,315 +154,103 @@ export function bindSiteRecord(app) {
         else dialog.removeAttribute("aria-describedby");
         dialog.showModal();
       } catch (error) {
-        showFormSaveError(siteDetailsForm, error.message);
+        showFormSaveError(form, error.message);
       }
-    });
-  const leadProgramDialog = app.querySelector(
-    "#lead-program-confirmation-dialog",
-  );
-  leadProgramDialog?.addEventListener("close", () => {
-    if (
-      leadProgramDialog.returnValue !== "confirm" ||
-      !(siteDetailsForm instanceof HTMLFormElement) ||
-      !reportNamedControlsValidity(siteDetailsForm, ["lead-program-id"])
-    )
-      return;
-    app.updateSite(siteDetailsForm, "lead-program").catch((error) => {
-      app.state.error = error.message;
-      app.render();
-    });
-  });
-  app
-    .querySelector("#site-deliberate-311-form")
-    ?.addEventListener("save-feedback-end", (event) =>
-      syncDirtyForm(event.currentTarget),
-    );
-  app
-    .querySelector("#site-deliberate-311-form")
-    ?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      void app.updateSiteDeliberate311(asForm(event.currentTarget));
-    });
-  if (siteDetailsForm instanceof HTMLFormElement) {
-    const sync = (event) => {
-      markSiteDetailsSectionEdited(siteDetailsForm, event);
-      syncSiteDetailsForm(siteDetailsForm);
-    };
-    syncSiteDetailsForm(siteDetailsForm, true);
-    siteDetailsForm.addEventListener("pointerdown", sync, true);
-    siteDetailsForm.addEventListener("keydown", sync, true);
-    siteDetailsForm.addEventListener("input", sync);
-    siteDetailsForm.addEventListener("change", sync);
-    siteDetailsForm.addEventListener("reset", () => queueMicrotask(sync));
-  }
+    },
+    "#reload-site-perimeter": (page) => {
+      if (page.state.site) page.openSite(page.state.site.siteId, false);
+    },
+    "[data-site]": (page, button) =>
+      page.openSite(dataAttr(button, "data-site")),
+    "[data-show-enrollment-code]": (page, button) =>
+      page.showEnrollmentCode(
+        button.dataset.enrollmentScope,
+        button.getAttribute("data-show-enrollment-code"),
+      ),
+    "[data-close-dialog]": (page, button) => button.closest("dialog")?.close(),
+    "[data-add-extension]": (page, button) => addExtension(button),
+    "[data-remove-extension]": (page, button) => removeExtension(button),
+  },
+  close: {
+    "#lead-program-confirmation-dialog": (page, dialog) => {
+      const form = detailsForm(page);
+      if (
+        dialog.returnValue !== "confirm" ||
+        !(form instanceof HTMLFormElement) ||
+        !reportNamedControlsValidity(form, ["lead-program-id"])
+      )
+        return;
+      page
+        .updateSite(form, "lead-program")
+        .catch((error) => page.reportError(error));
+    },
+  },
+  "save-feedback-end": {
+    "#site-deliberate-311-form": (page, form) => syncDirtyForm(form),
+  },
+  pointerdown: { "#site-details-form": syncDetails },
+  keydown: { "#site-details-form": syncDetails },
+  input: {
+    "#site-details-form": (page, form, event) => {
+      syncDetails(page, form, event);
+      page.state.siteSaveMessage = "";
+      page.state.siteSaveError = "";
+      page.querySelector("#site-save-status")?.remove();
+      page.querySelector("#site-save-error")?.remove();
+    },
+    "#deactivate-site-form [name='confirmation']": syncDeactivateFrom,
+    [TRACKED_FORMS]: (page, form) => syncDirtyForm(form),
+  },
+  change: {
+    "wa-select[name='site-manager-user-id']": (page, select) => {
+      const user = page.state.availableSiteUsers.find(
+        (item) => item.userId === select.value,
+      );
+      const target = page.querySelector("#site-manager-contact-details");
+      if (target) target.innerHTML = siteManagerContactDetails(user);
+      const form = detailsForm(page);
+      if (form instanceof HTMLFormElement) syncSiteDetailsForm(form);
+    },
+    "#site-details-form": syncDetails,
+    "#deactivate-site-form [name='confirmation']": syncDeactivateFrom,
+    [TRACKED_FORMS]: (page, form) => syncDirtyForm(form),
+  },
+  reset: {
+    // Passes the reset event on; without one, markSiteDetailsSectionEdited throws.
+    "#site-details-form": (page, form, event) =>
+      queueMicrotask(() => syncDetails(page, form, event)),
+    [TRACKED_FORMS]: (page, form) => queueMicrotask(() => syncDirtyForm(form)),
+  },
+};
+
+/**
+ * Runs after each redraw: the details form starts clean, and Deactivate waits for the Site name.
+ * @param {SitePageElement} page
+ */
+export function prepareSiteRecord(page) {
+  const form = detailsForm(page);
+  if (form instanceof HTMLFormElement) syncSiteDetailsForm(form, true);
   bindSiteProgramCreation(
-    app,
-    app.state,
+    page,
+    page.state,
     adminApi,
     saveWithFeedback,
     () => {
-      if (siteDetailsForm instanceof HTMLFormElement)
-        syncSiteDetailsForm(siteDetailsForm);
+      if (form instanceof HTMLFormElement) syncSiteDetailsForm(form);
     },
     actionFeedback,
   );
-  app
-    .querySelector("wa-select[name='site-manager-user-id']")
-    ?.addEventListener("change", (event) => {
-      const user = app.state.availableSiteUsers.find(
-        (item) => item.userId === event.currentTarget.value,
-      );
-      const target = app.querySelector("#site-manager-contact-details");
-      if (target) target.innerHTML = siteManagerContactDetails(user);
-      if (siteDetailsForm instanceof HTMLFormElement)
-        syncSiteDetailsForm(siteDetailsForm);
-    });
-  app.querySelector("#site-perimeter-form")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    app.updatePerimeter(asForm(e.currentTarget));
-  });
-  app.querySelector("#reload-site-perimeter")?.addEventListener("click", () => {
-    if (app.state.site) app.openSite(app.state.site.siteId, false);
-  });
-  app.querySelector("#site-details-form")?.addEventListener("input", () => {
-    app.state.siteSaveMessage = "";
-    app.state.siteSaveError = "";
-    app.querySelector("#site-save-status")?.remove();
-    app.querySelector("#site-save-error")?.remove();
-  });
-  app.querySelectorAll("[data-site]").forEach((button) => {
-    button.addEventListener("click", () =>
-      app.openSite(dataAttr(button, "data-site")),
-    );
-  });
-  const deactivateForm = app.querySelector("#deactivate-site-form");
-  const deactivateConfirmation = deactivateForm?.querySelector(
-    "[name='confirmation']",
-  );
-  const deactivateSubmit = deactivateForm?.querySelector(
-    "button[type='submit']",
-  );
-  const confirmedSiteName = () =>
-    Boolean(app.state.site?.name) &&
-    String(deactivateConfirmation?.value || "") === app.state.site.name;
-  const syncDeactivateSubmit = () => {
-    if (deactivateSubmit)
-      deactivateSubmit.disabled =
-        deactivateForm.dataset.saving === "true" || !confirmedSiteName();
-  };
-  deactivateConfirmation?.addEventListener("input", syncDeactivateSubmit);
-  deactivateConfirmation?.addEventListener("change", syncDeactivateSubmit);
-  syncDeactivateSubmit();
-  deactivateForm?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (
-      !app.state.capabilities.createEntities ||
-      !confirmedSiteName() ||
-      deactivateForm.dataset.saving === "true"
-    )
-      return;
-    deactivateForm.dataset.saving = "true";
-    syncDeactivateSubmit();
-    try {
-      await app.deactivateSite(app.state.site.siteId);
-    } catch {
-      if (deactivateForm.isConnected)
-        showFormSaveError(deactivateForm, t("admin.site.deactivateError"));
-    } finally {
-      delete deactivateForm.dataset.saving;
-      if (deactivateForm.isConnected) syncDeactivateSubmit();
-    }
-  });
+  syncDeactivateSubmit(page, page.querySelector("#deactivate-site-form"));
 }
 
-/** @param {AdminAppElement} app */
-export function bindAddressLookup(app) {
-  app.querySelectorAll("[data-address-lookup]").forEach((lookup) => {
-    const input = lookup.querySelector("[data-address-query]");
-    const results = lookup.querySelector("[data-address-results]");
-    const status = lookup.querySelector("[data-address-status]");
-    const fields = lookup.parentElement?.querySelector("[data-address-fields]");
-    const manualButton = lookup.querySelector("[data-enter-address-manually]");
-    if (!input || !results || !status || !fields) return;
-    let timer;
-    let controller;
-
-    const showFields = () => {
-      fields.hidden = false;
-      fields.setAttribute("data-expanded", "");
-      manualButton?.setAttribute("aria-expanded", "true");
-      if (manualButton) manualButton.textContent = "Hide manual entry";
-      fields.querySelectorAll("wa-input").forEach((field) => {
-        field.disabled = false;
-      });
-      input.removeAttribute("required");
-      results.replaceChildren();
-      input.setAttribute("aria-expanded", "false");
-      const submit = lookup
-        .closest("form")
-        ?.querySelector("[data-address-dependent]");
-      if (submit && !submit.hasAttribute("data-address-blocked")) {
-        submit.disabled = false;
-      }
-    };
-    const hideFields = () => {
-      fields.hidden = true;
-      fields.removeAttribute("data-expanded");
-      manualButton?.setAttribute("aria-expanded", "false");
-      if (manualButton) manualButton.textContent = "Enter address manually";
-      results.replaceChildren();
-      input.setAttribute("aria-expanded", "false");
-      status.textContent = "Manual address fields hidden.";
-    };
-    const selectSuggestion = (suggestion) => {
-      showFields();
-      input.value = suggestion.label;
-      const parts = suggestion.addressParts || {};
-      const values = {
-        "street-address": [parts.streetNumber, parts.streetAddress]
-          .filter(Boolean)
-          .join(" "),
-        city: parts.city || "",
-        state: parts.state || "",
-        zip: parts.zip || "",
-      };
-      for (const [name, value] of Object.entries(values)) {
-        const field = fields.querySelector(`[name='${name}']`);
-        if (!field) continue;
-        field.value = value;
-        field.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-      status.textContent = `${suggestion.label} selected. You can edit the address fields below.`;
-      fields.querySelector("[name='street-address']")?.focus();
-    };
-    const renderSuggestions = (suggestions) => {
-      results.replaceChildren();
-      for (const suggestion of suggestions) {
-        const item = document.createElement("li");
-        const button = document.createElement("button");
-        button.type = "button";
-        button.textContent = suggestion.label;
-        button.addEventListener("click", () => selectSuggestion(suggestion));
-        item.append(button);
-        results.append(item);
-      }
-      input.setAttribute(
-        "aria-expanded",
-        suggestions.length ? "true" : "false",
-      );
-      status.textContent = suggestions.length
-        ? `${suggestions.length} address suggestion${suggestions.length === 1 ? "" : "s"} available.`
-        : "No matching addresses found. You can enter the address manually.";
-    };
-    input.addEventListener("input", () => {
-      clearTimeout(timer);
-      controller?.abort();
-      const query = input.value.trim();
-      if (query.length < 3) {
-        results.replaceChildren();
-        input.setAttribute("aria-expanded", "false");
-        status.textContent =
-          query.length > 0 ? "Type at least 3 characters." : "";
-        return;
-      }
-      timer = setTimeout(async () => {
-        controller = new AbortController();
-        status.textContent = "Finding addresses…";
-        try {
-          const response = await adminApi.suggestAddresses(
-            query,
-            controller.signal,
-          );
-          if (query !== input.value.trim()) return;
-          renderSuggestions(response.suggestions || []);
-        } catch (error) {
-          if (error.name === "AbortError") return;
-          results.replaceChildren();
-          input.setAttribute("aria-expanded", "false");
-          status.textContent =
-            "Address suggestions are unavailable. Enter the address manually.";
-        }
-      }, 300);
-    });
-    input.addEventListener("wa-clear", () => {
-      results.replaceChildren();
-      input.setAttribute("aria-expanded", "false");
-      status.textContent = "";
-    });
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowDown") {
-        const first = results.querySelector("button");
-        if (first) {
-          event.preventDefault();
-          first.focus();
-        }
-      } else if (event.key === "Escape") {
-        results.replaceChildren();
-        input.setAttribute("aria-expanded", "false");
-      }
-    });
-    manualButton?.addEventListener("click", () => {
-      if (fields.hasAttribute("data-expanded")) {
-        hideFields();
-      } else {
-        showFields();
-        fields.querySelector("[name='street-address']")?.focus();
-      }
-    });
-  });
-
-  app.querySelectorAll("[data-edit-address]").forEach((button) => {
-    const container = button.closest("[data-address-container]");
-    const display = container?.querySelector("[data-address-display]");
-    const editor = container?.querySelector("[data-address-editor]");
-    const originalValues = new Map(
-      [...(editor?.querySelectorAll("[name]") || [])].map((control) => [
-        control,
-        control.getAttribute("value") ?? String(control.value || ""),
-      ]),
+/**
+ * Mark these forms clean after each redraw, so a redraw alone never counts as an unsaved edit.
+ * @param {SitePageElement} page
+ */
+export function prepareTrackedForms(page) {
+  page
+    .querySelectorAll(TRACKED_FORMS)
+    .forEach((form) =>
+      syncDirtyForm(/** @type {HTMLFormElement} */ (form), true),
     );
-    button.addEventListener("click", () => {
-      if (!editor) return;
-      const isEditing = !editor.hasAttribute("hidden");
-      if (isEditing) {
-        editor.setAttribute("hidden", "");
-        display?.removeAttribute("hidden");
-        button.textContent = "Edit address";
-        button.setAttribute("aria-expanded", "false");
-        for (const [control, value] of originalValues) control.value = value;
-        const fields = editor.querySelector("[data-address-fields]");
-        fields?.setAttribute("hidden", "");
-        fields?.removeAttribute("data-expanded");
-        fields?.querySelectorAll("wa-input").forEach((field) => {
-          field.disabled = true;
-        });
-        const manualButton = editor.querySelector(
-          "[data-enter-address-manually]",
-        );
-        if (manualButton) {
-          manualButton.textContent = "Enter address manually";
-          manualButton.setAttribute("aria-expanded", "false");
-        }
-        editor.querySelector("[data-address-results]")?.replaceChildren();
-        const status = editor.querySelector("[data-address-status]");
-        if (status) status.textContent = "";
-        const form = button.closest("form");
-        if (form instanceof HTMLFormElement) {
-          const editedSections = new Set(
-            JSON.parse(form.dataset.editedSections || "[]"),
-          );
-          editedSections.delete("address");
-          form.dataset.editedSections = JSON.stringify([...editedSections]);
-          syncSiteDetailsForm(form);
-        }
-        button.focus();
-        return;
-      }
-      display?.setAttribute("hidden", "");
-      editor.removeAttribute("hidden");
-      button.textContent = "Cancel edit";
-      button.setAttribute("aria-expanded", "true");
-      editor.querySelector("[data-address-query]")?.focus();
-    });
-  });
 }

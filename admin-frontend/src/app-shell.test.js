@@ -350,6 +350,16 @@ test("the local role switch reloads as the chosen role", async () => {
   );
 });
 
+test("the local role switch asks first about unsaved 311 choices on the Sites list", async () => {
+  const loads = stubPageLoads();
+  await mountAdmin("/sites");
+  // The Sites list keeps 311 choices in its own batch, not in a form marked dirty.
+  await fill('[data-site-311="s1"]', false);
+  await fill("#local-role-switch", "manager");
+  assert.equal(loads.reload.mock.calls.length, 0);
+  assert.equal($("#local-role-switch").value, "supervisor");
+});
+
 test("the local role switch keeps unsaved edits when the user cancels", async () => {
   const loads = stubPageLoads();
   await mountAdmin("/profile");

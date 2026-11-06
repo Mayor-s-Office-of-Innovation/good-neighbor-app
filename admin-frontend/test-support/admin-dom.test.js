@@ -9,7 +9,6 @@ import {
   tick,
   toastCount,
   toastText,
-  unhandledRejection,
   window,
 } from "./admin-dom.js";
 import { mountAdmin } from "./app-mount.js";
@@ -124,23 +123,6 @@ test("a 204, 205 or 304 reply reaches the page with no body, as in Playwright", 
     assert.equal(response.status, status);
     assert.equal(await response.text(), "");
   }
-});
-
-test("unhandledRejection fails on a second rejection in the same action", async () => {
-  await mountAdmin("/sites");
-  const reject = (/** @type {string} */ message) =>
-    Promise.reject(new Error(message));
-  const one = await unhandledRejection(async () => {
-    reject("known");
-  });
-  assert.equal(one.message, "known");
-  await assert.rejects(
-    unhandledRejection(async () => {
-      reject("known");
-      reject("new bug");
-    }),
-    /known; new bug/,
-  );
 });
 
 test("a remount doesn't join the old mount's held read", async () => {

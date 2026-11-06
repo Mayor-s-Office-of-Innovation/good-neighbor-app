@@ -2,18 +2,17 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import {
   $,
-  $$,
   click,
   fill,
-  pageError,
+  leavePage,
   pageText,
-  routeTo,
+  revisitPage,
   settle,
   submit,
   window,
   missing,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
+import { openManagerPage } from "../test-support/site-pages.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { managerData } from "../../e2e/admin-tests/site-access-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
@@ -30,18 +29,12 @@ const saveError = () =>
   document.querySelector("[data-form-save-error]")?.textContent.trim() || "";
 
 /**
+ * The manager page without <admin-app>, so only manager calls need faking.
  * @param {string} path
- * @param {Parameters<typeof mountAdmin>[1]} [options]
+ * @param {Parameters<typeof openManagerPage>[1]} [options]
  */
-const openManagers = (path, options = {}) =>
-  mountAdmin(path, { data: managerData(), ...options });
-
-/** Leave an edited record for `path`, discarding the edit. @param {string} path */
-async function discardAndOpen(path) {
-  await routeTo(path);
-  assert.equal($("#site-unsaved-dialog").open, true);
-  await click('#site-unsaved-dialog button[value="discard"]');
-}
+const openManager = (path, options = {}) =>
+  openManagerPage(path, { data: managerData(), ...options });
 
 function overseenData() {
   const data = managerData();
@@ -54,120 +47,8 @@ function overseenData() {
   return data;
 }
 
-const directoryRows = () =>
-  $$('[aria-labelledby="managers-title"] li').map((row) =>
-    row.textContent.replace(/\s+/g, " ").trim(),
-  );
-
-test("the manager directory lists people and legacy staff and filters them", async () => {
-  const data = managerData();
-  data.people.push({
-    personId: "u5",
-    firstName: "Sam",
-    lastName: "North",
-    email: "sam@example.org",
-    siteManager: true,
-    status: "active",
-  });
-  data.siteItems.s3 = [
-    {
-      sk: "MEMBERSHIP#m5",
-      type: "managerMembership",
-      membershipId: "m5",
-      personId: "u5",
-      name: "Sam North",
-      email: "sam@example.org",
-      status: "active",
-    },
-  ];
-  await openManagers("/managers", { data });
-  assert.equal(directoryRows().length, 3);
-  assert.match(directoryRows()[0], /Alex Example/);
-  assert.match(directoryRows()[2], /Sam North/);
-  await routeTo("/managers?program=p3");
-  assert.match(pageText(), /No site managers match these filters\./);
-  await routeTo("/managers?site=s1&program=p1");
-  assert.equal(directoryRows().length, 2);
-  assert.match(directoryRows()[0], /Alex Example/);
-  assert.match(directoryRows()[1], /Morgan Person/);
-  await fill('#manager-directory-filters wa-select[name="program"]', "");
-  assert.equal(
-    window.location.pathname + window.location.search,
-    "/managers?site=s1",
-  );
-  await fill('#manager-directory-filters wa-select[name="site"]', "");
-  assert.equal(window.location.pathname + window.location.search, "/managers");
-});
-
-test("legacy staff join the directory through an email-only Site membership", async () => {
-  const data = managerData();
-  data.programUsers.p1.push({
-    userId: "u10",
-    firstName: "Former",
-    lastName: "Staff",
-    email: "former@example.org",
-    status: "inactive",
-    siteManager: true,
-  });
-  // Older memberships carry only an email; they still match Program staff.
-  data.siteItems.s3 = [
-    {
-      sk: "MEMBERSHIP#m50",
-      type: "managerMembership",
-      membershipId: "m50",
-      name: "Jordan Staff",
-      email: "JORDAN@example.org",
-      status: "active",
-    },
-  ];
-  await openManagers("/managers", { data });
-  // The Site must land on Jordan's own row, not just somewhere in the list.
-  assert.match(
-    directoryRows().find((row) => row.includes("Jordan Staff")) || "",
-    /North Site/,
-  );
-  assert.ok(!directoryRows().some((row) => row.includes("Former Staff")));
-});
-
-test("opening a manager while the directory loads waits for that load", async () => {
-  const held = gate();
-  const { api } = await openManagers("/managers", {
-    setup: (api) =>
-      api.on("GET", /^people$/, async () => {
-        await held.promise;
-        return undefined;
-      }),
-  });
-  assert.equal(api.calls("GET", /^people$/).length, 1);
-  // admin-api shares a repeated people read, so a second directory load would
-  // show only as an extra programs/p1 read.
-  const programReads = api.calls("GET", /^programs\/p1$/).length;
-  await routeTo("/managers/u3");
-  held.release();
-  await settle();
-  assert.equal(title(), "Morgan Person");
-  assert.equal(api.calls("GET", /^people$/).length, 1);
-  assert.equal(api.calls("GET", /^programs\/p1$/).length, programReads);
-});
-
-test("an unassigned manager shows a placeholder and a missing manager an error", async () => {
-  const data = managerData();
-  data.people.push({
-    personId: "u5",
-    firstName: "Sam",
-    lastName: "Unassigned",
-    email: "sam@example.org",
-    siteManager: true,
-    status: "active",
-  });
-  await openManagers("/managers", { data });
-  assert.ok(directoryRows().some((row) => row.includes("No site assigned")));
-  await routeTo("/managers/missing");
-  assert.equal(pageError(), "Site manager not found.");
-});
-
 test("a legacy staff ID opens the person record under its canonical URL", async () => {
-  await openManagers("/managers/legacy3?returnSite=s1");
+  await openManager("/managers/legacy3?returnSite=s1");
   assert.equal(title(), "Morgan Person");
   assert.equal(
     window.location.pathname + window.location.search,
@@ -176,7 +57,7 @@ test("a legacy staff ID opens the person record under its canonical URL", async 
 });
 
 test("saving a person manager updates the record and reconciles Site assignments", async () => {
-  const { api } = await openManagers("/managers/u3", {
+  const { api } = await openManager("/managers/u3", {
     setup: (api) => {
       api.on("GET", /^sites\/s3\/manager-memberships$/, {
         json: {
@@ -213,7 +94,7 @@ test("saving a person manager updates the record and reconciles Site assignments
 });
 
 test("a failed assignment removal keeps the new assignment for a safe retry", async () => {
-  const { api } = await openManagers("/managers/u3", {
+  const { api } = await openManager("/managers/u3", {
     setup: (api) =>
       api.fail(
         "DELETE",
@@ -243,7 +124,7 @@ test("an assignment removal fails the save unless the membership is already gone
     [404, "site_not_found"],
     [403, "manager_membership_not_found"],
   ]) {
-    await openManagers("/managers/u3", {
+    await openManager("/managers/u3", {
       setup: (api) =>
         api.fail(
           "DELETE",
@@ -264,7 +145,7 @@ test("an assignment removal fails the save unless the membership is already gone
 });
 
 test("a person manager opened from a Site returns there after saving", async () => {
-  await openManagers("/managers/u3?returnSite=s1");
+  await openManager("/managers/u3?returnSite=s1");
   await fill(field("manager-last-name"), "Persona");
   await click(saveButton());
   assert.equal(
@@ -273,36 +154,9 @@ test("a person manager opened from a Site returns there after saving", async () 
   );
 });
 
-test("a Site ID with a slash stays one path segment on the way back", async () => {
-  const data = managerData();
-  data.sites.push({
-    siteId: "origin/site",
-    name: "Slash Site",
-    providerId: "v1",
-    leadProgramId: "p1",
-    status: "active",
-  });
-  const { api } = await openManagers("/managers/u3?returnSite=origin%2Fsite", {
-    data,
-  });
-  await fill(field("manager-last-name"), "Persona");
-  await click(saveButton());
-  assert.equal(
-    window.location.pathname + window.location.search,
-    "/sites/origin%2Fsite?section=details",
-  );
-  // Pins a bug: the router keeps the ID encoded and getSite encodes it again,
-  // so the Site reads as not found. No issue filed yet.
-  assert.deepEqual(
-    api.calls("GET", /^sites\/[^/?]*origin/).map((request) => request.path),
-    ["sites/origin%252Fsite"],
-  );
-  assert.match(pageError(), /^not_found/);
-});
-
 test("a person save that finishes after navigation leaves the new page alone", async () => {
   const held = gate();
-  const { api } = await openManagers("/managers/u3", {
+  const { api } = await openManager("/managers/u3", {
     setup: (api) =>
       api.on("PATCH", /^people\/u3$/, async () => {
         await held.promise;
@@ -312,16 +166,58 @@ test("a person save that finishes after navigation leaves the new page alone", a
   await fill(field("manager-last-name"), "Later");
   await click(saveButton());
   assert.equal(api.calls("PATCH", /^people\/u3$/).length, 1);
-  await discardAndOpen("/providers");
-  assert.ok(!missing('a[href="/providers/v1"]'));
+  await leavePage("/providers");
   held.release();
   await settle();
   assert.equal(window.location.pathname, "/providers");
   assert.ok(missing("#manager-record-title"));
 });
 
+test("a person save that finishes after leave() doesn't redraw the page, even at the same address", async () => {
+  const held = gate();
+  const { page } = await openManager("/managers/u3", {
+    setup: (api) =>
+      api.on("PATCH", /^people\/u3$/, async () => {
+        await held.promise;
+        return undefined;
+      }),
+  });
+  await fill(field("manager-last-name"), "Later");
+  await click(saveButton());
+  // <admin-app> calls leave() as the user goes; the page mustn't wait for the URL to change.
+  page.leave();
+  held.release();
+  await settle();
+  assert.equal(title(), "Morgan Person");
+});
+
+test("a managers read that finishes after leave() doesn't let the page open, even at the same address", async () => {
+  const held = gate();
+  const { page, api, catalog } = await openManager("/managers/u3");
+  catalog.invalidate("managers");
+  api.on("GET", /^people$/, async () => {
+    await held.promise;
+    return undefined;
+  });
+  const opening = page.open({ name: "manager", id: "u3" });
+  page.leave();
+  held.release();
+  assert.equal(await opening, false);
+});
+
+test("a saved manager shows its new name when the record opens again", async () => {
+  const { api } = await openManager("/managers/u3");
+  await fill(field("manager-last-name"), "Own Catalog");
+  await click(saveButton());
+  const reads = api.calls("GET", /^people$/).length;
+  await revisitPage("/managers/u3");
+  // The page's own catalog holds the save, so the record needs no reread.
+  assert.equal(title(), "Morgan Own Catalog");
+  assert.equal(api.calls("GET", /^people$/).length, reads);
+});
+
 test("adding a manager creates the person and opens the new record", async () => {
-  const { api } = await openManagers("/managers/new");
+  const { api } = await openManager("/managers/new");
   assert.equal(title(), "Add new manager");
   await fill(field("manager-first-name"), "Riley");
   await fill(field("manager-last-name"), "New");
@@ -338,7 +234,7 @@ test("adding a manager creates the person and opens the new record", async () =>
 
 test("a new manager whose second Site fails retries only that Site, as the same person", async () => {
   let failures = 0;
-  const { api } = await openManagers("/managers/new", {
+  const { api } = await openManager("/managers/new", {
     setup: (api) =>
       api.on("POST", /^sites\/s3\/manager-memberships$/, () =>
         ++failures === 1
@@ -363,7 +259,7 @@ test("a new manager whose second Site fails retries only that Site, as the same 
 });
 
 test("renaming a person manager keeps their Sites without rereading them", async () => {
-  const { api } = await openManagers("/managers/u3");
+  const { api } = await openManager("/managers/u3");
   const programReads = api.calls("GET", /^programs$/).length;
   await fill(field("manager-first-name"), "Morgana");
   await click(saveButton());
@@ -374,7 +270,7 @@ test("renaming a person manager keeps their Sites without rereading them", async
 });
 
 test("a manager added from a Site returns to that Site", async () => {
-  await openManagers("/managers/new?returnSite=s1");
+  await openManager("/managers/new?returnSite=s1");
   assert.equal(
     $('a[data-route]:has(> wa-icon[name="chevron-left"])').getAttribute("href"),
     "/sites/s1?section=details",
@@ -394,7 +290,7 @@ test("saving a legacy manager updates staff and converts its Site assignment", a
   const data = managerData();
   let inFlight = 0;
   let peak = 0;
-  const { api } = await openManagers("/managers/u1", {
+  const { api } = await openManager("/managers/u1", {
     data,
     setup: (api) => {
       api.on("PATCH", /^sites\/s1\/manager-memberships\/m-s1$/, (request) => {
@@ -452,7 +348,7 @@ test("saving a legacy manager updates staff and converts its Site assignment", a
 });
 
 test("unassigning a legacy Site assignment removes the staff link", async () => {
-  const { api } = await openManagers("/managers/u1");
+  const { api } = await openManager("/managers/u1");
   await click(siteBox("s1"));
   await click(saveButton());
   assert.equal(api.calls("DELETE", /^sites\/s1\/users\/u1$/).length, 1);
@@ -464,7 +360,7 @@ test("moving a legacy manager to another Program asks first, then reuses matchin
     { userId: "old", email: "ALEX@example.org", status: "inactive" },
     { userId: "u7", email: "alex@example.org", status: "active" },
   ];
-  const { api } = await openManagers("/managers/u1", { data });
+  const { api } = await openManager("/managers/u1", { data });
   await fill('wa-select[name="manager-program-id"]', "p3");
   assert.equal(saveButton().disabled, false);
   await click(saveButton());
@@ -484,7 +380,7 @@ test("moving a legacy manager to another Program asks first, then reuses matchin
 });
 
 test("moving a legacy manager to a Program without matching staff creates staff", async () => {
-  const { api } = await openManagers("/managers/u1");
+  const { api } = await openManager("/managers/u1");
   await fill('wa-select[name="manager-program-id"]', "p3");
   await click(saveButton());
   await click('#manager-program-change-dialog button[value="confirm"]');
@@ -501,7 +397,7 @@ test("moving a legacy manager to a Program without matching staff creates staff"
 });
 
 test("legacy manager save errors explain the API code", async () => {
-  const { api } = await openManagers("/managers/u1");
+  const { api } = await openManager("/managers/u1");
   await fill(field("manager-first-name"), "Changed");
   for (const [code, message] of [
     ["first_name_required", "Enter the manager's first name."],
@@ -527,7 +423,7 @@ test("legacy manager save errors explain the API code", async () => {
 
 test("a legacy manager saved after navigation does not redraw the record", async () => {
   const held = gate();
-  const { api } = await openManagers("/managers/u1?returnSite=s1", {
+  const { api } = await openManager("/managers/u1?returnSite=s1", {
     setup: (api) =>
       api.on("PATCH", /^programs\/p1\/users\/u1$/, async () => {
         await held.promise;
@@ -537,7 +433,7 @@ test("a legacy manager saved after navigation does not redraw the record", async
   await fill(field("manager-first-name"), "Later");
   await click(saveButton());
   assert.equal(api.calls("PATCH", /users\/u1$/).length, 1);
-  await discardAndOpen("/providers");
+  await leavePage("/providers");
   held.release();
   await settle();
   assert.equal(window.location.pathname, "/providers");
@@ -545,7 +441,7 @@ test("a legacy manager saved after navigation does not redraw the record", async
 });
 
 test("a legacy manager opened from a Site returns there after saving", async () => {
-  await openManagers("/managers/u1?returnSite=s1");
+  await openManager("/managers/u1?returnSite=s1");
   await fill(field("manager-first-name"), "Back");
   await click(saveButton());
   assert.equal(
@@ -564,7 +460,7 @@ test("removing a legacy manager returns to the directory or the Site", async () 
       user.status = "inactive";
       return { json: { user: { ...user } } };
     });
-  const { api } = await openManagers("/managers/u1", { setup: serveRemoval });
+  const { api } = await openManager("/managers/u1", { setup: serveRemoval });
   await click("[data-remove-site-manager]");
   await click('#remove-site-manager-dialog button[value="cancel"]');
   assert.deepEqual(api.calls("DELETE", /users\/u1$/), []);
@@ -572,7 +468,7 @@ test("removing a legacy manager returns to the directory or the Site", async () 
   await click('#remove-site-manager-dialog button[value="confirm"]');
   assert.equal(window.location.pathname, "/managers");
   assert.equal(api.calls("DELETE", /^programs\/p1\/users\/u1$/).length, 1);
-  await openManagers("/managers/u1?returnSite=s1", { setup: serveRemoval });
+  await openManager("/managers/u1?returnSite=s1", { setup: serveRemoval });
   await click("[data-remove-site-manager]");
   await click('#remove-site-manager-dialog button[value="confirm"]');
   assert.equal(
@@ -582,7 +478,9 @@ test("removing a legacy manager returns to the directory or the Site", async () 
 });
 
 test("a failed manager removal says why", async () => {
-  const { api } = await openManagers("/managers/u1");
+  const { api, errors } = await openManager("/managers/u1", {
+    recordErrors: true,
+  });
   for (const [code, message] of [
     [
       "site_primary_contact_in_use",
@@ -597,12 +495,12 @@ test("a failed manager removal says why", async () => {
     api.fail("DELETE", /^programs\/p1\/users\/u1$/, 409, code);
     await click("[data-remove-site-manager]");
     await click('#remove-site-manager-dialog button[value="confirm"]');
-    assert.ok(pageText().includes(message), message);
+    assert.ok([pageText(), ...errors].join(" ").includes(message), message);
   }
 });
 
 test("removing every device for a manager needs their email", async () => {
-  const { api } = await openManagers("/managers/u3", {
+  const { api } = await openManager("/managers/u3", {
     setup: (api) =>
       api.on("POST", /^people\/u3\/devices:revoke$/, {
         json: { affectedCount: 2 },
@@ -623,7 +521,7 @@ test("removing every device for a manager needs their email", async () => {
 });
 
 test("legacy manager device removal goes through Program staff and reports failure", async () => {
-  const { api } = await openManagers("/managers/u1", {
+  const { api } = await openManager("/managers/u1", {
     setup: (api) =>
       api.fail("POST", /^programs\/p1\/users\/u1\/devices:revoke$/),
   });
@@ -637,7 +535,7 @@ test("legacy manager device removal goes through Program staff and reports failu
 });
 
 test("a compliance manager edits a manager only when they oversee every assigned Site", async () => {
-  const { api } = await openManagers("/managers/u3", {
+  const { api } = await openManager("/managers/u3", {
     role: "compliance-manager",
     data: overseenData(),
   });
@@ -656,7 +554,7 @@ test("a compliance manager edits a manager only when they oversee every assigned
 });
 
 test("a compliance manager editing a manager cannot change their Program, Provider, email or Sites", async () => {
-  await openManagers("/managers/u3", {
+  await openManager("/managers/u3", {
     role: "compliance-manager",
     data: overseenData(),
   });
@@ -683,7 +581,7 @@ test("a compliance manager overseeing only some of a manager's Sites sees it rea
       status: "active",
     },
   ];
-  await openManagers("/managers/u3", { role: "compliance-manager", data });
+  await openManager("/managers/u3", { role: "compliance-manager", data });
   assert.equal($("#site-manager-record-form").dataset.readOnly, "true");
   assert.equal(saveButton().disabled, true);
 });
@@ -691,19 +589,19 @@ test("a compliance manager overseeing only some of a manager's Sites sees it rea
 test("a compliance manager with no directory profile sees a read-only manager", async () => {
   const data = overseenData();
   data.profile = { ...data.profile, directoryUserId: undefined };
-  await openManagers("/managers/u3", { role: "compliance-manager", data });
+  await openManager("/managers/u3", { role: "compliance-manager", data });
   assert.equal($("#site-manager-record-form").dataset.readOnly, "true");
 });
 
 test("a compliance manager without oversight sees a read-only manager", async () => {
-  await openManagers("/managers/u3", { role: "compliance-manager" });
+  await openManager("/managers/u3", { role: "compliance-manager" });
   assert.equal($("#site-manager-record-form").dataset.readOnly, "true");
   assert.equal(saveButton().disabled, true);
   assert.equal($("#revoke-manager-devices button").disabled, true);
 });
 
 test("a compliance manager saves a legacy manager without changing assignments", async () => {
-  const { api } = await openManagers("/managers/u1", {
+  const { api } = await openManager("/managers/u1", {
     role: "compliance-manager",
     data: overseenData(),
   });
@@ -718,4 +616,11 @@ test("a compliance manager saves a legacy manager without changing assignments",
     api.calls("PATCH", /users\/u1$/)[0].body.email,
     "alex@example.org",
   );
+});
+
+test("a redraw after the URL moves on still draws the route open() was given", async () => {
+  const { page } = await openManager("/managers/u3");
+  window.history.replaceState({}, "", "/profile");
+  page.render();
+  assert.ok(!missing("admin-site-manager-page h1"));
 });

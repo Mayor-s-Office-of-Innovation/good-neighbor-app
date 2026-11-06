@@ -77,6 +77,9 @@ export function createAdminCatalog() {
   /** @type {Promise<void> | null} */
   let pending = null;
   let programManagersStale = false;
+  // Site managers, kept here so the managers directory and manager page share one read.
+  /** @type {any[]} */
+  let managers = [];
   let managersLoaded = false;
   let managersVersion = 0;
   // Bumped by clear(), so a read that finishes after sign-out can't store its lists.
@@ -175,6 +178,9 @@ export function createAdminCatalog() {
     get sites() {
       return sites;
     },
+    get managers() {
+      return managers;
+    },
     get managersLoaded() {
       return managersLoaded;
     },
@@ -213,6 +219,10 @@ export function createAdminCatalog() {
     /** Drop a manager directory read still running, keeping the loaded list. */
     supersedeManagersLoad() {
       managersVersion++;
+    },
+    /** @param {any[]} next */
+    setManagers(next) {
+      managers = keep(next);
     },
     /** @param {number} version the managersVersion the read started at */
     markManagersLoaded(version) {
@@ -334,6 +344,7 @@ export function createAdminCatalog() {
       oversightOptions = keepOptions({ departments: [], systemsOfCare: [] });
       programManagers = keep([]);
       sites = keep([]);
+      managers = keep([]);
       startUpLoaded = sitesLoaded = programManagersStale = false;
       managersLoaded = false;
       // Bumped, not reset, so a manager read from before clear() can't mark the list loaded.
