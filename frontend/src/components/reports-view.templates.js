@@ -67,11 +67,11 @@ export function reportsShell({ heading, body, tab }) {
       <div class="home-top-actions reports__top">
         <button
           class="btn-circle-close"
-          id="reports-home"
+          id="reports-back"
           type="button"
-          aria-label="${escapeAttr(t("common.close"))}"
+          aria-label="${escapeAttr(t("common.back"))}"
         >
-          <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+          <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
         </button>
       </div>
       <div class="screen screen--today-hero reports__head">

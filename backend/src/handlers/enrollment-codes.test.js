@@ -32,3 +32,14 @@ it("bounds retries when codes collide", async () => {
   await expect(generateEnrollmentCode()).rejects.toThrow("Unable to allocate");
   expect(randomInt).toHaveBeenCalledTimes(120);
 });
+it("reserves a code until its TTL tombstone is actually deleted", async () => {
+  for (const index of [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1])
+    randomInt.mockReturnValueOnce(index);
+  send
+    .mockResolvedValueOnce({})
+    .mockResolvedValueOnce({})
+    .mockResolvedValueOnce({ Item: { expiresAt: 1, status: "cancelled" } })
+    .mockResolvedValue({});
+  expect(await generateEnrollmentCode()).toBe("111111");
+  expect(send).toHaveBeenCalledTimes(6);
+});

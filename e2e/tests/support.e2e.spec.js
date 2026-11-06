@@ -8,6 +8,6 @@ test("Get help opens as a screen and Back returns home", async ({ page }) => {
   await expect(page).toHaveURL(/\/help$/);
   await expect(page.locator("support-view h1")).toHaveText(t("support.title"));
   await expect(page.locator("support-view dialog")).toHaveCount(0);
-  await page.locator("support-view [data-back]").click();
+  await page.locator("support-view [data-menu-back]").click();
   await expect(page.locator("today-view")).toBeVisible();
 });

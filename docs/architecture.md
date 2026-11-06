@@ -227,11 +227,19 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   applies to every classifier-backed action, including graffiti and bulky items. Images use
   the same orientation correction, 1568 px long-edge cap, flattening, and JPEG normalization as
   the main analysis path before base64 encoding. The classifier returns only approved labels,
-  which the app maps to SF311 service codes. An empty label result is stored explicitly as
-  `insufficient_classifier_information`; the app does not guess a fallback code. Description-only
-  tickets proceed to CreateSR without an attachment once a label maps successfully. This requires
+  which the app maps to SF311 service codes. An inconclusive image gets one separate
+  text attempt when a saved description exists. Empty or malformed results, unmapped labels,
+  unavailable evidence, and classifier errors use approved default service codes: graffiti
+  `1.5.1.1.18.0` and bulky items `1.1.4.7.7.0`. Recognized labels retain their specific
+  mappings. Classification alone does not block filing. Existing ticket checkpoints and
+  uncertain-creation guards prevent an additional default ticket on retry. Description-only
+  tickets proceed to CreateSR without an attachment. This requires
   the analyzer classifier endpoint to accept the `{text}` request variant alongside its existing
   `{image}` variant.
+  Classifier-backed filings checkpoint the complete `resolvedServiceCodes` list
+  before the first City creation. Retries reuse that selection rather than
+  reclassifying, keeping both filed and outstanding services in scope. Legacy
+  partial fanout without a complete selection requires reconciliation.
 - **Safety ordering:** emergency outcomes (911) always precede routine guidance; the analyzer
   returns metadata only — it never places calls or files tickets itself. 311 tickets are filed
   and closed by the app-action layer (not the analyzer): informational tickets filed under the
@@ -275,9 +283,9 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   waits at least until the active six-minute lease expires. This per-message
   delay leaves the queue's default processing visibility timeout unchanged.
   Definitive `missing_location` and `insufficient_classifier_information` failures
-  are saved with job status `failed` and acknowledged rather than retried. A separately queued new
-  job can try again after its input is corrected; existing action-selection guards
-  still apply when durable worker results exist. Uncertain City outcomes are never classified as
+  are saved with job status `failed` and acknowledged rather than retried. Historical
+  failures require operator review before any new job is queued; users are not asked
+  to replace photos or text and resubmit. Existing action-selection guards still apply when durable worker results exist. Uncertain City outcomes are never classified as
   permanent validation failures.
   Ticket creation checkpoints an intent before the City request and the returned
   SR number before attachments. An uncertain creation outcome is not blindly

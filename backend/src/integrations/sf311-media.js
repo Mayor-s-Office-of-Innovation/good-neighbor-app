@@ -5,6 +5,20 @@ import { getConfig } from "../config.js";
 import { jsonResponse } from "../http.js";
 import { logServerError } from "../lib/log-server-error.js";
 import { copyObject, presignGet } from "../s3.js";
+import { emitMetrics } from "../lib/metrics.js";
+
+/** No bearer, lease hash, object key or URL belongs in access diagnostics.
+ * @param {string} reason
+ * @param {string | undefined} requestId
+ */
+function observeMediaAccess(reason, requestId) {
+  emitMetrics({
+    marker: "Sf311MediaAccess",
+    dimensions: { Reason: reason },
+    props: { requestId },
+    metrics: [{ name: "Sf311MediaAccess", value: 1 }],
+  });
+}
 
 // Also protect direct-origin and local responses; the media CloudFront policy
 // enforces equivalent headers on edge-generated responses.
@@ -85,6 +99,7 @@ export async function get311Media(event) {
   try {
     return await resolve311Media(event);
   } catch {
+    observeMediaAccess("internal_error", event.requestContext?.requestId);
     // Do not log the original error: SDK/client messages may contain a URL.
     logServerError(
       "api GET /v1/311-media",
@@ -100,7 +115,9 @@ export async function get311Media(event) {
 /** @param {import("aws-lambda").APIGatewayProxyEventV2} event */
 async function resolve311Media(event) {
   const token = event.queryStringParameters?.token;
+  const requestId = event.requestContext?.requestId;
   if (!token || !/^[a-f0-9]{64}$/.test(token)) {
+    observeMediaAccess(token ? "invalid_token" : "missing_token", requestId);
     return mediaError(404, "not_found");
   }
   const config = getConfig();
@@ -113,6 +130,14 @@ async function resolve311Media(event) {
   );
   const remaining = Math.floor(Number(Item?.expiresAt) - Date.now() / 1000);
   if (!Item || !Number.isFinite(remaining) || remaining <= 0 || !Item.s3Key) {
+    observeMediaAccess(
+      !Item
+        ? "unknown_lease"
+        : !Number.isFinite(remaining) || !Item.s3Key
+          ? "invalid_lease"
+          : "expired_lease",
+      requestId,
+    );
     return mediaError(404, "not_found");
   }
   const location = await presignGet({
@@ -120,6 +145,7 @@ async function resolve311Media(event) {
     key: String(Item.s3Key),
     expiresIn: Math.min(300, remaining),
   });
+  observeMediaAccess("redirected", requestId);
   return {
     statusCode: 302,
     headers: {

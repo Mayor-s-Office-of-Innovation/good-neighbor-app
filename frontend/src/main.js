@@ -66,14 +66,13 @@ registerIconLibrary("default", {
 
 // Web Awesome base styles and component behavior utilities. Layout, spacing,
 // and typography use our own styles; importing utilities.css also ships those
-// unused utility classes and exceeds the main CSS budget.
+// unused utility classes and exceeds the main CSS budget. The app uses its
+// own .visually-hidden class, no placeholder/font-size utility classes, and
+// component size attributes style themselves.
 import "@awesome.me/webawesome/dist/styles/layers.css";
 import "@awesome.me/webawesome/dist/styles/native.css";
 import "@awesome.me/webawesome/dist/styles/utilities/fouce.css";
-import "@awesome.me/webawesome/dist/styles/utilities/visually-hidden.css";
 import "@awesome.me/webawesome/dist/styles/utilities/scroll-lock.css";
-import "@awesome.me/webawesome/dist/styles/utilities/placeholder.css";
-import "@awesome.me/webawesome/dist/styles/utilities/size.css";
 import "@awesome.me/webawesome/dist/styles/utilities/variants.css";
 // Match the official Figma kit: Default theme + Default palette. The theme
 // stylesheet imports the palette and uses only local/system font stacks.

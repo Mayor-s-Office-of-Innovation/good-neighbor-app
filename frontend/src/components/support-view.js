@@ -1,7 +1,7 @@
 import "./support-view.css";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { t, getLocale } from "../i18n/i18n.js";
-import { backOrNavigate } from "../router.js";
+import { backOrNavigate, forceNextRouteTransition } from "../router.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import { askSupport } from "../services/api.js";
 
@@ -23,16 +23,31 @@ export class SupportView extends HTMLElement {
           <button
             type="button"
             class="btn-circle-close support__back"
-            data-back
-            aria-label="${escapeAttr(t("common.close"))}"
+            data-menu-back
+            aria-label="${escapeAttr(t("common.back"))}"
           >
-            <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+            <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
           </button>
         </div>
         <h1 class="support__title" id="support-title" tabindex="-1">
           ${escapeHtml(t("support.title"))}
         </h1>
         <p>${escapeHtml(t("support.intro"))}</p>
+        <div class="support__starters" data-starters>
+          ${[1, 2, 3]
+            .map(
+              (n) =>
+                html`<button
+                  type="button"
+                  class="support__starter"
+                  data-starter
+                >
+                  <span>${escapeHtml(t(`support.starter${n}`))}</span>
+                  <wa-icon name="arrow-up-right" aria-hidden="true"></wa-icon>
+                </button>`,
+            )
+            .join("")}
+        </div>
         <div
           class="support__conversation"
           role="log"
@@ -41,36 +56,41 @@ export class SupportView extends HTMLElement {
           aria-relevant="additions"
         ></div>
         <p data-status role="status"></p>
-        <button
-          type="button"
-          class="btn-outline support__small"
-          data-clear
-          hidden
-        >
+        <button type="button" class="support__clear" data-clear hidden>
+          <wa-icon name="rotate-left" aria-hidden="true"></wa-icon>
           ${escapeHtml(t("support.clear"))}
         </button>
-        <form>
+        <form class="support__composer">
           <wa-textarea
             data-question
             label="${escapeAttr(t("support.question"))}"
-            rows="3"
+            placeholder="${escapeAttr(t("support.placeholder"))}"
+            rows="2"
             maxlength="1000"
             minlength="20"
-            resize="vertical"
+            resize="none"
             required
-            ><span slot="hint" data-question-hint aria-live="polite"
-              >${escapeHtml(t("support.questionHint"))}</span
-            ></wa-textarea
+          ></wa-textarea>
+          <button
+            class="support__send"
+            type="submit"
+            data-send
+            disabled
+            aria-label="${escapeAttr(t("support.send"))}"
           >
-          <button class="btn-link" type="button" data-clear-question hidden>
-            ${escapeHtml(t("support.clearContents"))}
-          </button>
-          <button class="btn-ink" type="submit" data-send disabled>
-            ${escapeHtml(t("support.send"))}
+            <wa-icon name="arrow-up" aria-hidden="true"></wa-icon>
           </button>
         </form>
-        <p class="support__privacy">${escapeHtml(t("support.privacy"))}</p>
-        <p class="support__privacy">${escapeHtml(t("support.accuracy"))}</p>
+        <p
+          class="support__question-hint"
+          data-question-hint
+          aria-live="polite"
+          hidden
+        ></p>
+        <p class="support__privacy">
+          ${escapeHtml(t("support.privacy"))}
+          ${escapeHtml(t("support.accuracy"))}
+        </p>
         <p class="support__handoff">
           ${escapeHtml(t("support.handoff"))}
           <a class="support__email" href="mailto:goodneighbor@sf.gov"
@@ -79,27 +99,35 @@ export class SupportView extends HTMLElement {
         </p>
       </div>
     </section>`;
-    this.querySelector("[data-back]").addEventListener("click", () =>
-      backOrNavigate("/today"),
-    );
+    this.querySelector("[data-menu-back]")?.addEventListener("click", () => {
+      forceNextRouteTransition("pop");
+      try {
+        sessionStorage.setItem("gnp-reopen-settings", "1");
+      } catch {
+        /* storage unavailable: land on a plain home screen */
+      }
+      backOrNavigate("/today");
+    });
     announceScreenHeading(this, "#support-title");
     const question =
       /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default} */ (
         this.querySelector("[data-question]")
       );
-    this.querySelector("[data-clear-question]").addEventListener(
-      "click",
-      () => {
-        question.value = "";
-        this._questionTouched = false;
-        this._syncQuestion();
-        question.focus();
-      },
-    );
     this.querySelector("form").addEventListener("submit", (event) => {
       event.preventDefault();
       void this._submit();
     });
+    // One tap on a starter fills the question and asks it — no typing, no
+    // length hurdle (every starter clears the 20-character floor).
+    this.querySelectorAll("[data-starter]").forEach((starter) =>
+      starter.addEventListener("click", () => {
+        question.value =
+          starter.querySelector("span")?.textContent?.trim() || "";
+        this._questionTouched = true;
+        this._syncQuestion();
+        void this._submit();
+      }),
+    );
     question.addEventListener("input", () => {
       this._questionTouched = true;
       this._syncQuestion();
@@ -135,22 +163,17 @@ export class SupportView extends HTMLElement {
     this._busy(false);
   }
 
-  _syncDraftClear() {
-    const button = /** @type {HTMLButtonElement | null} */ (
-      this.querySelector("[data-clear-question]")
-    );
-    const question =
-      /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default | null} */ (
-        this.querySelector("[data-question]")
-      );
-    if (button) button.hidden = !question?.value;
-  }
-
   _syncResponses() {
+    const hasTurns = Boolean(this.querySelector(".support__turn"));
     const clear = /** @type {HTMLButtonElement | null} */ (
       this.querySelector("[data-clear]")
     );
-    if (clear) clear.hidden = !this.querySelector(".support__turn");
+    if (clear) clear.hidden = !hasTurns;
+    // Starters step aside once a conversation exists; Clear brings them back.
+    const starters = /** @type {HTMLElement | null} */ (
+      this.querySelector("[data-starters]")
+    );
+    if (starters) starters.hidden = hasTurns || Boolean(this._pending);
   }
 
   /** @param {boolean} busy */
@@ -159,13 +182,16 @@ export class SupportView extends HTMLElement {
       this.querySelector("[data-send]")
     );
     if (send) send.disabled = busy;
+    this._syncResponses();
+    this.querySelectorAll("[data-starter]").forEach((starter) => {
+      /** @type {HTMLButtonElement} */ (starter).disabled = busy;
+    });
     this._syncQuestion(busy);
     const status = this.querySelector("[data-status]");
     if (status) status.textContent = busy ? t("support.waiting") : "";
   }
 
   _syncQuestion(busy = Boolean(this._pending)) {
-    this._syncDraftClear();
     const field =
       /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default | null} */ (
         this.querySelector("[data-question]")
@@ -173,13 +199,17 @@ export class SupportView extends HTMLElement {
     if (!field) return;
     const length = field.value.trim().length;
     const invalid = length < 20 || field.value.length > 1000;
-    const error = this._questionTouched && invalid;
-    const hint = this.querySelector("[data-question-hint]");
+    // An empty composer just disables Send quietly; red is only for a
+    // question someone started and left too short.
+    const error = this._questionTouched && invalid && length > 0;
+    const hint = /** @type {HTMLElement | null} */ (
+      this.querySelector("[data-question-hint]")
+    );
     if (hint) {
-      hint.textContent = t(
-        error ? "support.questionTooShort" : "support.questionHint",
-      );
-      hint.classList.toggle("support__question-error", error);
+      // The hint speaks only when something is wrong (copy stays minimal),
+      // as its own line below the composer.
+      hint.textContent = error ? t("support.questionHint") : "";
+      hint.hidden = !error;
     }
     field.setCustomValidity(error ? t("support.questionTooShort") : "");
     const send = /** @type {HTMLButtonElement | null} */ (
@@ -232,6 +262,7 @@ export class SupportView extends HTMLElement {
     if (!retryQuestion && textarea.value.trim() === question) {
       textarea.value = "";
       this._questionTouched = false;
+      this._syncQuestion();
     }
     this._syncQuestion();
     textarea.focus();
@@ -242,9 +273,14 @@ export class SupportView extends HTMLElement {
     const log = this.querySelector(".support__conversation");
     const turn = document.createElement("section");
     turn.className = "support__turn";
-    const heading = document.createElement("h3");
-    heading.textContent = question;
+    // The question is a chat bubble on the right; the answer is plain text.
+    const bubbleRow = document.createElement("p");
+    bubbleRow.className = "support__q";
+    const bubble = document.createElement("span");
+    bubble.textContent = question;
+    bubbleRow.append(bubble);
     const answer = document.createElement("p");
+    answer.className = "support__a";
     const valid =
       result?.outcome === "answered" &&
       typeof result.answer === "string" &&
@@ -269,12 +305,7 @@ export class SupportView extends HTMLElement {
     answer.textContent = valid
       ? result.answer
       : t(`support.${fallback === "off_topic" ? "offTopic" : fallback}`);
-    const response = document.createElement("details");
-    response.className = "support__response";
-    response.open = true;
-    const toggle = document.createElement("summary");
-    toggle.append(heading);
-    response.append(toggle, answer);
+    turn.append(bubbleRow, answer);
     if (!valid && ["limited", "unavailable"].includes(fallback)) {
       answer.classList.add("app-error", "app-error--panel");
       answer.setAttribute("role", "alert");
@@ -286,41 +317,65 @@ export class SupportView extends HTMLElement {
         if (this._pending) return;
         void this._submit(question, turn);
       });
-      response.append(retry);
+      turn.append(retry);
     }
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "btn-icon support__delete";
-    remove.dataset.deleteResponse = "";
-    remove.setAttribute("aria-label", t("support.delete"));
-    remove.title = t("support.delete");
-    const removeIcon = document.createElement("wa-icon");
-    removeIcon.setAttribute("name", "xmark");
-    removeIcon.setAttribute("aria-hidden", "true");
-    remove.append(removeIcon);
-    remove.addEventListener("click", () => {
-      turn.remove();
-      this._syncResponses();
-      /** @type {HTMLElement} */ (
-        this.querySelector("[data-question]")
-      ).focus();
-    });
-    turn.append(remove, response);
     if (valid) {
-      const label = document.createElement("p");
-      label.textContent = t("support.sources");
-      response.append(label);
+      // "N sources" toggles the source card; expanded by default so the
+      // receipts are in view when the answer lands.
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "support__sources-toggle";
+      toggle.setAttribute("aria-expanded", "true");
+      const book = document.createElement("wa-icon");
+      book.setAttribute("name", "book-open");
+      book.setAttribute("aria-hidden", "true");
+      const count = document.createElement("span");
+      count.textContent = t("support.sourcesCount", {
+        count: result.sources.length,
+      });
+      const chevron = document.createElement("wa-icon");
+      chevron.className = "support__sources-chevron";
+      chevron.setAttribute("name", "chevron-down");
+      chevron.setAttribute("aria-hidden", "true");
+      toggle.append(book, count, chevron);
+      const card = document.createElement("div");
+      card.className = "support__sources";
       for (const source of result.sources) {
         const details = document.createElement("details");
         details.className = "support__source";
-        details.lang = "en"; // Canonical FAQ is English; generated answers use app locale.
+        details.lang = "en"; // Canonical FAQ is English; answers use app locale.
         const summary = document.createElement("summary");
-        summary.textContent = `${source.id}: ${source.title}`;
+        const copyWrap = document.createElement("span");
+        copyWrap.className = "support__source-copy";
+        const title = document.createElement("strong");
+        title.textContent = source.title;
+        const doc = document.createElement("span");
+        doc.className = "support__source-doc";
+        doc.textContent = t(
+          source.id.startsWith("FAQ-")
+            ? "support.sourceFaq"
+            : source.id.startsWith("GUIDE-")
+              ? "support.sourceGuide"
+              : "support.sourceDoc",
+          { id: source.id },
+        );
+        copyWrap.append(title, doc);
+        const open = document.createElement("wa-icon");
+        open.className = "support__source-chevron";
+        open.setAttribute("name", "chevron-right");
+        open.setAttribute("aria-hidden", "true");
+        summary.append(copyWrap, open);
         const text = document.createElement("p");
         text.textContent = source.text;
         details.append(summary, text);
-        response.append(details);
+        card.append(details);
       }
+      toggle.addEventListener("click", () => {
+        const expanded = toggle.getAttribute("aria-expanded") === "true";
+        toggle.setAttribute("aria-expanded", String(!expanded));
+        card.hidden = expanded;
+      });
+      turn.append(toggle, card);
     }
     log.append(turn);
     while (log.children.length > 10) log.firstElementChild.remove();

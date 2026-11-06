@@ -3,19 +3,32 @@ import { t } from "../i18n/i18n.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 /** @param {string} title @param {boolean} [close] */
 export function adminHeader(title, close = false) {
-  return html`<header
-    class="site-admin-header ${close ? "site-admin-header--close" : ""}"
-  >
+  /* Top-level screens ("close" mode) follow the settings-menu spec: a
+     single Back (to the reopened menu) on a Reports-style action row, then
+     the centered title. Sub-screens keep the inline back-to-parent row. */
+  if (close) {
+    return html`<header class="site-admin-header site-admin-header--close">
+      <div class="site-admin-header__top">
+        <button
+          class="btn-circle-close"
+          data-menu-back
+          type="button"
+          aria-label="${escapeAttr(t("common.back"))}"
+        >
+          <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
+        </button>
+      </div>
+      <h1 tabindex="-1">${escapeHtml(title)}</h1>
+    </header>`;
+  }
+  return html`<header class="site-admin-header">
     <button
-      class="${close ? "btn-circle-close" : "btn-icon"}"
+      class="btn-icon"
       data-admin-back
       type="button"
-      aria-label="${escapeAttr(t(close ? "common.close" : "common.back"))}"
+      aria-label="${escapeAttr(t("common.back"))}"
     >
-      <wa-icon
-        name="${close ? "xmark" : "chevron-left"}"
-        aria-hidden="true"
-      ></wa-icon>
+      <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
     </button>
     <h1 tabindex="-1">${escapeHtml(title)}</h1>
     <span aria-hidden="true"></span>

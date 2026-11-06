@@ -95,10 +95,10 @@ describe("reportsShell", () => {
     expect(markup).toContain("<site-switcher></site-switcher>");
     expect(markup).toContain("data-screen-focus");
     expect(markup).toContain("<p>x</p>");
-    expect(markup).toContain('id="reports-home"');
-    expect(markup).toContain(escapeHtml(t("common.close")));
-    expect(markup).toContain('name="xmark"');
-    expect(markup).not.toContain('name="chevron-left"');
+    expect(markup).toContain('id="reports-back"');
+    expect(markup).toContain(escapeHtml(t("common.back")));
+    expect(markup).not.toContain('name="xmark"');
+    expect(markup).toContain('name="chevron-left"');
     expect(markup).not.toContain('id="home-settings"');
     expect(markup).not.toContain('id="language-dialog"');
     expect(markup).not.toContain('id="logout-dialog"');

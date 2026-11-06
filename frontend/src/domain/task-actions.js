@@ -159,6 +159,7 @@ export function appActionFailureMessage(
   if (result.status === "submitted") return null;
   /** Backend failure reason -> translation key. */
   const messageKeys = {
+    insufficient_classifier_information: "taskAction.failure.cannotFile",
     missing_location: "taskAction.failure.missingLocation",
     missing_service_code: "taskAction.failure.missingServiceCode",
     feature_disabled: "taskAction.failure.featureDisabled",

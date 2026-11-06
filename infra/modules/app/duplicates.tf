@@ -103,8 +103,19 @@ resource "aws_iam_role_policy" "duplicate_worker" {
   policy = jsonencode({ Version = "2012-10-17", Statement = [
     { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },
     { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:ConditionCheckItem"], Resource = aws_dynamodb_table.app.arn },
-    { Effect    = "Allow", Action = ["dynamodb:UpdateItem"], Resource = aws_dynamodb_table.app.arn,
-      Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = ["DUP_COMPARISON_PACER"] } }
+    { Effect = "Allow", Action = ["dynamodb:UpdateItem"], Resource = aws_dynamodb_table.app.arn,
+      Condition = {
+        "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = ["DUP_COMPARISON_PACER"] }
+        Null                        = { "dynamodb:LeadingKeys" = "false" }
+      }
+    },
+    # Link reconciliation updates the original task in the same transaction as the link.
+    { Effect = "Allow", Action = ["dynamodb:UpdateItem"], Resource = aws_dynamodb_table.app.arn,
+      Condition = {
+        "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["SITE#?*"] }
+        StringEquals              = { "dynamodb:EnclosingOperation" = "TransactWriteItems" }
+        Null                      = { "dynamodb:LeadingKeys" = "false" }
+      }
     },
     { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = aws_sqs_queue.duplicates_dlq.arn },
     # S3 requires bucket listing permission to return NoSuchKey for a cache miss.

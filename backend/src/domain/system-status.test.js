@@ -190,3 +190,33 @@ it("counts legacy concerns without IDs and keeps matching IDs on different photo
     rows[1].issueId,
   );
 });
+
+it("does not project deleted care work and guards delayed stream inserts against the source record", async () => {
+  const care = {
+    pk: "SITE#one",
+    sk: "CARE_WORK#w",
+    workId: "w",
+    createdAt: "2026-10-24T18:00:00Z",
+    kind: "power_washed",
+  };
+  for (const status of ["deleting", "deleted"])
+    expect(statusRecords({ ...care, status })).toEqual([]);
+  send.mockResolvedValue({});
+  await projectStatus(care);
+  const ops = send.mock.calls[0][0].input.TransactItems;
+  expect(ops[0].ConditionCheck.Key).toEqual({ pk: care.pk, sk: care.sk });
+  expect(ops[0].ConditionCheck.ConditionExpression).toContain(
+    "attribute_not_exists(#status)",
+  );
+  expect(ops[1].Put.Item).toMatchObject({
+    pk: "STATUS#one",
+    sk: `${care.createdAt}#actions#w`,
+  });
+  send.mockRejectedValueOnce(
+    Object.assign(new Error("deleted"), {
+      name: "TransactionCanceledException",
+      CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+    }),
+  );
+  await expect(projectStatus(care)).resolves.toBeUndefined();
+});

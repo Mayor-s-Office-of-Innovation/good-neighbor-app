@@ -121,11 +121,14 @@ test("settings and site menus fit long labels and resize while open", async ({
         .poll(() =>
           page.locator(selector).evaluate((el) => {
             const r = el.getBoundingClientRect();
+            // Settings is a full-width bottom sheet; site selection is
+            // still an inset menu anchored to its trigger.
+            const gutter = el.classList.contains("home-settings-menu") ? 0 : 15;
             return (
-              r.left >= 15 &&
-              r.right <= window.innerWidth - 15 &&
-              r.top >= 15 &&
-              r.bottom <= window.innerHeight - 15
+              r.left >= gutter &&
+              r.right <= window.innerWidth - gutter &&
+              r.top >= gutter &&
+              r.bottom <= window.innerHeight - gutter
             );
           }),
         )

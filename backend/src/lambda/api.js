@@ -23,6 +23,7 @@ import { getDuplicateResult } from "../handlers/duplicate-results.js";
 import {
   listCareWork,
   createCareWork,
+  deleteCareWork,
   getCareWork,
   presignCarePhoto,
   getCarePhoto,
@@ -40,6 +41,7 @@ import {
   listChecks,
   getCaptureGuidance,
   getCheck,
+  getCheckEvidenceBatch,
 } from "../handlers/checks.js";
 import {
   presignUpload,
@@ -274,10 +276,12 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/media": presignMedia,
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/duplicates":
     getDuplicateResult,
+  "POST /v1/checks:evidence": getCheckEvidenceBatch,
   "GET /v1/checks/{checkId}": getCheck,
   "GET /v1/care-work": listCareWork,
   "POST /v1/care-work": createCareWork,
   "GET /v1/care-work/{workId}": getCareWork,
+  "DELETE /v1/care-work/{workId}": deleteCareWork,
   "POST /v1/care-work/{workId}/photos:presign": presignCarePhoto,
   "GET /v1/care-work/{workId}/photos/{photoId}/media": getCarePhoto,
   "GET /v1/complaints": listComplaints,

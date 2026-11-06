@@ -106,15 +106,10 @@ test.describe("public complaints", () => {
     const empty = page.locator(".complaints__empty");
     await expect(empty).toHaveText(t("complaints.empty"));
     await expect(empty).toHaveCSS("text-align", "center");
-    const logBox = await logButton.boundingBox();
-    const emptyBox = await empty.boundingBox();
-    expect(logBox).not.toBeNull();
-    expect(emptyBox).not.toBeNull();
-    expect(
-      Math.round(
-        (emptyBox?.y ?? 0) - ((logBox?.y ?? 0) + (logBox?.height ?? 0)),
-      ),
-    ).toBe(18);
+    const headingBox = await page.locator(".care-past-head").boundingBox();
+    const listBox = await page.locator(".complaints__list").boundingBox();
+    if (!headingBox || !listBox) throw new Error("Missing list geometry");
+    expect(Math.round(listBox.y - headingBox.y - headingBox.height)).toBe(16);
 
     await logButton.click();
     await expect(page).toHaveURL(/\/complaints\/new$/);

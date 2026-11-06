@@ -66,13 +66,142 @@ const JPEG_QUALITY = 80;
 const FLATTEN_BACKGROUND = { r: 255, g: 255, b: 255 };
 const MAX_INPUT_PIXELS = 40_000_000;
 const MAX_INPUT_EDGE = 12_000;
-/** @type {Record<string, string>} */
+/**
+ * Formats sharp may decode here. HEIF is deliberately absent: the prebuilt
+ * libvips bundled with sharp has an AV1 decoder (aom) but no HEVC decoder, so
+ * it cannot decode a real HEIC photo, and any "heif" it can decode is AVIF.
+ * The codec sharp reports comes from the container's brand labels, which the
+ * uploader controls, so it can't be used to tell the two apart.
+ * @type {Record<string, string>}
+ */
 const TYPE_BY_FORMAT = {
   jpeg: "image/jpeg",
   png: "image/png",
   webp: "image/webp",
-  heif: "image/heic",
 };
+/** ISO-BMFF brands that mean HEVC-coded HEIC/HEIF (phones use these). */
+const HEIC_BRANDS = new Set([
+  "heic",
+  "heix",
+  "heim",
+  "heis",
+  "hevc",
+  "hevx",
+  "hevm",
+  "hevs",
+]);
+/**
+ * Generic HEIF brands. AVIF files use these too, so they only count as HEIC
+ * when the compatible-brand list also names a HEIC brand and no AVIF brand.
+ */
+const GENERIC_HEIF_BRANDS = new Set(["mif1", "msf1"]);
+const AVIF_BRANDS = new Set(["avif", "avis"]);
+/** Upper bound on the `ftyp` box we read, so a bogus size can't make us scan far. */
+const MAX_FTYP_BYTES = 1024;
+
+/**
+ * Read the ISO-BMFF `ftyp` box: the major brand and the compatible brands.
+ * @param {Buffer} bytes
+ * @returns {{ major: string, compatible: string[] } | undefined}
+ */
+function ftypBrands(bytes) {
+  if (bytes.length < 12 || bytes.subarray(4, 8).toString("latin1") !== "ftyp")
+    return undefined;
+  const major = bytes.subarray(8, 12).toString("latin1");
+  const size = bytes.readUInt32BE(0);
+  const end = Math.min(size, bytes.length, MAX_FTYP_BYTES);
+  /** @type {string[]} */
+  const compatible = [];
+  // Box layout: size(4) "ftyp"(4) major(4) minor version(4) compatible(4 each).
+  for (let offset = 16; offset + 4 <= end; offset += 4)
+    compatible.push(bytes.subarray(offset, offset + 4).toString("latin1"));
+  return { major, compatible };
+}
+
+/**
+ * Identify an allowed image type from its leading bytes, before any decoder
+ * sees them. sharp picks its decoder from the bytes, not the declared type, so
+ * without this an SVG (or any other libvips format) labeled `image/jpeg` would
+ * be parsed by that format's library. HEIC is recognized (so rejections are
+ * labeled correctly) but downscaleImage never passes it to sharp; see
+ * TYPE_BY_FORMAT.
+ * @param {Buffer} bytes
+ * @returns {string | undefined} the matching content type, if any
+ */
+export function sniffImageType(bytes) {
+  const ascii = (/** @type {number} */ start, /** @type {number} */ end) =>
+    bytes.subarray(start, end).toString("latin1");
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff
+  )
+    return "image/jpeg";
+  if (ascii(0, 8) === "\x89PNG\r\n\x1a\n") return "image/png";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "image/webp";
+  const brands = ftypBrands(bytes);
+  if (brands) {
+    const all = [brands.major, ...brands.compatible];
+    if (all.some((brand) => AVIF_BRANDS.has(brand))) return undefined;
+    if (HEIC_BRANDS.has(brands.major)) return "image/heic";
+    if (
+      GENERIC_HEIF_BRANDS.has(brands.major) &&
+      brands.compatible.some((brand) => HEIC_BRANDS.has(brand))
+    )
+      return "image/heic";
+  }
+  return undefined;
+}
+
+/**
+ * Whether a detected type agrees with the uploader's declared type.
+ * @param {string | undefined} detectedType
+ * @param {string} contentType
+ * @returns {boolean}
+ */
+function typeMatches(detectedType, contentType) {
+  return (
+    detectedType === contentType ||
+    (detectedType === "image/heic" && contentType === "image/heif")
+  );
+}
+
+/**
+ * The ISO-BMFF major brand (bytes 8–12) when the file has an `ftyp` box, so a
+ * rejected HEIC-family upload shows which brand it carried. Only printable
+ * ASCII is reported; anything else is "invalid".
+ * @param {Buffer} bytes
+ * @returns {string | undefined}
+ */
+function containerBrand(bytes) {
+  if (bytes.subarray(4, 8).toString("latin1") !== "ftyp") return undefined;
+  const brand = bytes.subarray(8, 12).toString("latin1");
+  return /^[\x20-\x7e]{4}$/.test(brand) ? brand : "invalid";
+}
+
+/**
+ * Log one structured `ImageRejected` entry per rejected image, from every
+ * caller (care work, complaints, perimeter checks, thumbnails, duplicates,
+ * 311). CloudWatch metric filters count the marker; see
+ * docs/runbooks/media-safeguards.md. Only format facts are logged — never
+ * image bytes or anything that identifies the uploader.
+ * @param {{ error: DownscaleError, stage: "signature" | "decode", bytes: Buffer, contentType: string, sniffedType: string | undefined }} input
+ */
+function logRejection({ error, stage, bytes, contentType, sniffedType }) {
+  console.warn(
+    JSON.stringify({
+      marker: "ImageRejected",
+      reason: error.code,
+      stage,
+      declaredType: String(contentType).slice(0, 100),
+      signature: sniffedType ?? "unrecognized",
+      brand: containerBrand(bytes),
+      bytes: bytes.length,
+      detail: error.message.slice(0, 200),
+    }),
+  );
+}
 
 /**
  * Fit an image within the analyzer's max working size before encoding.
@@ -88,7 +217,24 @@ export async function downscaleImage(bytes, contentType) {
   // a permanent "undecodable image" rejection of the upload.
   const sharp = await loadSharp();
   let result;
+  /** @type {"signature" | "decode"} */
+  let stage = "signature";
+  const sniffedType = sniffImageType(bytes);
   try {
+    // Check the file signature before sharp parses anything (see sniffImageType).
+    if (!sniffedType || !typeMatches(sniffedType, contentType)) {
+      throw new DownscaleError(
+        `Undecodable image input (${contentType}): file signature ${sniffedType ?? "unrecognized"}`,
+        sniffedType ? "image_type_mismatch" : "undecodable_input",
+      );
+    }
+    if (sniffedType === "image/heic") {
+      throw new DownscaleError(
+        `Undecodable image input (${contentType}): HEIC/HEIF is not decoded by the bundled sharp`,
+        "undecodable_input",
+      );
+    }
+    stage = "decode";
     const input = sharp(bytes, {
       failOn: "error",
       limitInputPixels: MAX_INPUT_PIXELS,
@@ -97,10 +243,7 @@ export async function downscaleImage(bytes, contentType) {
     });
     const metadata = await input.metadata();
     const detectedType = TYPE_BY_FORMAT[metadata.format];
-    const declaredMatches =
-      detectedType === contentType ||
-      (detectedType === "image/heic" && contentType === "image/heif");
-    if (!detectedType || !declaredMatches) {
+    if (!detectedType || !typeMatches(detectedType, contentType)) {
       throw new DownscaleError(
         `Undecodable image input (${contentType}): declared type ${contentType} does not match decoded type ${detectedType ?? "unknown"}`,
         detectedType ? "image_type_mismatch" : "undecodable_input",
@@ -127,10 +270,14 @@ export async function downscaleImage(bytes, contentType) {
       .jpeg({ quality: JPEG_QUALITY })
       .toBuffer({ resolveWithObject: true });
   } catch (err) {
-    if (err instanceof DownscaleError) throw err;
-    throw new DownscaleError(
-      `Undecodable image input (${contentType}): ${err instanceof Error ? err.message : String(err)}`,
-    );
+    const error =
+      err instanceof DownscaleError
+        ? err
+        : new DownscaleError(
+            `Undecodable image input (${contentType}): ${err instanceof Error ? err.message : String(err)}`,
+          );
+    logRejection({ error, stage, bytes, contentType, sniffedType });
+    throw error;
   }
   return {
     bytes: result.data,

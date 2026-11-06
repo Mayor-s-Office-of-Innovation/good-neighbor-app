@@ -128,7 +128,7 @@ test.describe("site manager reports", () => {
 
     // Closing Reports returns home even after drilling into a day and back.
     await expect(page.locator("#home-settings")).toHaveCount(0);
-    await page.locator("#reports-home").click();
+    await page.locator("#reports-back").click();
     await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
     await expect(page.locator("#start-check")).toBeVisible();
   });

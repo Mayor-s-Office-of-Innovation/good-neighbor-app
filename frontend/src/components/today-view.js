@@ -26,6 +26,7 @@ import {
   completeCardAction,
   isCompletingAnalysisCard,
   slideCompletedCard,
+  holdCompletionCard,
 } from "./analysis-card-completion.js";
 import { taskCardTitle } from "../domain/task-title.js";
 import { groupHistory } from "../domain/task-history.js";
@@ -54,7 +55,6 @@ import {
   showSiteCatalogErrorToast,
   showSiteSwitchBlockedToast,
   showSiteSwitchErrorToast,
-  showLanguageErrorToast,
 } from "../state/toasts.js";
 import {
   onDeletionsChange,
@@ -66,7 +66,7 @@ import {
   prepareCardDeletion,
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
-import { navigate } from "../router.js";
+import { navigate, forceNextRouteTransition } from "../router.js";
 import { awaitOverlayUnwind, openOverlayDialog } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
@@ -172,7 +172,7 @@ import "./site-switcher.js";
 import "./location-dialog.js";
 import { fetchProviderSites } from "../services/provider-sites.js";
 import { switchToBoundSite } from "../services/site-switch.js";
-import { getLocale, setLocale, t } from "../i18n/i18n.js";
+import { t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import {
   finishQuestionAnswerFocus,
@@ -303,6 +303,7 @@ function sessionRefreshKey(session) {
 class TodayView extends HTMLElement {
   _wiredCards = new WeakSet();
   _wiredTabs = new WeakSet();
+  _savedActionReceipts = new Set();
   constructor() {
     super();
     this._cardDeletedHandler = (event) => {
@@ -342,11 +343,16 @@ class TodayView extends HTMLElement {
     this._hydrationGeneration = 0;
     this._answeringConditionIds = new Set();
     this._settingsMenuOpen = false;
-    this._settingsDocumentClick = null;
-    this._attributionsDialog = null;
-    this._attributionsDialogOpen = false;
-    this._languageDialog = null;
-    this._languageDialogOpen = false;
+    // A destination's Back button returns to the menu, not a bare home
+    // screen: it leaves this one-shot flag before navigating back.
+    try {
+      if (sessionStorage.getItem("gnp-reopen-settings")) {
+        sessionStorage.removeItem("gnp-reopen-settings");
+        this._settingsMenuOpen = true;
+      }
+    } catch {
+      /* storage unavailable: open as a plain home screen */
+    }
     /** @type {any} the persistent <site-switcher>, created on first render */
     this._siteSwitcher = null;
     this._providerSites = [];
@@ -445,8 +451,6 @@ class TodayView extends HTMLElement {
     window.removeEventListener("online", this._onlineReload);
     this._onlineReload = null;
     this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
-    document.removeEventListener("click", this._settingsDocumentClick);
-    this._settingsDocumentClick = null;
     document.removeEventListener("click", this._actionMenuDocumentClick);
     this._actionMenuDocumentClick = null;
     this._locationUnsub?.();
@@ -571,18 +575,6 @@ class TodayView extends HTMLElement {
         void this._refreshHomeLists(0);
       };
       window.addEventListener("online", this._onlineReload);
-    }
-    if (!this._settingsDocumentClick) {
-      this._settingsDocumentClick = (event) => {
-        if (!this._settingsMenuOpen) return;
-        const path = event.composedPath?.() || [];
-        const withinSettings = path.some(
-          (node) =>
-            node instanceof Element && node.matches(".home-settings-wrap"),
-        );
-        if (!withinSettings) this._closeSettingsMenu();
-      };
-      document.addEventListener("click", this._settingsDocumentClick);
     }
 
     // Refreshing a completed card is not a new screen arrival. Re-focusing
@@ -1554,13 +1546,6 @@ class TodayView extends HTMLElement {
     this.innerHTML = markup;
     restoreFinalizationNotices(model.pendingSession, this);
 
-    // Hand the bound site id to the feedback sheet so submissions carry it as
-    // optional context (the server treats it as advisory, pattern-checked).
-    const feedbackDialog = /** @type {any} */ (
-      this.querySelector("feedback-dialog")
-    );
-    if (feedbackDialog) feedbackDialog.siteId = this._siteId;
-
     const grouping = this.querySelector("#history-grouping");
     if (grouping) {
       void import("./history-grouping.js");
@@ -1593,88 +1578,83 @@ class TodayView extends HTMLElement {
         this._siteSwitcher?.setOpen(true);
       },
     );
+    const settings = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("dialog.home-settings-menu")
+    );
+    this.querySelector("#settings-close")?.addEventListener("click", () =>
+      this._closeSettingsMenu(),
+    );
+    settings?.addEventListener("close", () => {
+      if (this.isConnected) this._closeSettingsMenu();
+    });
+    settings?.addEventListener("click", (event) => {
+      if (event.target !== settings) return;
+      const box = settings.getBoundingClientRect();
+      if (
+        event.clientX < box.left ||
+        event.clientX > box.right ||
+        event.clientY < box.top ||
+        event.clientY > box.bottom
+      )
+        this._closeSettingsMenu();
+    });
+    if (settings && !settings.open) settings.showModal();
     this.querySelector("#settings-logout")?.addEventListener("click", () => {
       // Count first: logging out deletes work that hasn't uploaded yet.
       void countUnsentWork()
         .catch(() => ({}))
         .then((unsent) => {
           this._logoutUnsent = unsent;
-          this._settingsMenuOpen = false;
+          this._removeSettingsMenu();
           this._logoutDialogOpen = true;
           this._renderHome(this._homeModel);
         });
     });
     this.querySelector("#settings-help")?.addEventListener("click", () => {
       this._settingsMenuOpen = false;
+      forceNextRouteTransition("push");
       navigate("/help");
     });
     this.querySelector("#settings-feedback")?.addEventListener("click", () => {
-      this._removeSettingsMenu();
-      feedbackDialog?.open();
+      this._settingsMenuOpen = false;
+      forceNextRouteTransition("push");
+      navigate("/feedback");
     });
+    // Language and About & attributions are pushed screens now, not dialogs.
     this.querySelector("#settings-attributions")?.addEventListener(
       "click",
       () => {
-        this._removeSettingsMenu();
-        this._attributionsDialogOpen = true;
-        openOverlayDialog(
-          /** @type {HTMLDialogElement} */ (this._attributionsDialog),
-          "attributions",
-        );
+        this._settingsMenuOpen = false;
+        forceNextRouteTransition("push");
+        navigate("/attributions");
       },
     );
     this.querySelector("#settings-language")?.addEventListener("click", () => {
-      this._removeSettingsMenu();
-      this._languageDialogOpen = true;
-      openOverlayDialog(
-        /** @type {HTMLDialogElement} */ (this._languageDialog),
-        "language",
-      );
+      this._settingsMenuOpen = false;
+      forceNextRouteTransition("push");
+      navigate("/language");
     });
-    this.querySelector("#settings-access")?.addEventListener("click", () =>
-      navigate("/manage-access"),
-    );
-    this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
-      navigate("/site-admin"),
-    );
-    this.querySelector("#settings-reports")?.addEventListener("click", () =>
-      navigate("/reports"),
-    );
-    this._languageDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector(":scope > .home > #language-dialog")
-    );
-    this._languageDialog?.addEventListener("click", (event) => {
-      if (event.target === this._languageDialog) this._languageDialog.close();
+    // Destinations slide in from the right over the open menu sheet.
+    this.querySelector("#settings-access")?.addEventListener("click", () => {
+      forceNextRouteTransition("push");
+      navigate("/manage-access");
     });
-    this._languageDialog?.addEventListener("close", () => {
-      this._languageDialogOpen = false;
-      const chosen = this._languageDialog?.returnValue || "";
-      if (this._languageDialog) this._languageDialog.returnValue = "";
-      if (chosen && chosen !== getLocale()) {
-        // app-root re-renders the view on "localechange". A failed catalog
-        // load (offline first use of a language) changes nothing; say so.
-        void setLocale(chosen).then((ok) => {
-          if (!ok) showLanguageErrorToast();
-        });
-        return;
+    this.querySelector("#settings-site-admin")?.addEventListener(
+      "click",
+      () => {
+        forceNextRouteTransition("push");
+        navigate("/site-admin");
+      },
+    );
+    this.querySelector("#settings-reports")?.addEventListener("click", () => {
+      // System Back bypasses the Reports header's return handler.
+      try {
+        sessionStorage.setItem("gnp-reopen-settings", "1");
+      } catch {
+        /* storage unavailable: return to a plain home screen */
       }
-      /** @type {HTMLElement | null} */ (
-        this.querySelector("#home-settings")
-      )?.focus();
-    });
-    this._attributionsDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector(":scope > .home > #attributions-dialog")
-    );
-    this._attributionsDialog?.addEventListener("click", (event) => {
-      if (event.target === this._attributionsDialog) {
-        this._attributionsDialog.close();
-      }
-    });
-    this._attributionsDialog?.addEventListener("close", () => {
-      this._attributionsDialogOpen = false;
-      /** @type {HTMLElement | null} */ (
-        this.querySelector("#home-settings")
-      )?.focus();
+      forceNextRouteTransition("push");
+      navigate("/reports");
     });
     this._logoutDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #logout-dialog")
@@ -1684,10 +1664,11 @@ class TodayView extends HTMLElement {
     });
     this._logoutDialog?.addEventListener("close", () => {
       this._logoutDialogOpen = false;
+      if (!this.isConnected || this._logoutPending) return;
+      this._settingsMenuOpen = true;
+      this._renderHome(this._homeModel);
     });
     this._restoreLogoutDialog();
-    this._restoreAttributionsDialog();
-    this._restoreLanguageDialog();
     this._taskSheets().mount();
     this._mountLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
@@ -1852,7 +1833,9 @@ class TodayView extends HTMLElement {
       .filter((task) => needsTaskEvidenceHydration(task));
     if (!visibleTasks.length) return;
 
-    const hydratedTasks = await hydrateTaskEvidence(uniqueTasks(visibleTasks));
+    const hydratedTasks = await hydrateTaskEvidence(uniqueTasks(visibleTasks), {
+      batch: true,
+    });
     if (
       hydrationGeneration !== this._hydrationGeneration ||
       !this.isConnected ||
@@ -2130,7 +2113,14 @@ class TodayView extends HTMLElement {
   _closeSettingsMenu() {
     if (!this._settingsMenuOpen) return;
     this._settingsMenuOpen = false;
+    const dialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("dialog.home-settings-menu")
+    );
+    if (dialog?.open) dialog.close();
     if (this._homeModel) this._renderHome(this._homeModel);
+    /** @type {HTMLElement | null} */ (
+      this.querySelector("#home-settings")
+    )?.focus({ preventScroll: true });
   }
 
   _restoreLogoutDialog() {
@@ -2138,22 +2128,6 @@ class TodayView extends HTMLElement {
     openOverlayDialog(
       /** @type {HTMLDialogElement} */ (this._logoutDialog),
       "logout",
-    );
-  }
-
-  _restoreAttributionsDialog() {
-    if (!this._attributionsDialogOpen || this._attributionsDialog?.open) return;
-    openOverlayDialog(
-      /** @type {HTMLDialogElement} */ (this._attributionsDialog),
-      "attributions",
-    );
-  }
-
-  _restoreLanguageDialog() {
-    if (!this._languageDialogOpen || this._languageDialog?.open) return;
-    openOverlayDialog(
-      /** @type {HTMLDialogElement} */ (this._languageDialog),
-      "language",
     );
   }
 
@@ -2713,6 +2687,7 @@ class TodayView extends HTMLElement {
   }
 
   _activateHomeTab(tabId) {
+    for (const dismiss of this._savedActionReceipts) dismiss();
     this._homeFilter = normalizedHomeTab(tabId);
     const url = new URL(window.location.href);
     url.searchParams.set("filter", this._homeFilter);
@@ -2925,8 +2900,21 @@ class TodayView extends HTMLElement {
       this._openDeleteProblem(problem);
     } else if (action === "edit") {
       if (task && btn instanceof HTMLElement) {
-        void import("./task-details-dialog.js").then(({ openTaskDetails }) =>
-          openTaskDetails(task, problem, btn, () => this.connectedCallback()),
+        void import("./task-details-dialog.js").then(
+          ({ openTaskDetails, showSavedActionCard }) =>
+            openTaskDetails(
+              task,
+              problem,
+              btn,
+              (result, options) =>
+                this._onTaskDetailsSaved(
+                  card,
+                  result,
+                  options,
+                  showSavedActionCard,
+                ),
+              () => holdCompletionCard(this, card),
+            ),
         );
       } else {
         this._openEditProblem(problem);
@@ -3008,6 +2996,52 @@ class TodayView extends HTMLElement {
       /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
       "analysis-delete",
     );
+  }
+
+  async _onTaskDetailsSaved(card, result, options, showSavedActionCard) {
+    if (!options?.customAction || !result?.task || !this.isConnected) {
+      if (this.isConnected) await this.connectedCallback();
+      return false;
+    }
+    const siteId = this._siteId;
+    const release = holdCompletionCard(this, card);
+    const controller = new AbortController();
+    const dismiss = () => {
+      release();
+      controller.abort();
+    };
+    this._savedActionReceipts.add(dismiss);
+    let receipt;
+    try {
+      this._applyTaskResult(card.getAttribute("data-task-id"), result.task);
+      receipt = await showSavedActionCard(card, result.task, {
+        signal: controller.signal,
+      });
+    } finally {
+      this._savedActionReceipts.delete(dismiss);
+      release();
+    }
+    if (!this.isConnected || this._siteId !== siteId) return Boolean(receipt);
+    if (controller.signal.aborted) {
+      // Navigation cancels only the receipt. A duplicate edit can also update
+      // rows absent from the returned root, so reconcile every worklist even
+      // when the newly selected tab's cached statuses are still fresh.
+      void this.connectedCallback();
+      return Boolean(receipt);
+    }
+    const restoreFocus =
+      card.contains(document.activeElement) ||
+      document.activeElement === document.body;
+    if (receipt?.viewRequested) {
+      this._activateHomeTab(receipt.destination);
+      this._focusIssueCard(result.task.taskId);
+    } else {
+      if (restoreFocus) this._focusAfterRender = "home-tab-current";
+      if (this._homeModel) this._renderHome(this._homeModel);
+    }
+    // The response is authoritative; refresh all lists behind the receipt.
+    void this.connectedCallback();
+    return Boolean(receipt);
   }
 
   _openEditProblem(problem) {

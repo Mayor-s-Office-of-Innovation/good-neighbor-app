@@ -355,6 +355,27 @@ const SHEET_ROUTES = new Set([
   "/reports",
   "/help",
 ]);
+/* Sheets that present as a fixed bottom-sheet frame (the frame is painted by
+   #view and stays stationary; the screen inside carries
+   view-transition-name: sheet-content). Navigation WITHIN one of these
+   returns "sheet-push"/"sheet-pop" so base.css animates only the content
+   layer. The other sheets keep whole-root push/pop. */
+/** The sheet root a route belongs to, or "" when it is not inside one.
+ * @param {string} path */
+function framedSheetOf(path) {
+  return /^\/(care-work|complaints)(?:\/|$)/.exec(path)?.[1] ?? "";
+}
+
+/* One-shot override for the next swap's transition, for UI that knows more
+   than the route shapes do: the settings menu pushes its destinations in
+   from the right, and their Back buttons pop back out, regardless of the
+   sheet rise/dismiss the routes alone would produce. Consumed by the next
+   routeTransitionDirection call. */
+let forcedDirection = "";
+/** @param {"push" | "pop" | "fade" | "rise" | "dismiss"} direction */
+export function forceNextRouteTransition(direction) {
+  forcedDirection = direction;
+}
 
 /** @param {string} route */
 function routeLevel(route) {
@@ -368,9 +389,14 @@ function routeLevel(route) {
  * horizontally; sibling routes and capture roots cross-fade.
  * @param {string | null} from the route on screen, null on first paint
  * @param {string} to
- * @returns {"push" | "pop" | "fade" | "rise" | "dismiss"}
+ * @returns {"push" | "pop" | "fade" | "rise" | "dismiss" | "sheet-push" | "sheet-pop"}
  */
 export function routeTransitionDirection(from, to) {
+  if (forcedDirection) {
+    const direction = forcedDirection;
+    forcedDirection = "";
+    return direction;
+  }
   if (from == null) return "fade";
   const source = from.split("?")[0].replace(/\/+$/, "");
   const target = to.split("?")[0].replace(/\/+$/, "");
@@ -380,6 +406,9 @@ export function routeTransitionDirection(from, to) {
   if (SHEET_ROUTES.has(source) && !target.startsWith(`${source}/`))
     return "dismiss";
   const delta = routeLevel(to) - routeLevel(from);
+  const framedSheet = framedSheetOf(source);
+  if (framedSheet && framedSheet === framedSheetOf(target))
+    return delta > 0 ? "sheet-push" : delta < 0 ? "sheet-pop" : "fade";
   return delta > 0 ? "push" : delta < 0 ? "pop" : "fade";
 }
 

@@ -1,3 +1,4 @@
+import { retireEnrollmentLookup } from "./enrollment-retention.js";
 import { providerInvitationAuthority } from "../lib/provider-invitation-authority.js";
 import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
 import { enrollmentCodeVerifier } from "./enrollment-codes.js";
@@ -81,12 +82,15 @@ export const redeemEnrollmentGrant = async (event) => {
   const nowIso = now.toISOString();
   if (
     !grant ||
-    grant.tokenHash !== tokenHash ||
+    (code && grant.codeHash ? grant.codeHash : grant.tokenHash) !== tokenHash ||
     !["general", "manager"].includes(grant.accessLevel) ||
-    Boolean(code) !== (grant.deliveryMode === "code")
+    (Boolean(code) !== (grant.deliveryMode === "code") &&
+      !(code && grant.codeHash))
   ) {
     return rejectEnrollment(event, "invalid_credentials");
   }
+  // Both credentials consume the same grant; pin its canonical verifier in the transaction.
+  const grantTokenHash = grant.tokenHash;
   if (grant.status === "redeemed") {
     return rejectEnrollment(event, "already_used", 409, grant);
   }
@@ -103,7 +107,7 @@ export const redeemEnrollmentGrant = async (event) => {
       input,
       grant,
       lookup,
-      tokenHash,
+      tokenHash: grantTokenHash,
       requestedPhysicalDeviceId,
       now,
       nowIso,
@@ -333,7 +337,7 @@ export const redeemEnrollmentGrant = async (event) => {
                 ":pending": "pending",
                 ":redeemed": "redeemed",
                 ":now": nowIso,
-                ":tokenHash": tokenHash,
+                ":tokenHash": grantTokenHash,
                 ":bindingId": bindingId,
                 ":physicalDeviceId": physicalDeviceId,
               },
@@ -448,6 +452,17 @@ export const redeemEnrollmentGrant = async (event) => {
             actor: `physical-device:${physicalDeviceId}`,
             createdAt: nowIso,
           }),
+          ...[grant.tokenHash, grant.codeHash]
+            .filter((hash) => hash && `ENROLLMENT_TOKEN#${hash}` !== lookup.pk)
+            .map((hash) =>
+              retireEnrollmentLookup(
+                tableName,
+                grant,
+                hash,
+                "redeemed",
+                nowIso,
+              ),
+            ),
         ],
       }),
     );

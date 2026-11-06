@@ -191,6 +191,7 @@ export async function runJob(message, delivery = {}) {
     )
     .catch(async (error) => {
       if (error?.name === "ConditionalCheckFailedException") {
+        error.code = "sf311_lease_contended";
         const lock = await read(lockKey);
         const remaining = Date.parse(lock?.sf311LeaseExpiresAt) - Date.now();
         if (Number.isFinite(remaining) && remaining > 0)

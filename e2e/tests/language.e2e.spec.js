@@ -23,7 +23,7 @@ test.describe("language switching", () => {
     await page
       .getByRole("menuitem", { name: t("today.settings.language") })
       .click();
-    const dialog = page.locator("#language-dialog");
+    const dialog = page.locator("language-view");
     await expect(dialog).toBeVisible();
     await expect(
       dialog.locator('[data-locale="en"][aria-current="true"]'),
@@ -31,8 +31,8 @@ test.describe("language switching", () => {
 
     await dialog.locator('[data-locale="es"]').click();
     await expect(page.locator("html")).toHaveAttribute("lang", "es-US");
-    // The home screen re-rendered in the new locale; the picker is closed.
-    await expect(page.locator("#language-dialog[open]")).toHaveCount(0);
+    await expect(page.locator("language-view")).toBeVisible();
+    await page.locator("language-view [data-menu-back]").click();
     await expect(page.locator("#home-settings")).toBeVisible();
 
     await page.reload();
@@ -43,9 +43,9 @@ test.describe("language switching", () => {
     await page.locator("#home-settings").click();
     await page.locator("#settings-language").click();
     await expect(
-      page.locator('#language-dialog [data-locale="es"][aria-current="true"]'),
+      page.locator('language-view [data-locale="es"][aria-current="true"]'),
     ).toHaveCount(1);
-    await page.locator('#language-dialog [data-locale="en"]').click();
+    await page.locator('language-view [data-locale="en"]').click();
     await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   });
 });

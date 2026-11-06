@@ -25,7 +25,7 @@ const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
 /**
  * Validate a setup code against the backend.
  * @param {string} code
- * @returns {Promise<{ok:true, code:string, providerSite:ProviderSite, enrollment?:false} | {ok:true, code:string, enrollment:true} | {ok:false, reason:'empty'|'invalid'|'network'|'limited', retryAfterMs?:number}>}
+ * @returns {Promise<{ok:true, code:string, providerSite:ProviderSite, enrollment?:false} | {ok:true, code:string, enrollment:true} | {ok:false, reason:'empty'|'invalid'|'network'|'limited'|'used'|'expired'|'cancelled', retryAfterMs?:number}>}
  */
 export async function validateSetupCode(code) {
   const formatted = formatSiteCode(code);
@@ -53,6 +53,18 @@ export async function validateSetupCode(code) {
       reason: "limited",
       ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
     };
+  }
+  if (response.status === 410) {
+    const data = await response.json().catch(() => null);
+    const reason =
+      data?.error === "enrollment_already_used"
+        ? "used"
+        : data?.error === "enrollment_expired"
+          ? "expired"
+          : data?.error === "enrollment_cancelled"
+            ? "cancelled"
+            : "invalid";
+    return { ok: false, reason };
   }
   if (response.status === 401 || response.status === 404) {
     return { ok: false, reason: "invalid" };

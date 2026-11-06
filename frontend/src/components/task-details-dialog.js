@@ -24,6 +24,10 @@ import {
   updateTaskAction,
 } from "../services/api.js";
 import { hydrateTaskEvidence } from "../services/task-evidence.js";
+import { isTaskExpired } from "../domain/home-tasks.js";
+import { savedActionMessage } from "./saved-action-card.js";
+import { bindYesNoChoice, yesNoChoice } from "./yes-no-choice.js";
+export { showSavedActionCard } from "./saved-action-card.js";
 
 const CUSTOM_ACTION = "__custom__";
 
@@ -115,7 +119,9 @@ export class TaskDetailsDialog extends HTMLElement {
     this._error = "";
     this._baseline = "";
     this._descriptionOnly = false;
+    /** @type {(result?: Record<string, any>, options?: {customAction: boolean}) => any} */
     this._onChanged = () => {};
+    this._holdCard = () => () => {};
   }
 
   async open(task, problem, trigger, onChanged) {
@@ -201,6 +207,7 @@ export class TaskDetailsDialog extends HTMLElement {
   }
 
   _requestClose() {
+    if (this._busy) return;
     if (!this._dirty()) {
       this.querySelector("dialog")?.close();
       return;
@@ -221,6 +228,29 @@ export class TaskDetailsDialog extends HTMLElement {
     ).forEach((button) => {
       button.disabled = this._dirty() || this._busy;
     });
+  }
+
+  _saveHint() {
+    if (this._resolved) return t("taskDetails.saveResolvedHint");
+    return t(
+      isTaskExpired(this._clicked || {})
+        ? "taskDetails.saveUnresolvedHistoryHint"
+        : "taskDetails.saveUnresolvedHint",
+    );
+  }
+
+  _syncCustomValidity() {
+    const custom =
+      /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default | null} */ (
+        this.querySelector("wa-textarea[data-custom]")
+      );
+    if (!custom) return;
+    const invalid =
+      typeof this._resolved === "boolean" && !this._customDraft.trim();
+    custom.toggleAttribute("data-custom-invalid", invalid);
+    custom.setAttribute("aria-invalid", String(invalid));
+    custom.hint = invalid ? t("taskDetails.actionRequired") : "";
+    custom.setCustomValidity(invalid ? t("taskDetails.actionRequired") : "");
   }
 
   _render(loading = false) {
@@ -248,6 +278,7 @@ export class TaskDetailsDialog extends HTMLElement {
           aria-labelledby="task-details-title"
         >
           <section class="task-details__sheet"></section>
+          <p class="visually-hidden" role="status" data-save-status></p>
         </dialog>
         <dialog
           class="task-details"
@@ -408,36 +439,23 @@ export class TaskDetailsDialog extends HTMLElement {
               ? html`<div class="task-details__custom">
                   <wa-textarea
                     data-custom
+                    required
                     label="${escapeAttr(t("taskDetails.addWhat"))}"
                     rows="3"
                     maxlength="1000"
                     value="${escapeAttr(this._customDraft)}"
                   ></wa-textarea>
                   <fieldset>
-                    <legend>${escapeHtml(t("taskDetails.resolved"))}</legend>
-                    <div>
-                      ${[true, false]
-                        .map(
-                          (value) =>
-                            html`<button
-                              type="button"
-                              class="${this._resolved === value
-                                ? "btn-ink"
-                                : "btn-outline"}"
-                              aria-pressed="${this._resolved === value}"
-                              data-resolved="${value}"
-                            >
-                              ${escapeHtml(
-                                t(
-                                  value
-                                    ? "taskDetails.resolvedYes"
-                                    : "taskDetails.resolvedNo",
-                                ),
-                              )}
-                            </button>`,
-                        )
-                        .join("")}
-                    </div>
+                    <legend>
+                      ${escapeHtml(t("taskDetails.resolved"))}
+                      <span aria-hidden="true">*</span>
+                    </legend>
+                    ${yesNoChoice({
+                      name: "resolved",
+                      value: this._resolved,
+                      yesLabel: t("taskDetails.resolvedYes"),
+                      noLabel: t("taskDetails.resolvedNo"),
+                    })}
                   </fieldset>
                 </div>`
               : ""}
@@ -448,14 +466,35 @@ export class TaskDetailsDialog extends HTMLElement {
             >
               ${escapeHtml(this._error)}
             </p>
+            <p
+              id="task-details-save-hint"
+              class="task-details__save-hint"
+              data-save-hint
+              ${this._selected === CUSTOM_ACTION &&
+              typeof this._resolved === "boolean"
+                ? ""
+                : "hidden"}
+            >
+              ${this._selected === CUSTOM_ACTION &&
+              typeof this._resolved === "boolean"
+                ? escapeHtml(this._saveHint())
+                : ""}
+            </p>
             ${this._baseline
               ? html`<button
                   type="button"
                   class="btn-ink task-details__save"
                   data-save
+                  aria-describedby="task-details-save-hint"
                   ${this._valid() ? "" : "disabled"}
                 >
-                  ${escapeHtml(t("common.save"))}
+                  ${escapeHtml(
+                    t(
+                      this._selected === CUSTOM_ACTION
+                        ? "taskDetails.saveAction"
+                        : "common.save",
+                    ),
+                  )}
                 </button>`
               : ""}`}`;
     this.querySelectorAll("[data-photo-lightbox]").forEach((trigger) => {
@@ -523,24 +562,20 @@ export class TaskDetailsDialog extends HTMLElement {
       );
     custom?.addEventListener("input", () => {
       this._customDraft = custom.value;
+      this._syncCustomValidity();
       this._syncSave();
     });
-    /** @type {NodeListOf<HTMLButtonElement>} */ (
-      this.querySelectorAll("button[data-resolved]")
-    ).forEach((button) =>
-      button.addEventListener("click", () => {
-        this._resolved = button.dataset.resolved === "true";
-        /** @type {NodeListOf<HTMLButtonElement>} */ (
-          this.querySelectorAll("button[data-resolved]")
-        ).forEach((choice) => {
-          const selected =
-            (choice.dataset.resolved === "true") === this._resolved;
-          choice.setAttribute("aria-pressed", String(selected));
-          choice.className = selected ? "btn-ink" : "btn-outline";
-        });
-        this._syncSave();
-      }),
-    );
+    this._syncCustomValidity();
+    bindYesNoChoice(this, "resolved", (value) => {
+      this._resolved = value;
+      this._syncCustomValidity();
+      this._syncSave();
+      const hint = /** @type {HTMLElement} */ (
+        this.querySelector("[data-save-hint]")
+      );
+      hint.hidden = false;
+      hint.textContent = this._saveHint();
+    });
     /** @type {HTMLButtonElement} */ (
       this.querySelector("button[data-save]")
     )?.addEventListener("click", () => this._save());
@@ -563,14 +598,8 @@ export class TaskDetailsDialog extends HTMLElement {
     }
     this._busy = true;
     this._error = "";
-    this.querySelector("dialog").close();
-    await awaitOverlayUnwind(this._overlayId);
-    const notice = showToast({
-      title: t("details.saving"),
-      message: "",
-      duration: 0,
-      icon: "clock",
-    });
+    this._setSaving(true);
+    let releaseCard = () => {};
     try {
       const fields = {
         title: this._title.trim(),
@@ -620,42 +649,81 @@ export class TaskDetailsDialog extends HTMLElement {
           { title: fields.title, category: fields.category },
         );
       }
+      const customAction = this._selected === CUSTOM_ACTION;
+      // Hold through native dialog/history dismissal; the host takes over the
+      // hold synchronously before showing the saved-card receipt.
+      if (customAction) releaseCard = this._holdCard();
       if (result) syncCardDetails(this._problem, result, fields);
-      notice?.close();
       this._baseline = this._draftKey();
+      this.querySelector("dialog").close();
+      await awaitOverlayUnwind(this._overlayId);
+      releaseCard();
+      releaseCard = () => {};
+      let confirmedOnCard = false;
       try {
-        await this._onChanged();
+        confirmedOnCard =
+          (await this._onChanged(result, { customAction })) === true;
       } catch {
         /* Saved edits remain authoritative if refreshing fails. */
       }
-      showToast({
-        title: t("details.saved"),
-        message: "",
-        tone: "success",
-        icon: "circle-check",
-      });
+      if (!confirmedOnCard)
+        showToast({
+          title: t(customAction ? "taskDetails.actionSaved" : "details.saved"),
+          message:
+            customAction && result?.task
+              ? t(savedActionMessage(result.task))
+              : "",
+          tone: "success",
+          icon: "circle-check",
+        });
     } catch (error) {
-      notice?.close();
       this._error = t(
         error?.status === 409 ? "details.conflict" : "taskDetails.saveError",
       );
-      showToast({
-        title: t("toast.actionSaveError.title"),
-        message: this._error,
-        duration: 0,
-        tone: "error",
-        icon: "triangle-exclamation",
-        action: {
-          label: t("details.reviewRetry"),
-          run: () => {
-            this._render();
-            this._show();
-          },
-        },
-      });
+      const errorNotice = /** @type {HTMLElement} */ (
+        this.querySelector(".task-details__error")
+      );
+      errorNotice.textContent = this._error;
+      errorNotice.hidden = false;
     } finally {
+      releaseCard();
       this._busy = false;
+      this._setSaving(false);
     }
+  }
+
+  _setSaving(saving) {
+    const dialog = this.querySelector("dialog");
+    if (!dialog) return;
+    const sheet = /** @type {HTMLElement} */ (
+      dialog.querySelector(".task-details__sheet")
+    );
+    sheet.setAttribute("aria-busy", String(saving));
+    sheet.inert = saving;
+    dialog.querySelector("[data-save-status]").textContent = saving
+      ? t("details.saving")
+      : "";
+    const button = dialog.querySelector("[data-save]");
+    if (button) {
+      button.innerHTML = saving
+        ? html`<wa-spinner aria-hidden="true"></wa-spinner>${escapeHtml(
+              t("details.saving"),
+            )}`
+        : escapeHtml(
+            t(
+              this._selected === CUSTOM_ACTION
+                ? "taskDetails.saveAction"
+                : "common.save",
+            ),
+          );
+    }
+    if (saving) {
+      const error = /** @type {HTMLElement} */ (
+        dialog.querySelector(".task-details__error")
+      );
+      if (error) error.hidden = true;
+    }
+    this._syncSave();
   }
 
   async _separate(taskId) {
@@ -700,8 +768,15 @@ export class TaskDetailsDialog extends HTMLElement {
 customElements.define("task-details-dialog", TaskDetailsDialog);
 
 /** @param {Record<string,any>} task @param {Record<string,any>} problem @param {HTMLElement} trigger @param {()=>void} onChanged */
-export function openTaskDetails(task, problem, trigger, onChanged) {
+export function openTaskDetails(
+  task,
+  problem,
+  trigger,
+  onChanged,
+  holdCard = () => () => {},
+) {
   const host = new TaskDetailsDialog();
+  host._holdCard = holdCard;
   document.body.append(host);
   void host.open(task, problem, trigger, onChanged);
 }
