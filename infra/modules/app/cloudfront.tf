@@ -69,11 +69,14 @@ resource "aws_cloudfront_function" "frontend_spa_rewrite" {
     // API routes pass through untouched — the API's own 403/404 JSON must
     // never be rewritten into the SPA by the distribution-wide error pages.
     // Keep this list in lockstep with the API cache behaviors below and
-    // local.api_routes in api.tf.
+    // local.api_routes in api.tf. /checks/ (plural; the SPA's own route is
+    // /check) is check media with its own behaviour and function (media.tf);
+    // it is listed so a request that misses it is never served the SPA.
     if (uri.indexOf("/v1/") === 0 ||
         uri.indexOf("/app/v1/") === 0 ||
         uri.indexOf("/site-code") === 0 ||
-        uri.indexOf("/health") === 0) {
+        uri.indexOf("/health") === 0 ||
+        uri.indexOf("/checks/") === 0) {
       return request;
     }
 
@@ -123,6 +126,17 @@ resource "aws_cloudfront_distribution" "frontend" {
     origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
   }
 
+  # Check media read with signed cookies (media.tf). Present only once the
+  # environment has a signing key pair.
+  dynamic "origin" {
+    for_each = local.media_cookies_enabled ? [1] : []
+    content {
+      domain_name              = aws_s3_bucket.uploads.bucket_regional_domain_name
+      origin_id                = "uploads-media-s3"
+      origin_access_control_id = aws_cloudfront_origin_access_control.uploads_media[0].id
+    }
+  }
+
   origin {
     domain_name = replace(aws_apigatewayv2_api.http.api_endpoint, "https://", "")
     origin_id   = "api-gateway"
@@ -152,6 +166,27 @@ resource "aws_cloudfront_distribution" "frontend" {
     function_association {
       event_type   = "viewer-request"
       function_arn = aws_cloudfront_function.frontend_spa_rewrite.arn
+    }
+  }
+
+  # /checks/* is check media at its object key: a request without valid signed
+  # cookies is a 403 at the edge and never reaches S3.
+  dynamic "ordered_cache_behavior" {
+    for_each = local.media_cookies_enabled ? [1] : []
+    content {
+      path_pattern               = "/checks/*"
+      target_origin_id           = "uploads-media-s3"
+      viewer_protocol_policy     = "https-only"
+      allowed_methods            = ["GET", "HEAD"]
+      cached_methods             = ["GET", "HEAD"]
+      compress                   = false
+      trusted_key_groups         = [aws_cloudfront_key_group.media[0].id]
+      cache_policy_id            = aws_cloudfront_cache_policy.media[0].id
+      response_headers_policy_id = aws_cloudfront_response_headers_policy.media[0].id
+      function_association {
+        event_type   = "viewer-request"
+        function_arn = aws_cloudfront_function.media_path[0].arn
+      }
     }
   }
 

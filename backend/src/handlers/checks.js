@@ -13,6 +13,7 @@ import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { jsonResponse, parseLimit, readJsonBody } from "../http.js";
 import { logServerError } from "../lib/log-server-error.js";
+import { mediaPathsFor } from "../lib/media-cookie.js";
 import { deriveSiteId } from "../lib/principal.js";
 import { synthesizeCheck } from "../analysis/synthesize-check.js";
 import { emitMetrics } from "../lib/metrics.js";
@@ -30,7 +31,7 @@ import {
 // analysisGeneration are needed to select current rows, including legacy data.
 const CARD_EVIDENCE_PROJECTION = {
   ProjectionExpression:
-    "sk, artifactId, analysisGeneration, #text, placeName, georeferencedAddress, s3Key, contentType",
+    "sk, artifactId, analysisGeneration, #text, placeName, georeferencedAddress, s3Key, contentType, thumbS3Key",
   ExpressionAttributeNames: { "#text": "text" },
 };
 
@@ -524,7 +525,11 @@ async function loadCheckDetail(dynamoTable, siteId, checkId, projection) {
   const check = items.find((it) => it.sk === headerSk);
   if (!check) return null;
   const artifactPrefix = checkArtifactPrefix(checkId);
-  const artifacts = items.filter((it) => it.sk.startsWith(artifactPrefix));
+  // Viewer media paths ride along when signed cookies are on, so the client
+  // needs no per-photo signing request for these artifacts.
+  const artifacts = items
+    .filter((it) => it.sk.startsWith(artifactPrefix))
+    .map((it) => ({ ...it, ...mediaPathsFor(it, { siteId, checkId }) }));
   return {
     check,
     artifacts,
@@ -580,6 +585,8 @@ export const getCheckEvidenceBatch = async (event) => {
               georeferencedAddress,
               s3Key,
               contentType,
+              mediaPath,
+              thumbnailPath,
             }) => ({
               artifactId,
               text,
@@ -587,6 +594,8 @@ export const getCheckEvidenceBatch = async (event) => {
               georeferencedAddress,
               s3Key,
               contentType,
+              ...(mediaPath ? { mediaPath } : {}),
+              ...(thumbnailPath ? { thumbnailPath } : {}),
             }),
           ),
           analyses: detail.analyses.map(

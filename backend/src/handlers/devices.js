@@ -5,6 +5,7 @@
 // Parent liveness and Site/membership authority apply to both paths.
 
 import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
+import { withMediaCookies } from "../lib/media-cookie.js";
 import { normalizeSiteCode } from "./site-code.js";
 import {
   retryableRefresh,
@@ -206,16 +207,19 @@ export const registerDevice = async (event) => {
     throw err;
   }
 
-  return jsonResponse(201, {
-    deviceId,
-    site: { siteId: validCode.siteId, name: validCode.siteName },
-    token: access.token,
-    refreshToken: refresh.token,
-    expiresIn: access.expiresIn,
-    refreshExpiresIn: refresh.expiresIn,
-    tokenGeneration: generation,
-    accessLevel,
-  });
+  return withMediaCookies(
+    jsonResponse(201, {
+      deviceId,
+      site: { siteId: validCode.siteId, name: validCode.siteName },
+      token: access.token,
+      refreshToken: refresh.token,
+      expiresIn: access.expiresIn,
+      refreshExpiresIn: refresh.expiresIn,
+      tokenGeneration: generation,
+      accessLevel,
+    }),
+    validCode.siteId,
+  );
 };
 
 /**
@@ -359,16 +363,19 @@ export const refreshDeviceToken = async (event) => {
         });
       throw error;
     }
-    return jsonResponse(200, {
-      deviceId,
-      site: { siteId, name: device.siteName },
-      accessLevel: canonicalRole,
-      token: access.token,
-      refreshToken: refresh.token,
-      expiresIn: access.expiresIn,
-      refreshExpiresIn: refresh.expiresIn,
-      tokenGeneration: generation,
-    });
+    return withMediaCookies(
+      jsonResponse(200, {
+        deviceId,
+        site: { siteId, name: device.siteName },
+        accessLevel: canonicalRole,
+        token: access.token,
+        refreshToken: refresh.token,
+        expiresIn: access.expiresIn,
+        refreshExpiresIn: refresh.expiresIn,
+        tokenGeneration: generation,
+      }),
+      siteId,
+    );
   }
   // Conditional write: rotation applies ONLY from the observed generation +
   // jti. A concurrent refresh with the same token loses the swap here (one
@@ -390,12 +397,17 @@ export const refreshDeviceToken = async (event) => {
     });
   }
 
-  return jsonResponse(200, {
-    deviceId,
-    site: { siteId, name: device.siteName },
-    accessLevel: canonicalAccessLevel(device.accessLevel),
-    ...session,
-  });
+  // The refresh is also where the one-hour media cookie is renewed; a live
+  // session therefore always holds a current cookie for its site's photos.
+  return withMediaCookies(
+    jsonResponse(200, {
+      deviceId,
+      site: { siteId, name: device.siteName },
+      accessLevel: canonicalAccessLevel(device.accessLevel),
+      ...session,
+    }),
+    siteId,
+  );
 };
 
 /**

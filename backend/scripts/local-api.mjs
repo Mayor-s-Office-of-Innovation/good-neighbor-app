@@ -798,11 +798,26 @@ const server = createServer(async (req, res) => {
       () => {},
     );
 
-    const { statusCode = 200, headers = {}, body: resBody = "" } = result ?? {};
+    const {
+      statusCode = 200,
+      headers = {},
+      cookies = [],
+      body: resBody = "",
+    } = result ?? {};
+    // HTTP API payload 2.0 carries Set-Cookie values in `cookies`; emit them
+    // the way the gateway does so cookie-bearing routes behave locally too.
     res.writeHead(
       statusCode,
       /** @type {any} */ ({
         ...headers,
+        ...(cookies.length
+          ? {
+              "set-cookie": [
+                ...[headers["set-cookie"] ?? []].flat(),
+                ...cookies,
+              ],
+            }
+          : {}),
         ...LOCAL_CORS_HEADERS,
       }),
     );

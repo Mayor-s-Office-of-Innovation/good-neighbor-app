@@ -71,7 +71,6 @@ registerIconLibrary("default", {
 // component size attributes style themselves.
 import "@awesome.me/webawesome/dist/styles/layers.css";
 import "@awesome.me/webawesome/dist/styles/native.css";
-import "@awesome.me/webawesome/dist/styles/utilities/fouce.css";
 import "@awesome.me/webawesome/dist/styles/utilities/scroll-lock.css";
 import "@awesome.me/webawesome/dist/styles/utilities/variants.css";
 // Match the official Figma kit: Default theme + Default palette. The theme
