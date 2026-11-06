@@ -15,9 +15,9 @@ test("an admin moves between Manage and Insights pages and back", async ({
   await expect(heading(page)).toHaveText(t("admin.insights.overview"));
   await expect(page.locator("[data-site-row]").first()).toBeVisible();
   // So opening Insights never waits on Manage's Site and record reads; it
-  // reads only the filter names.
+  // reads only the shared lists that name its filters.
   await settle(page);
-  // Sorted: the two reads go out together and can arrive in either order.
+  // Sorted: the reads go out together and can arrive in any order.
   expect(
     ["GET", "POST", "PUT", "PATCH", "DELETE"]
       .flatMap((method) =>
@@ -25,7 +25,7 @@ test("an admin moves between Manage and Insights pages and back", async ({
       )
       .map((c) => c.path + c.search)
       .sort(),
-  ).toEqual(["program-managers", "providers"]);
+  ).toEqual(["oversight-options", "program-managers", "programs", "providers"]);
   await page.locator('#insights-nav a[data-insights-nav="trends"]').click();
   await expect(heading(page)).toHaveText(t("admin.insights.trends"));
   await tab(page, "manage").click();

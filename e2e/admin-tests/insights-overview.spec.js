@@ -80,8 +80,9 @@ test("when Overview can't load, it says why and Retry brings the Sites back", as
   await expect(siteRows(page)).toHaveCount(0);
   await page.locator("#insights-retry").click();
   await expect(siteRows(page)).toHaveCount(2);
+  // Top concerns narrows the list, so the count names every Site too.
   await expect(page.locator("#insights-count")).toHaveText(
-    t("admin.insights.siteCount", { count: 2 }),
+    t("admin.insights.siteCountOf", { count: 2, total: 4 }),
   );
 });
 
