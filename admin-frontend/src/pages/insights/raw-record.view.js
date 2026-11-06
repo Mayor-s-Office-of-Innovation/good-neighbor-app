@@ -1,25 +1,18 @@
 // <insights-record>: one Issue or Check on its own page, with a trail back
-// to the list or Site page it came from and each record walked through.
+// to the list or Site page it came from and each record opened on the way.
 import { t } from "../../../../frontend/src/i18n/i18n.js";
-import { escapeHtml } from "../../dom.js";
+import { matchRoute } from "../../router.js";
 import { adminApi } from "../../services/admin-api.js";
-import {
-  INSIGHTS_ROUTES,
-  carriedQuery,
-  safeReturnPath,
-} from "./insights-routes.js";
+import { carriedQuery, safeReturnPath } from "./insights-routes.js";
 import { sessionOf } from "./insights-session.js";
-import {
-  failedView,
-  failureText,
-  freshnessView,
-  loadingView,
-} from "./insights.templates.js";
-import { hopKey, readVia, recordHref } from "./record-links.js";
-import { showRecordPhotos } from "./record-photos.js";
+import { freshnessView, loadingView } from "./insights.templates.js";
+import { plainClick } from "./overview-rules.js";
+import { hopKey, readVia, recordHref, viaTo } from "./record-links.js";
+import { readRecordPhotos, showRecordPhotos } from "./record-photos.js";
 import {
   checkBodyView,
   issueBodyView,
+  recordFailedView,
   recordHeadView,
   recordName,
   recordTrailView,
@@ -28,12 +21,7 @@ import {
 /** @typedef {import("./record-links.js").Hop} Hop */
 
 /** @param {string} path checked by safeReturnPath @returns {string} its route name */
-function routeOf(path) {
-  const pathname = path.split("?")[0];
-  return (
-    INSIGHTS_ROUTES.find(([, pattern]) => pattern.test(pathname))?.[0] ?? ""
-  );
-}
+const routeOf = (path) => matchRoute(path.split("?")[0]).name;
 
 class InsightsRecord extends HTMLElement {
   connectedCallback() {
@@ -129,12 +117,12 @@ class InsightsRecord extends HTMLElement {
     });
   }
 
-  /** Each hop is its own page, so browser Back steps back one record. @param {Hop} target */
+  /** Each record is its own page, so browser Back steps back one record. @param {Hop} target */
   linkTo(target) {
     return recordHref(target, {
       search: location.search,
       back: this.back,
-      via: [...this.via, this.hop],
+      via: viaTo(this.via, this.hop, target),
     });
   }
 
@@ -144,6 +132,7 @@ class InsightsRecord extends HTMLElement {
     const { signal } = this.controller;
     const { kind, id, siteId } = this.hop;
     const params = siteId ? { siteId } : {};
+    const photos = readRecordPhotos(this, this.hop, signal);
     this.region("body").innerHTML = loadingView();
     this.setAttribute("aria-busy", "true");
     /** @type {Record<string, any>} */
@@ -155,20 +144,15 @@ class InsightsRecord extends HTMLElement {
     } catch (err) {
       if (/** @type {any} */ (err)?.name === "AbortError") return;
       this.removeAttribute("aria-busy");
-      const code = /** @type {any} */ (err)?.message;
-      // Not found and two-Sites replies won't change on a retry.
-      this.region("body").innerHTML =
-        code === `${kind}_not_found` || code === "site_id_required"
-          ? `<p class="empty-state" data-insights-empty="${escapeHtml(code)}">${escapeHtml(t(`admin.insights.record.${code === "site_id_required" ? "needsSite" : "notFound"}.${kind}`))}</p>`
-          : failedView(
-              failureText(err, t(`admin.insights.record.failed.${kind}`)),
-            );
+      this.region("body").innerHTML = recordFailedView(kind, err);
       return;
     }
     this.removeAttribute("aria-busy");
     this.reply = reply;
+    // A link without its Site still gets one, so this record's links and crumbs name it.
+    this.hop.siteId ||= reply.site?.siteId ?? "";
     this.session.recordNames.set(hopKey(this.hop), recordName(kind, reply));
-    this.region("trail").innerHTML = this.trailView();
+    this.drawTrail();
     this.drawHead();
     this.region("freshness").innerHTML = freshnessView(reply.meta);
     this.region("body").innerHTML =
@@ -197,9 +181,24 @@ class InsightsRecord extends HTMLElement {
           });
     void showRecordPhotos(
       this.querySelector("[data-record-photos]"),
-      { kind, id, siteId: reply.site?.siteId ?? siteId, level: 2 },
-      signal,
+      photos ?? readRecordPhotos(this, this.hop, signal),
+      { level: 2, signal },
     );
+  }
+
+  drawTrail() {
+    const trail = this.region("trail");
+    const active = document.activeElement;
+    const crumb =
+      active && trail.contains(active)
+        ? active.hasAttribute("data-crumb-back")
+          ? "[data-crumb-back]"
+          : `[data-crumb="${CSS.escape(active.getAttribute("data-crumb") ?? "")}"]`
+        : "";
+    trail.innerHTML = this.trailView();
+    // The redraw only renames crumbs, so a keyboard user stays on the one they were on.
+    if (crumb)
+      /** @type {HTMLElement | null} */ (trail.querySelector(crumb))?.focus();
   }
 
   drawHead() {
@@ -212,17 +211,22 @@ class InsightsRecord extends HTMLElement {
       });
   }
 
-  /** @param {Event} event */
+  /** @param {MouseEvent} event */
   clicked = (event) => {
     const target = /** @type {Element} */ (event.target);
-    // The list or Site page keeps its rows only for a way back, not a fresh visit.
-    const back = target.closest("[data-crumb='root'], [data-crumb-back]");
-    if (back) this.session.returning = back.getAttribute("href") ?? "";
     const button = target.closest("button");
     if (button?.id === "insights-retry" && this.contains(button))
       void this.load();
-    // A click anywhere on an Issue row opens it, as on the lists.
-    if (!target.closest("a, button, [popover]"))
+    // A modified click opens a new tab, which mustn't restore this tab's rows or follow the row.
+    if (!plainClick(event)) return;
+    // The list or Site page keeps its rows only for a way back, not a fresh visit.
+    const back = target.closest("[data-crumb='root'], [data-crumb-back]");
+    if (back) this.session.returning = back.getAttribute("href") ?? "";
+    // A click anywhere on an Issue row opens it, as on the lists; a drag selects text instead.
+    if (
+      !target.closest("a, button, [popover]") &&
+      !String(document.getSelection?.() ?? "")
+    )
       /** @type {HTMLElement | null | undefined} */ (
         target.closest("[data-issue-row]")?.querySelector("[data-record-link]")
       )?.click();

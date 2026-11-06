@@ -1,10 +1,10 @@
-// Record addresses. Each carries the list it came from and the records
-// walked through on the way, so the trail can lead back to each one.
+// Record page addresses. Each one carries the list it was opened from and the
+// records opened before it, so the trail can lead back to each.
 import { carriedQuery } from "./insights-routes.js";
 
 /** @typedef {{ kind: "issue" | "check", siteId: string, id: string }} Hop */
 
-// Enough for any real walk; a crafted link can't make the trail run on.
+// Ten covers real use; a crafted link can't make the trail endless.
 export const MAX_HOPS = 10;
 
 /** @param {Hop} hop */
@@ -47,3 +47,24 @@ export function readVia(search) {
   }
   return hops.slice(-MAX_HOPS);
 }
+
+/**
+ * The records listed before `target` on its own page. Going back to a record
+ * already in the trail cuts the trail there, so it never repeats.
+ * @param {Hop[]} via
+ * @param {Hop} current
+ * @param {Hop} target
+ */
+export function viaTo(via, current, target) {
+  const path = [...via, current];
+  const at = path.findIndex((step) => hopKey(step) === hopKey(target));
+  return at === -1 ? path : path.slice(0, at);
+}
+
+/**
+ * The Check a panel's Issue was opened from, so its trail leads back.
+ * @param {Hop | null} current
+ * @param {Hop} target
+ */
+export const panelFrom = (current, target) =>
+  target.kind === "issue" && current?.kind === "check" ? current : null;
