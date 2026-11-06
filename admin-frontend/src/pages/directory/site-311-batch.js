@@ -1,5 +1,5 @@
-import { t } from "../../frontend/src/i18n/i18n.js";
-import { escapeHtml } from "./dom.js";
+import { t } from "../../../../frontend/src/i18n/i18n.js";
+import { escapeHtml } from "../../dom.js";
 
 import {
   create311Batch,

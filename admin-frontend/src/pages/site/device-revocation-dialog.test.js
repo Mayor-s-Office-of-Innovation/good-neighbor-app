@@ -1,7 +1,7 @@
 import { afterEach, test, vi } from "vitest";
 import assert from "node:assert/strict";
-import { t } from "../../frontend/src/i18n/i18n.js";
-import { quietInspect } from "../test-support/quiet-inspect.js";
+import { t } from "../../../../frontend/src/i18n/i18n.js";
+import { quietInspect } from "../../../test-support/quiet-inspect.js";
 import { confirmDeviceRevocation } from "./device-revocation-dialog.js";
 
 quietInspect(window);

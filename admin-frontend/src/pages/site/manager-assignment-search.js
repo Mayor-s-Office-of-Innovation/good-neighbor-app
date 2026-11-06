@@ -1,5 +1,5 @@
-import { debounce } from "./debounce.js";
-import { t } from "../../frontend/src/i18n/i18n.js";
+import { debounce } from "../../debounce.js";
+import { t } from "../../../../frontend/src/i18n/i18n.js";
 
 /** Bind a local search without replacing the input or moving focus while typing. */
 export function bindManagerAssignmentSearch(form) {

@@ -10,8 +10,8 @@ import {
 import { phoneInput, formInput } from "../../form-fields.js";
 
 /**
- * @typedef {import("../../main.js").AdminState} AdminState
- * @typedef {import("../../main.js").AdminProvider} AdminProvider
+ * @typedef {import("../../admin-types.js").AdminState} AdminState
+ * @typedef {import("../../admin-types.js").AdminProvider} AdminProvider
  */
 
 export function newProviderView() {

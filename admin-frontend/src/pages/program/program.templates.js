@@ -1,5 +1,5 @@
 import { t } from "../../../../frontend/src/i18n/i18n.js";
-import { primaryProgramStaffId } from "../../program-staff.js";
+import { primaryProgramStaffId } from "./program-staff.js";
 import { escapeHtml } from "../../dom.js";
 import {
   discardChangesDialog,
