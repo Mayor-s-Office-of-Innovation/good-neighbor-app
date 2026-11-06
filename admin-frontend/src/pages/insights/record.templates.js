@@ -2,6 +2,9 @@
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
 import {
+  codeKey,
+  failedView,
+  failureText,
   formatInstant,
   helpTip,
   severityKnown,
@@ -99,10 +102,9 @@ export function panelTrailView({ check, checkHref, issueId }) {
  * siteHref "" names the Site without a link
  */
 export function recordHeadView({ kind, id, reply, level, siteHref }) {
-  const title =
-    kind === "issue" && reply
-      ? categoryWord(reply.issue.category)
-      : t(`admin.insights.${kind}`, { id });
+  const title = reply
+    ? recordName(kind, reply)
+    : t(`admin.insights.${kind}`, { id });
   const heading =
     level === 1
       ? `<h1 id="insights-title" tabindex="-1">${escapeHtml(title)}</h1>`
@@ -146,9 +148,10 @@ function timeline(issue) {
     ["firstResponse", issue.firstResponseAt],
     ["resolved", issue.resolvedAt],
   ];
-  const shown = new Set(events.map(([, at]) => at));
+  // Compared as instants, since one moment can be written with or without milliseconds.
+  const shown = new Set(events.map(([, at]) => (at ? Date.parse(at) : NaN)));
   // Latest activity is only news when it isn't one of the moments above.
-  if (issue.latestActivityAt && !shown.has(issue.latestActivityAt))
+  if (issue.latestActivityAt && !shown.has(Date.parse(issue.latestActivityAt)))
     events.push(["latest", issue.latestActivityAt]);
   return events
     .filter(([, at]) => at && Number.isFinite(Date.parse(at)))
@@ -235,7 +238,7 @@ export function issueBodyView({ reply, checkHref, level, idPrefix }) {
       "action",
       escapeHtml(
         wordFor(
-          `admin.insights.record.action.${issue.type ?? ""}`,
+          codeKey("admin.insights.record.action", issue.type ?? ""),
           "admin.insights.raw.notRecorded",
         ),
       ),
@@ -292,6 +295,23 @@ export function checkBodyView({ reply, issueHref, level }) {
       : `<p class="muted" data-check-issues-empty>${escapeHtml(t("admin.insights.record.noIssues"))}</p>`
   }
   <section data-record-photos></section>`;
+}
+
+/**
+ * Why a record didn't load. Not found, or found at two Sites, won't change on
+ * a retry, so only other failures offer one.
+ * @param {RecordKind} kind
+ * @param {unknown} err
+ * @param {string} [retryId]
+ */
+export function recordFailedView(kind, err, retryId) {
+  const code = /** @type {any} */ (err)?.message;
+  if (code === `${kind}_not_found` || code === "site_id_required")
+    return `<p class="empty-state" data-insights-empty="${escapeHtml(code)}">${escapeHtml(t(`admin.insights.record.${code === "site_id_required" ? "needsSite" : "notFound"}.${kind}`))}</p>`;
+  return failedView(
+    failureText(err, t(`admin.insights.record.failed.${kind}`)),
+    retryId,
+  );
 }
 
 /**
