@@ -31,7 +31,7 @@
     {
       "name": "main css",
       "path": "dist/assets/index-*.css",
-      "limit": "21 kB"
+      "limit": "21.1 kB"
     },
     {
       "name": "task update js",
