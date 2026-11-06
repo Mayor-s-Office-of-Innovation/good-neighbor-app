@@ -232,6 +232,13 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
+    sid       = "ReadMediaSigningSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.media_signing_key.arn]
+  }
+
+  statement {
     sid       = "ReadAnalyzerSecret"
     effect    = "Allow"
     actions   = ["secretsmanager:GetSecretValue"]

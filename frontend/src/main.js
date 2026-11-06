@@ -65,11 +65,11 @@ registerIconLibrary("default", {
 });
 
 // Web Awesome base styles and component behavior utilities. Layout, spacing,
-// typography, and pre-upgrade visibility use our own styles. Keep unused
-// size, placeholder, and wa-cloak utilities out of the main CSS bundle.
+// typography, and pre-upgrade visibility use our own styles. The app uses
+// its own .visually-hidden class; keep unused visibility, size, placeholder,
+// and wa-cloak utilities out of the main CSS bundle.
 import "@awesome.me/webawesome/dist/styles/layers.css";
 import "@awesome.me/webawesome/dist/styles/native.css";
-import "@awesome.me/webawesome/dist/styles/utilities/visually-hidden.css";
 import "@awesome.me/webawesome/dist/styles/utilities/scroll-lock.css";
 import "@awesome.me/webawesome/dist/styles/utilities/variants.css";
 // Match the official Figma kit: Default theme + Default palette. The theme

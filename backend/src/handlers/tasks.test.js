@@ -624,4 +624,53 @@ it("includes evidence type for text and photo tasks without inventing a type for
     response.tasks.find((/** @type {any} */ task) => task.taskId === "missing")
       .evidence,
   ).toBeUndefined();
+  expect(
+    response.tasks.find((/** @type {any} */ task) => task.taskId === "photo")
+      .evidence.mediaPath,
+  ).toBeUndefined();
+});
+
+it("puts viewer media paths on photo evidence when media cookies are on", async () => {
+  process.env.DYNAMO_TABLE = "gnp-test-app";
+  vi.stubEnv("MEDIA_KEY_PAIR_ID", "K2EXAMPLE");
+  vi.stubEnv("MEDIA_SIGNING_KEY_SECRET_ARN", "arn:secret");
+  vi.stubEnv("PROVIDER_APP_URL", "https://app.example.org/");
+  const task = {
+    taskId: "photo",
+    checkId: "check",
+    sourceArtifactIds: ["photo"],
+    status: "open",
+  };
+  send.mockReset();
+  send.mockImplementation(async (command) => {
+    if (command instanceof QueryCommand) return { Items: [task] };
+    if (command instanceof BatchGetCommand) {
+      const keys = command.input.RequestItems?.["gnp-test-app"].Keys || [];
+      const rows = keys[0].sk.startsWith("TASK#")
+        ? [task]
+        : [
+            {
+              sk: "CHECK#check#ART#photo",
+              artifactId: "photo",
+              contentType: "image/jpeg",
+              s3Key: "checks/site-1/check/photo",
+              thumbS3Key: "checks/site-1/check/photo.thumb.webp",
+            },
+          ];
+      return { Responses: { "gnp-test-app": rows } };
+    }
+    return {};
+  });
+  try {
+    const response = JSON.parse(
+      (await invoke(readEvent({ siteClaim: "site-1" }))).body,
+    );
+    expect(response.tasks[0].evidence).toMatchObject({
+      kind: "photo",
+      mediaPath: "/checks/site-1/check/photo",
+      thumbnailPath: "/checks/site-1/check/photo.thumb.webp",
+    });
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });

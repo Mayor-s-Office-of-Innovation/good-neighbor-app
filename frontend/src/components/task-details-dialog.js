@@ -26,6 +26,7 @@ import {
 import { hydrateTaskEvidence } from "../services/task-evidence.js";
 import { isTaskExpired } from "../domain/home-tasks.js";
 import { savedActionMessage } from "./saved-action-card.js";
+import { bindYesNoChoice, yesNoChoice } from "./yes-no-choice.js";
 export { showSavedActionCard } from "./saved-action-card.js";
 
 const CUSTOM_ACTION = "__custom__";
@@ -449,29 +450,12 @@ export class TaskDetailsDialog extends HTMLElement {
                       ${escapeHtml(t("taskDetails.resolved"))}
                       <span aria-hidden="true">*</span>
                     </legend>
-                    <div>
-                      ${[true, false]
-                        .map(
-                          (value) =>
-                            html`<button
-                              type="button"
-                              class="${this._resolved === value
-                                ? "btn-ink"
-                                : "btn-outline"}"
-                              aria-pressed="${this._resolved === value}"
-                              data-resolved="${value}"
-                            >
-                              ${escapeHtml(
-                                t(
-                                  value
-                                    ? "taskDetails.resolvedYes"
-                                    : "taskDetails.resolvedNo",
-                                ),
-                              )}
-                            </button>`,
-                        )
-                        .join("")}
-                    </div>
+                    ${yesNoChoice({
+                      name: "resolved",
+                      value: this._resolved,
+                      yesLabel: t("taskDetails.resolvedYes"),
+                      noLabel: t("taskDetails.resolvedNo"),
+                    })}
                   </fieldset>
                 </div>`
               : ""}
@@ -582,28 +566,16 @@ export class TaskDetailsDialog extends HTMLElement {
       this._syncSave();
     });
     this._syncCustomValidity();
-    /** @type {NodeListOf<HTMLButtonElement>} */ (
-      this.querySelectorAll("button[data-resolved]")
-    ).forEach((button) =>
-      button.addEventListener("click", () => {
-        this._resolved = button.dataset.resolved === "true";
-        this._syncCustomValidity();
-        /** @type {NodeListOf<HTMLButtonElement>} */ (
-          this.querySelectorAll("button[data-resolved]")
-        ).forEach((choice) => {
-          const selected =
-            (choice.dataset.resolved === "true") === this._resolved;
-          choice.setAttribute("aria-pressed", String(selected));
-          choice.className = selected ? "btn-ink" : "btn-outline";
-        });
-        this._syncSave();
-        const hint = /** @type {HTMLElement} */ (
-          this.querySelector("[data-save-hint]")
-        );
-        hint.hidden = false;
-        hint.textContent = this._saveHint();
-      }),
-    );
+    bindYesNoChoice(this, "resolved", (value) => {
+      this._resolved = value;
+      this._syncCustomValidity();
+      this._syncSave();
+      const hint = /** @type {HTMLElement} */ (
+        this.querySelector("[data-save-hint]")
+      );
+      hint.hidden = false;
+      hint.textContent = this._saveHint();
+    });
     /** @type {HTMLButtonElement} */ (
       this.querySelector("button[data-save]")
     )?.addEventListener("click", () => this._save());

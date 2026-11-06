@@ -248,7 +248,7 @@ test("edit details keeps custom resolution in draft until Save", async ({
     .locator("[data-custom]")
     .locator("textarea")
     .fill("Asked the site team to help.");
-  await page.locator('[data-resolved="false"]').click();
+  await page.locator('[data-resolved="no"]').click();
   expect(writes).toHaveLength(0);
   await page.locator("[data-save]").click();
   await expect.poll(() => writes.length).toBe(1);
@@ -470,8 +470,8 @@ test("Not yet saves explicitly, shows progress, and confirms the destination on 
   await page
     .locator("[data-custom] textarea")
     .fill("Asked the site team to help.");
-  await page.locator('[data-resolved="false"]').click();
-  await expect(page.locator('[data-resolved="false"]')).toHaveAttribute(
+  await page.locator('[data-resolved="no"]').click();
+  await expect(page.locator('[data-resolved="no"]')).toHaveAttribute(
     "aria-pressed",
     "true",
   );
@@ -521,7 +521,7 @@ test("the saved-action receipt collapses without motion", async ({ page }) => {
   await page
     .locator("[data-custom] textarea")
     .fill("Asked the site team to help.");
-  await page.locator('[data-resolved="false"]').click();
+  await page.locator('[data-resolved="no"]').click();
   await page.locator("[data-save]").click();
   await expect(page.locator(".saved-action-card")).toBeVisible();
   await expect(page.locator(".saved-action-card")).toHaveCSS(
@@ -546,7 +546,7 @@ test("a resolved custom action explains the History destination", async ({
   await page
     .locator("[data-custom] textarea")
     .fill("The site team picked up the wrappers.");
-  await page.locator('[data-resolved="true"]').click();
+  await page.locator('[data-resolved="yes"]').click();
   await expect(page.locator("[data-save-hint]")).toHaveText(
     t("taskDetails.saveResolvedHint"),
   );
@@ -569,7 +569,7 @@ test("a resolved custom action explains the History destination", async ({
   );
 });
 
-for (const outcome of ["false", "true"]) {
+for (const outcome of ["no", "yes"]) {
   test(`empty custom action highlights its required field for outcome ${outcome}`, async ({
     page,
   }) => {
@@ -631,7 +631,7 @@ test("navigation immediately clears a saved-action overlay without collapsing it
   await page
     .locator("[data-custom] textarea")
     .fill("Asked the site team to help.");
-  await page.locator('[data-resolved="false"]').click();
+  await page.locator('[data-resolved="no"]').click();
   await page.locator("[data-save]").click();
   await expect(page.locator(".saved-action-card")).toBeVisible();
   await page.locator("[data-test-navigate]").click();

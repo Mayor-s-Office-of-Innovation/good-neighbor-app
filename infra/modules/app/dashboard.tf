@@ -295,6 +295,7 @@ locals {
           [local.metrics_namespace, "Sf311ReconciliationBlocked", { label = "311 blocked reconciliation events" }],
           [local.metrics_namespace, "Sf311ConnectionFailed", { label = "311 connection failure attempts" }],
           [local.security_namespace, "MediaRejected", { label = "media rejected" }],
+          [local.security_namespace, "ImageRejected", { label = "images rejected (all upload paths)" }],
           [local.security_namespace, "MediaQuotaExceeded", { label = "media quota exceeded" }],
           [local.error_namespace, "ClientErrorForwardFailed", { label = "client-error forward failed" }],
           [local.error_namespace, "ClientEventForwardFailed", { label = "client-event forward failed" }],

@@ -266,6 +266,19 @@
           </div>
         </div>
 
+        <p class="ds-label">Yes / No pair</p>
+        <div class="ds-grid">
+          <div class="ds-cell">
+            <div id="ds-yes-no"></div>
+            <small
+              >yesNoChoice() + bindYesNoChoice() in components/yes-no-choice.js
+              — the picked answer is .btn-ink, the other .btn-outline; both
+              outlined until answered. Wrap it in your own fieldset or section
+              with the question.</small
+            >
+          </div>
+        </div>
+
         <p class="ds-label">Dark mode</p>
         <div class="ds-theme-wrap">
           <small style="color: var(--text-faint)">
@@ -583,6 +596,22 @@
 
       import "/src/styles/tokens.css";
       import "/src/styles/base.css";
+      import {
+        bindYesNoChoice,
+        yesNoChoice,
+      } from "/src/components/yes-no-choice.js";
+
+      // Yes / No pair — live, so clicking shows the selected state.
+      const yesNo = document.getElementById("ds-yes-no");
+      if (yesNo) {
+        yesNo.innerHTML = yesNoChoice({
+          name: "ds-answer",
+          value: null,
+          yesLabel: "Yes",
+          noLabel: "No",
+        });
+        bindYesNoChoice(yesNo, "ds-answer", () => {});
+      }
 
       // Theme toggle — the app's own mechanism (one class on <html>).
       const root = document.documentElement;

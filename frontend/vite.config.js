@@ -94,13 +94,16 @@ const offlineShell = VitePWA({
     ],
     navigateFallback: null,
     directoryIndex: null,
+    // Never add a route for /checks/*: photos are private and a Cache Storage
+    // copy would outlive sign-out. The browser's HTTP cache (Cache-Control:
+    // private from the edge) is the only cache for them.
     runtimeCaching: [
       {
         // Serialized into sw.js: keep it self-contained (no outer references).
         urlPattern: ({ request, sameOrigin, url }) =>
           request.mode === "navigate" &&
           sameOrigin &&
-          !/^\/(?:v1|app\/v1|site-code|submissions|health)(?:\/|$)/.test(
+          !/^\/(?:v1|app\/v1|site-code|submissions|health|checks)(?:\/|$)/.test(
             url.pathname,
           ) &&
           !/\.[^/]*$/.test(url.pathname),
@@ -254,6 +257,12 @@ export default defineConfig(({ mode, command }) => {
         "/app/v1": apiProxy,
         "/site-code": apiProxy,
         "/health": apiProxy,
+        // Check photos behind CloudFront signed cookies (infra media.tf), at
+        // their object key under /checks/ (plural; the SPA route is /check). In
+        // remote mode the deployed edge serves them and the cookies set by the
+        // proxied session routes ride back through this proxy; the local
+        // harness has no /checks route and the feature is off there.
+        "/checks": apiProxy,
         // DynamoDB/SQS stay behind the API, but presigned media uploads go
         // directly to S3. Proxy the local bucket path so a phone using the HTTPS
         // ngrok origin can reach MinIO without receiving an unusable localhost
