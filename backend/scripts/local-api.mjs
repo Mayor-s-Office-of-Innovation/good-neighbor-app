@@ -40,7 +40,7 @@ import {
 // of truth for real infra.
 
 import { handler as supportHandler } from "../src/support/handler.js";
-import { createServer, request as httpRequest } from "node:http";
+import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import {
   LOCAL_INSIGHTS_JOBS_BUCKET,
@@ -467,11 +467,7 @@ const routes = [
     "/admin/v1/system-status/{siteId}/media/{checkId}/{artifactId}",
     getStatusMedia,
   ),
-  route(
-    "GET",
-    "/admin/v1/sites/{siteId}/record-photos",
-    photoLinksViaApi(getRecordPhotos),
-  ),
+  route("GET", "/admin/v1/sites/{siteId}/record-photos", getRecordPhotos),
   route(
     "GET",
     "/admin/v1/system-status/{siteId}/duplicates/{taskId}",
@@ -741,57 +737,10 @@ function readBody(req) {
   });
 }
 
-// The Insights board's dev server forwards only /api, so Insights photo links
-// come here and go on to MinIO. Host and path stay as signed, so MinIO still
-// checks each link's signature.
-const UPLOADS_PATH = `/${process.env.S3_UPLOAD_BUCKET}/`;
-const PUBLIC_S3 = process.env.S3_PUBLIC_PRESIGN_ENDPOINT?.replace(/\/$/, "");
-
-/** @param {(...args: any[]) => any} handler */
-function photoLinksViaApi(handler) {
-  return async (/** @type {any[]} */ ...args) => {
-    const result = await handler(...args);
-    if (!PUBLIC_S3 || typeof result?.body !== "string") return result;
-    return {
-      ...result,
-      body: result.body.replaceAll(
-        `${PUBLIC_S3}${UPLOADS_PATH}`,
-        `${PUBLIC_S3}/api${UPLOADS_PATH}`,
-      ),
-    };
-  };
-}
-
-/** @param {import("node:http").IncomingMessage} req @param {import("node:http").ServerResponse} res */
-function passToMinio(req, res) {
-  const minio = new URL(String(process.env.AWS_ENDPOINT_URL_S3));
-  const upstream = httpRequest(
-    {
-      hostname: minio.hostname,
-      port: minio.port,
-      path: req.url,
-      method: "GET",
-      headers: { host: new URL(String(PUBLIC_S3)).host },
-    },
-    (reply) => {
-      res.writeHead(reply.statusCode ?? 502, reply.headers);
-      reply.pipe(res);
-    },
-  );
-  upstream.on("error", () => {
-    res.writeHead(502);
-    res.end();
-  });
-  upstream.end();
-}
-
 const server = createServer(async (req, res) => {
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
-
-  if (method === "GET" && PUBLIC_S3 && path.startsWith(UPLOADS_PATH))
-    return passToMinio(req, res);
 
   if (method === "OPTIONS") {
     res.writeHead(204, {
