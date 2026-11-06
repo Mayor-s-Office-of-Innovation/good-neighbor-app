@@ -136,6 +136,7 @@ class InsightsOverview extends HTMLElement {
           select.dataset.allLabel,
           options[/** @type {keyof typeof options} */ (name)],
           /** @type {any} */ (this.state)[name],
+          name === "managerId" ? this.me : "",
         );
         select.value = /** @type {any} */ (this.state)[name];
       }
@@ -350,8 +351,6 @@ class InsightsOverview extends HTMLElement {
       );
       if (select) select.value = this.state[name];
     }
-    const mine = /** @type {any} */ (this.querySelector("#insights-mine"));
-    if (mine) mine.checked = this.state.managerId === this.me;
   }
 
   searchChanged() {
@@ -371,9 +370,6 @@ class InsightsOverview extends HTMLElement {
     const target = /** @type {any} */ (event.target);
     // wa-input's clear button fires change without input.
     if (target.id === "insights-search") return this.search.schedule();
-    // The Manager filter set to the user, so a shared link shows the same Sites.
-    if (target.id === "insights-mine")
-      return this.refine({ managerId: target.checked ? this.me : "" });
     const filter = target.dataset?.filter;
     if (filter) {
       const value = String(target.value ?? "");

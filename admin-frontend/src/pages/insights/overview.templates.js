@@ -29,24 +29,39 @@ import {
  * @param {string} allLabel
  * @param {Option[]} options
  * @param {string} selected
+ * @param {string} [me] the signed-in manager's ID; listed first so they find their own Sites at once
  */
-export function optionsView(allLabel, options, selected) {
+export function optionsView(allLabel, options, selected, me = "") {
   // A value from a link that the options don't list still shows as chosen.
   const listed =
     selected && !options.some((o) => o.value === selected)
       ? [...options, { value: selected, label: selected }]
       : options;
-  return `<wa-option value="">${escapeHtml(allLabel)}</wa-option>${listed
-    .map(
-      (o) =>
-        `<wa-option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</wa-option>`,
-    )
-    .join("")}`;
+  const own = me ? listed.find((o) => o.value === me) : undefined;
+  const rest = own
+    ? listed
+        .filter((o) => o !== own)
+        .sort((a, b) => a.label.localeCompare(b.label))
+    : listed;
+  /** @param {Option} o @param {string} [label] */
+  const option = (o, label = o.label) =>
+    `<wa-option value="${escapeHtml(o.value)}">${escapeHtml(label)}</wa-option>`;
+  return `<wa-option value="">${escapeHtml(allLabel)}</wa-option>${
+    own
+      ? `${option(own, t("admin.insights.filter.me", { name: own.label }))}<wa-divider></wa-divider>`
+      : ""
+  }${rest.map((o) => option(o)).join("")}`;
 }
 
-/** @param {string} name @param {string} allLabel @param {Option[]} options @param {string} selected */
-function select(name, allLabel, options, selected) {
-  return `<wa-select data-filter="${name}" data-all-label="${escapeHtml(allLabel)}" aria-label="${escapeHtml(allLabel)}" placeholder="${escapeHtml(allLabel)}" value="${escapeHtml(selected)}" size="s" pill>${optionsView(allLabel, options, selected)}</wa-select>`;
+/**
+ * @param {string} name
+ * @param {string} allLabel
+ * @param {Option[]} options
+ * @param {string} selected
+ * @param {string} [me]
+ */
+function select(name, allLabel, options, selected, me = "") {
+  return `<wa-select data-filter="${name}" data-all-label="${escapeHtml(allLabel)}" aria-label="${escapeHtml(allLabel)}" placeholder="${escapeHtml(allLabel)}" value="${escapeHtml(selected)}" size="s" pill>${optionsView(allLabel, options, selected, me)}</wa-select>`;
 }
 
 /** @param {string} key admin.insights.label.* @param {string} body */
@@ -80,12 +95,7 @@ export function filtersView(state, options, me = "") {
     )}
     ${controlRow(
       "filter",
-      `${
-        me
-          ? `<wa-checkbox id="insights-mine" size="s" ${state.managerId === me ? "checked" : ""}>${escapeHtml(t("admin.insights.filter.mine"))}</wa-checkbox>`
-          : ""
-      }
-      ${select("managerId", t("admin.insights.filter.managerId"), options.managerId, state.managerId)}
+      `${select("managerId", t("admin.insights.filter.managerId"), options.managerId, state.managerId, me)}
       ${select("providerId", t("admin.insights.filter.providerId"), options.providerId, state.providerId)}
       ${select("department", t("admin.insights.filter.department"), options.department, state.department)}
       ${helpTip("insights-tip-filter", t("admin.insights.label.filter"), t("admin.insights.filter.help"))}`,

@@ -183,31 +183,40 @@ test("a filter narrows the table, goes in the URL and clears the selection", asy
   assert.equal($("#insights-report").getAttribute("aria-disabled"), "true");
 });
 
-test("Assigned to me shows the signed-in manager's own Sites and keeps the choice in the URL", async () => {
+test("a compliance manager finds their own name first in the Manager filter", async () => {
   const { api } = await mountAdmin("/insights?period=2026-10&show=all", {
     insights: true,
     role: "compliance-manager",
   });
-  await fill("#insights-mine", true);
+  await settle();
+  const select = $('wa-select[data-filter="managerId"]');
+  const items = [...select.children].map((el) =>
+    el.tagName === "WA-DIVIDER" ? "--" : el.textContent,
+  );
   // The mock's profile is linked to manager pm1.
+  const own = [...select.querySelectorAll("wa-option")].find(
+    (o) => o.getAttribute("value") === "pm1",
+  );
+  assert.equal(items[0], t("admin.insights.filter.managerId"));
+  assert.equal(items[1], own.textContent);
+  assert.match(own.textContent, /\(me\)$/);
+  assert.equal(items[2], "--");
+  const others = items.slice(3);
+  assert.deepEqual(others, [...others].sort((x, y) => x.localeCompare(y)));
+  assert.ok(missing("#insights-mine"));
+  // Picking it shows their own Sites and keeps the choice in the URL; s4 is pm2's.
+  await fill('wa-select[data-filter="managerId"]', "pm1");
   assert.equal(url(), "/insights?period=2026-10&show=all&managerId=pm1");
   assert.equal(lastOverviewCall(api).managerId, "pm1");
-  // s4 is pm2's.
   assert.deepEqual(rows(), ["s1", "s3", "s2"]);
-  assert.equal($('wa-select[data-filter="managerId"]').value, "pm1");
-  // Another manager unticks it; unticking shows every manager again.
-  await fill('wa-select[data-filter="managerId"]', "pm2");
-  assert.equal($("#insights-mine").checked, false);
-  await fill('wa-select[data-filter="managerId"]', "pm1");
-  assert.equal($("#insights-mine").checked, true);
-  await fill("#insights-mine", false);
-  assert.equal(url(), "/insights?period=2026-10&show=all");
-  assert.equal(lastOverviewCall(api).managerId, undefined);
 });
 
-test("a supervisor, who manages no Sites, gets no Assigned to me", async () => {
+test("a supervisor, who manages no Sites, sees no (me) option", async () => {
   await mountAdmin("/insights?period=2026-10", { insights: true });
-  assert.ok(missing("#insights-mine"));
+  await settle();
+  const select = $('wa-select[data-filter="managerId"]');
+  assert.doesNotMatch(select.textContent, /\(me\)/);
+  assert.equal(select.querySelector("wa-divider"), null);
 });
 
 test("Overview names the exact interval under the count, and no version", async () => {
