@@ -3,9 +3,13 @@ import { MAX_TASK_UPDATE_TEXT } from "../domain/task-update-draft.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { hasKey, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
-import { formatPacificDateTime } from "../domain/task-updates.js";
+import {
+  cityNoteLabelKey,
+  formatPacificDateTime,
+} from "../domain/task-updates.js";
 import { artifactPhoto } from "./artifact-photo.templates.js";
 import { yesNoChoice } from "./yes-no-choice.js";
+import "./status-ticker.css";
 
 /** @param {string} type */
 export function taskUpdateTimelineTone(type) {
@@ -50,6 +54,28 @@ export function taskUpdateActions() {
       ${escapeHtml(t("taskUpdate.markResolved"))}
     </button>
   </div>`;
+}
+
+/**
+ * Where the update's "no longer need City help" note stands. Users can't
+ * retry it (the queue retries, then operators), so this is a label only.
+ * @param {Record<string, any>} update
+ */
+function cityNoteState(update) {
+  const key = cityNoteLabelKey(update.cityNoteStatus);
+  if (!key) return "";
+  const failed = update.cityNoteStatus === "failed";
+  // Reuses the status ticker's look so no new CSS lands in the main bundle.
+  return html`<span
+    class="status-ticker status-ticker--${failed ? "danger" : "muted"}"
+    data-city-note-status="${escapeAttr(update.cityNoteStatus)}"
+  >
+    <wa-icon
+      name="${failed ? "triangle-exclamation" : "paper-plane"}"
+      aria-hidden="true"
+    ></wa-icon>
+    <span>${escapeHtml(t(key))}</span>
+  </span>`;
 }
 
 /**
@@ -109,6 +135,7 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
             >${escapeHtml(formatPacificDateTime(update.occurredAt))}</time
           >`
         : ""}
+      ${cityNoteState(update)}
       ${update.type === "city_status" && cityText
         ? html`<p>${escapeHtml(cityText)}</p>`
         : ""}

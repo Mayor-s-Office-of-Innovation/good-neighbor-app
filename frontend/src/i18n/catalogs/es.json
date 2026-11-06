@@ -1549,6 +1549,8 @@
   "taskUpdate.cityHelp.no": "No",
   "taskUpdate.cityHelp.title": "¿Todavía necesita ayuda de la Ciudad?",
   "taskUpdate.cityHelp.yes": "Sí",
+  "taskUpdate.cityNote.failed": "No se pudo enviar a la Ciudad",
+  "taskUpdate.cityNote.sending": "Enviando a la Ciudad",
   "taskUpdate.created.perimeter": "Problema agregado durante una revisión del perímetro",
   "taskUpdate.created.single": "Problema agregado como problema individual",
   "taskUpdate.discard.cancel": "Volver a editar",
