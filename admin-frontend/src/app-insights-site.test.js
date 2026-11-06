@@ -23,6 +23,19 @@ import {
 } from "./pages/insights/insights.templates.js";
 
 const url = () => window.location.pathname + window.location.search;
+
+/** @param {string | Element} target @param {string} key */
+async function press(target, key) {
+  const element = typeof target === "string" ? $(target) : target;
+  element.dispatchEvent(
+    new window.KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  await settle();
+}
 /** @param {string} key */
 const activity = (key) =>
   text(`[data-activity="${key}"] [data-activity-count]`);
@@ -226,6 +239,7 @@ test("both Site Issue lists are tables with the same column headings and no ID",
     t("admin.insights.siteIssues.col.createdAt"),
     t("admin.insights.siteIssues.col.responseTime"),
     t("admin.insights.siteIssues.col.onTime"),
+    t("admin.insights.raw.col.open"),
   ];
   for (const list of ["severity", "response"]) {
     assert.deepEqual(
@@ -239,7 +253,7 @@ test("both Site Issue lists are tables with the same column headings and no ID",
       $$(`[data-list="${list}"] tbody tr [data-label]`).map(
         (c) => c.dataset.label,
       ),
-      heads,
+      heads.slice(0, 4),
     );
   }
   assert.ok(
@@ -269,18 +283,53 @@ test("each Site Issue row shows when it was created and how long the response to
   );
 });
 
-test("Site Issue rows and Activity link nowhere while Raw data has no records", async () => {
+test("a click elsewhere on a Site Issue row opens the Issue", async () => {
   await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
-  assert.deepEqual(listed(), ["t2"]);
   await click(
     '[data-list="response"] [data-issue-row="t2"] [data-issue-created]',
   );
-  assert.equal(url(), "/insights/sites/s1?period=2026-10");
+  assert.ok($("#insights-panel-close"));
+});
+
+test("a row click with a modifier key, or after selecting text, leaves the Issue closed", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
+  const cell =
+    '[data-list="response"] [data-issue-row="t2"] [data-issue-created]';
+  const stay = (/** @type {Event} */ event) => event.preventDefault();
+  window.addEventListener("click", stay, true);
+  $(cell).dispatchEvent(
+    new window.MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+    }),
+  );
+  window.removeEventListener("click", stay, true);
+  await settle();
+  assert.ok(missing("[data-record-panel]"));
+  window.getSelection().selectAllChildren($(cell));
+  await click(cell);
+  assert.ok(missing("[data-record-panel]"));
+  window.getSelection().removeAllRanges();
+  await click(cell);
+  assert.ok($("[data-record-panel]"));
+});
+
+test("the Raw data links go to this Site's Issues and Checks for the period", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
   assert.deepEqual(
-    $$("[data-list] [data-issue-row] a, [data-charts] a").map((a) =>
-      a.getAttribute("href"),
-    ),
-    [],
+    [
+      $("#insights-site-raw").getAttribute("href"),
+      $("#insights-site-checks").getAttribute("href"),
+      $("#insights-site-issues").getAttribute("href"),
+      text("#insights-site-raw"),
+    ],
+    [
+      "/insights/raw/issues?period=2026-10&siteIds=s1",
+      "/insights/raw/checks?period=2026-10&siteIds=s1",
+      "/insights/raw/issues?period=2026-10&siteIds=s1",
+      t("admin.insights.viewAllIssues", { count: 9 }),
+    ],
   );
 });
 
@@ -513,6 +562,26 @@ test("five response tiles count each state, and Overdue and Responded late list 
   assert.deepEqual(pressed(), ["overdue", "late"]);
   assert.deepEqual(issueStates(api), ["overdue,late"]);
   assert.deepEqual(listed(), ["t2"]);
+});
+
+test("an Issue opens beside the Site; Esc returns to it, and Open in Raw data leads back here", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
+  const site = url();
+  await click('[data-issue-row="t2"] a');
+  const panel = $("[data-record-panel]");
+  assert.equal(panel.open, true);
+  assert.equal(url(), site);
+  assert.equal(text("#insights-panel-full"), t("admin.insights.panel.openRaw"));
+  await press("#insights-panel", "Escape");
+  assert.ok(missing("[data-record-panel]"));
+  assert.ok(focused('[data-issue-row="t2"] a'));
+  await click('[data-issue-row="t2"] a');
+  await click("#insights-panel-full");
+  assert.match(url(), /^\/insights\/raw\/issues\/t2\?/);
+  // The trail starts at Site insights, and its crumb comes back here.
+  assert.equal(text('[data-crumb="root"]'), t("admin.insights.site"));
+  await click('[data-crumb="root"]');
+  assert.equal(url(), site);
 });
 
 test("picking a tile adds its Issues to the list, and picking it again takes them off", async () => {
@@ -1211,4 +1280,50 @@ test("a Site's large counts are grouped, as Raw data's counts are", async () => 
     t("admin.insights.raw.checksCount.other", { count: "12,345" }),
   );
   assert.equal(response("onTime"), "1,500");
+});
+
+test("a record link inside the Site page's panel switches it, and Esc still returns to the row", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
+  await click('[data-issue-row="t2"] a');
+  await click("#insights-panel [data-parent-check]");
+  assert.equal($("[data-record-panel]").open, true);
+  assert.equal(
+    text("#insights-panel-title"),
+    t("admin.insights.check", { id: "c1" }),
+  );
+  await press("#insights-panel", "Escape");
+  assert.ok(missing("[data-record-panel]"));
+  assert.ok(focused('[data-issue-row="t2"] a'));
+});
+
+test("the panel on a Site's own page names the Site without a link to it", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
+  await click('[data-issue-row="t2"] a');
+  assert.ok(missing("#insights-panel [data-record-site]"));
+  assert.match(text("#insights-panel [data-record-meta]"), /Example Site/);
+});
+
+test("Back from Open in Raw data lands on the Issue that was opened", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
+  const site = url();
+  await click('[data-issue-row="t2"] a');
+  await click("#insights-panel-full");
+  window.history.back();
+  await settle();
+  assert.equal(url(), site);
+  assert.ok(focused('[data-issue-row="t2"] a'));
+});
+
+test("Back from Open in Raw data on a Severe Issue keeps both lists' picks", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
+  const site = url();
+  await click('[data-list="response"] [data-tile="onTime"]');
+  await click('[data-list="severity"] [data-issue-row="t1"] a');
+  await click("#insights-panel-full");
+  window.history.back();
+  await settle();
+  assert.equal(url(), site);
+  assert.deepEqual(pressed("severity"), ["severe"]);
+  assert.deepEqual(pressed(), ["overdue", "late", "onTime"]);
+  assert.ok(focused('[data-list="severity"] [data-issue-row="t1"] a'));
 });

@@ -23,6 +23,7 @@ import {
   severityBand,
 } from "./insights.templates.js";
 import { bandView } from "./overview.templates.js";
+import { openColumnHead } from "./raw.templates.js";
 import { contactShown, showsTotal } from "./site-rules.js";
 
 /** @typedef {Record<string, any>} Reply */
@@ -249,8 +250,8 @@ const activityHelp = (key, owedPerDay) =>
     ? t("admin.insights.activityHelp.completedPerimeterChecksNoneOwed")
     : t(`admin.insights.activityHelp.${key}`, { min: owedPerDay ?? "" });
 
-/** @param {Reply} reply */
-function activityView(reply) {
+/** @param {Reply} reply @param {string} checksHref @param {string} issuesHref */
+function activityView(reply, checksHref, issuesHref) {
   const counts = reply.totals.activity;
   const noData = noDataFor(reply.meta);
   const interval = reply.meta.interval;
@@ -296,8 +297,8 @@ function activityView(reply) {
       return tile(key, rate, label, help, total);
     }).join("")}</div>
     <div class="insights__charts" data-charts>
-      <div data-chart-panel="checks"><h3>${escapeHtml(t(`admin.insights.chart.checks.${unit}`))}</h3>${activityChart(interval, points("completedPerimeterChecks"), "checks")}</div>
-      <div data-chart-panel="issues"><h3>${escapeHtml(t(`admin.insights.chart.issues.${unit}`))}</h3>${activityChart(interval, points("issuesCreated"), "issues")}</div>
+      <div data-chart-panel="checks"><h3>${escapeHtml(t(`admin.insights.chart.checks.${unit}`))}</h3>${activityChart(interval, points("completedPerimeterChecks"), "checks")}<p><a href="${escapeHtml(checksHref)}" data-route id="insights-site-checks">${escapeHtml(t("admin.insights.viewChecks"))}</a></p></div>
+      <div data-chart-panel="issues"><h3>${escapeHtml(t(`admin.insights.chart.issues.${unit}`))}</h3>${activityChart(interval, points("issuesCreated"), "issues")}<p><a href="${escapeHtml(issuesHref)}" data-route id="insights-site-issues">${escapeHtml(t("admin.insights.viewIssuesRaw"))}</a></p></div>
     </div>
     ${
       days.length
@@ -339,8 +340,8 @@ function tilesView(list, reply, tile) {
     .join("")}</div>`;
 }
 
-/** @param {SiteList} list @param {Reply} reply @param {string} tile */
-function listView(list, reply, tile) {
+/** @param {SiteList} list @param {Reply} reply @param {string} tile @param {string} issuesHref */
+function listView(list, reply, tile, issuesHref) {
   const count = reply.totals.activity.issuesCreated;
   const id = SITE_LISTS[list].heading;
   const heading =
@@ -352,7 +353,12 @@ function listView(list, reply, tile) {
     ? `<p class="muted" data-site-issues-empty>${escapeHtml(t("admin.insights.empty.noIssueData"))}</p>`
     : !count
       ? `<p class="muted" data-site-issues-empty>${escapeHtml(t("admin.insights.noIssuesInPeriod"))}</p>`
-      : `${tilesView(list, reply, tile)}<div data-region="issues"></div>`;
+      : `${tilesView(list, reply, tile)}<div data-region="issues"></div>${
+          // One link to every Issue is enough; it sits under the last list.
+          list === "response"
+            ? `<p><a href="${escapeHtml(issuesHref)}" data-route id="insights-site-raw">${escapeHtml(t("admin.insights.viewAllIssues", { count }))}</a></p>`
+            : ""
+        }`;
   return `<section class="insights__group" aria-labelledby="${id}" id="${id}-section" data-list="${list}">${heading}${body}</section>`;
 }
 
@@ -370,12 +376,12 @@ export function siteTopView({ reply, details, hrefs }) {
 
 /**
  * The period picker sits between siteTopView and this, just above Activity.
- * @param {{ reply: Reply, tiles: Record<SiteList, string> }} view
+ * @param {{ reply: Reply, tiles: Record<SiteList, string>, hrefs: { issues: string, checks: string } }} view
  */
-export function siteBodyView({ reply, tiles }) {
-  return `${activityView(reply)}
-  ${listView("severity", reply, tiles.severity)}
-  ${listView("response", reply, tiles.response)}`;
+export function siteBodyView({ reply, tiles, hrefs }) {
+  return `${activityView(reply, hrefs.checks, hrefs.issues)}
+  ${listView("severity", reply, tiles.severity, hrefs.issues)}
+  ${listView("response", reply, tiles.response, hrefs.issues)}`;
 }
 
 /** @param {number} ms */
@@ -483,7 +489,7 @@ function moreView(issues, more) {
 
 /**
  * The Issues behind the selected tiles, or behind a concern.
- * @param {{ list: SiteList, issues: Reply | null, failed: string, tile: string, concern?: string, more?: string }} view
+ * @param {{ list: SiteList, issues: Reply | null, failed: string, tile: string, concern?: string, more?: string, issueHref: (issue: Reply) => string }} view
  */
 export function siteIssuesView({
   list,
@@ -492,6 +498,7 @@ export function siteIssuesView({
   tile,
   concern = "",
   more = "",
+  issueHref,
 }) {
   if (!tile && !concern) return "";
   if (failed) return failedView(failed, SITE_LISTS[list].retry);
@@ -512,14 +519,15 @@ export function siteIssuesView({
   return `${intro}<div class="table-wrap insights__table insights__table--paged" data-insights-table>
     <table role="table">
       <caption class="visually-hidden">${escapeHtml(label)}</caption>
-      <thead role="rowgroup"><tr role="row">${ISSUE_COLUMNS.map((key) => `<th role="columnheader" scope="col">${escapeHtml(colLabel(key))}</th>`).join("")}</tr></thead>
+      <thead role="rowgroup"><tr role="row">${ISSUE_COLUMNS.map((key) => `<th role="columnheader" scope="col">${escapeHtml(colLabel(key))}</th>`).join("")}${openColumnHead()}</tr></thead>
       <tbody role="rowgroup">${rows
         .map((i) => {
           return `<tr role="row" data-issue-row="${escapeHtml(i.issueId)}">
-        <th role="rowheader" scope="row" data-label="${escapeHtml(colLabel("issue"))}">${bandView(severityBand(i.severity))} ${escapeHtml(i.category ? rulebookText(i.category, "rulebook.category") : t("admin.insights.issue.categoryUnknown"))}</th>
+        <th role="rowheader" scope="row" data-label="${escapeHtml(colLabel("issue"))}"><a href="${escapeHtml(issueHref(i))}" data-route data-panel-kind="issue" data-panel-id="${escapeHtml(i.issueId)}" data-panel-site="${escapeHtml(i.siteId)}">${bandView(severityBand(i.severity))} ${escapeHtml(i.category ? rulebookText(i.category, "rulebook.category") : t("admin.insights.issue.categoryUnknown"))}</a></th>
         <td role="cell" data-label="${escapeHtml(colLabel("createdAt"))}" data-issue-created>${escapeHtml(formatInstant(i.createdAt))}</td>
         <td role="cell" data-label="${escapeHtml(colLabel("responseTime"))}" data-issue-took>${responseTimeCell(i)}</td>
         <td role="cell" data-label="${escapeHtml(colLabel("onTime"))}" data-issue-on-time>${onTimeCell(i)}</td>
+        <td role="cell" class="insights__chev" aria-hidden="true"><wa-icon name="chevron-right"></wa-icon></td>
       </tr>`;
         })
         .join("")}</tbody>

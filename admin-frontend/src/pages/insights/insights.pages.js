@@ -1,6 +1,8 @@
 // Insights page shells. Loaded on first visit, so Manage never downloads them.
 import "./insights.css";
 import "./overview.view.js";
+import "./raw-list.view.js";
+import "./raw-record.view.js";
 import "./site.view.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
@@ -18,10 +20,6 @@ function decodeSegment(segment) {
 
 /** @param {{ name: string, id: string }} route */
 function pageTitle(route) {
-  if (route.name === "insights-issue")
-    return t("admin.insights.issue", { id: decodeSegment(route.id) });
-  if (route.name === "insights-check")
-    return t("admin.insights.check", { id: decodeSegment(route.id) });
   if (route.name === "insights-trends") return t("admin.insights.trends");
   if (route.name.startsWith("insights-")) return t("admin.insights.raw");
   return t("admin.insights.overview");
@@ -49,6 +47,9 @@ export function insightsPageView(route, search) {
   const query = carriedQuery(search);
   const raw = /^insights-(issue|check)s?$/.test(route.name);
   const checks = route.name.startsWith("insights-check");
+  // A record replaces the list, as the mock's do, so it has no list tabs.
+  const record =
+    route.name === "insights-issue" || route.name === "insights-check";
   const section =
     route.name === "insights-trends" ? "trends" : raw ? "raw" : "overview";
   // Past the length cap the return would be refused, so keep the period then.
@@ -82,36 +83,22 @@ export function insightsPageView(route, search) {
       !raw,
     )}
     ${
-      // Site insights names its Site, which only its data knows.
-      route.name === "insights-site"
+      // Raw data draws its own title row, for Export CSV; Site and record pages name what only their data knows.
+      raw || route.name === "insights-site"
         ? ""
         : `<div class="page-head"><h1 id="insights-title" tabindex="-1">${escapeHtml(pageTitle(route))}</h1></div>`
     }
-    ${route.name === "insights" || route.name === "insights-site" ? "" : freshnessView(null)}
-    ${
-      raw
-        ? subnav("admin.insights.rawLabel", "", [
-            [
-              'data-insights-raw="issues"',
-              "admin.insights.issues",
-              `/insights/raw/issues${query}`,
-              !checks,
-            ],
-            [
-              'data-insights-raw="checks"',
-              "admin.insights.checks",
-              `/insights/raw/checks${query}`,
-              checks,
-            ],
-          ])
-        : ""
-    }
+    ${route.name === "insights-trends" ? freshnessView(null) : ""}
     ${
       route.name === "insights"
         ? "<insights-overview></insights-overview>"
         : route.name === "insights-site"
           ? `<insights-site data-site-id="${escapeHtml(decodeSegment(route.id))}" data-here="${escapeHtml(here)}"></insights-site>`
-          : `<p class="empty-state">${escapeHtml(t("admin.insights.notReady"))}</p>`
+          : record
+            ? `<insights-record data-kind="${checks ? "check" : "issue"}" data-id="${escapeHtml(decodeSegment(route.id))}" data-here="${escapeHtml(here)}"></insights-record>`
+            : raw
+              ? `<insights-raw-list data-kind="${checks ? "checks" : "issues"}"></insights-raw-list>`
+              : `<p class="empty-state">${escapeHtml(t("admin.insights.notReady"))}</p>`
     }
   </section>`;
 }

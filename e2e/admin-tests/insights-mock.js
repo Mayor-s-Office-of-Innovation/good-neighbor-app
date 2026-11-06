@@ -596,6 +596,35 @@ function issuesReply(query) {
   };
 }
 
+/**
+ * Checks for a request, filtered as listChecks does; the fake has one Check.
+ * @param {Record<string, string>} query
+ */
+function checksReply(query) {
+  const period = requestedPeriod(query);
+  const filter = parseSiteFilter(query);
+  const { filters } = parseListQuery("checks", query);
+  const sites = new Set(
+    SITES.filter((s) => siteMatches(s, filter)).map((s) => s.siteId),
+  );
+  const rows = [{ ...check, siteName: "Example Site" }].filter(
+    (c) =>
+      sites.has(c.siteId) &&
+      c.day >= period.startDay &&
+      c.day < period.endDay &&
+      (!filters.state || c.state === filters.state) &&
+      (!filters.source || c.source === filters.source),
+  );
+  return {
+    json: {
+      meta: meta(period),
+      total: rows.length,
+      checks: rows,
+      nextCursor: null,
+    },
+  };
+}
+
 const siteRef = {
   siteId: SITE_ID,
   name: "Example Site",
@@ -650,14 +679,7 @@ export const insightsReplies = {
   "GET reporting/issues": issuesReply(OCTOBER_QUERY),
   // The reply the mock really sends, so the shape test checks it.
   "GET reporting/issues/{issueId}": issueRecord("t1"),
-  "GET reporting/checks": {
-    json: {
-      meta: meta(OCTOBER),
-      total: 1,
-      checks: [{ ...check, siteName: "Example Site" }],
-      nextCursor: null,
-    },
-  },
+  "GET reporting/checks": checksReply(OCTOBER_QUERY),
   "GET reporting/checks/{checkId}": {
     json: { meta: meta(null), check, issues: [issue], site: siteRef },
   },
@@ -787,6 +809,7 @@ export function insightsReply(request) {
     if (found.key === "GET reporting/overview")
       return copy(overviewReply(query));
     if (found.key === "GET reporting/issues") return copy(issuesReply(query));
+    if (found.key === "GET reporting/checks") return copy(checksReply(query));
     if (found.key === "GET reporting/sites/{siteId}")
       return copy(siteReply(id, query));
   } catch (err) {
