@@ -1,6 +1,7 @@
 // The admin E2E suite runs against e2e/admin-tests/insights-mock.js. This
 // holds that fake to the real handlers: same routes, same status, same
 // fields and value types, so a changed reply can't leave specs passing.
+import { URLSearchParams } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   insightsReplies,
@@ -10,7 +11,9 @@ import {
   createReportingHandlers,
   reportingRoutes,
 } from "../../handlers/admin-reporting.js";
+import { CONCERN_RULES as ADMIN_CONCERN_RULES } from "../../../../admin-frontend/src/pages/insights/concern-rules.js";
 import { memoryJobStore } from "./jobs.js";
+import { CONCERN_RULES } from "./read-model.js";
 import { createSnapshotStore } from "./snapshot.js";
 import { syntheticProjection } from "./test-projection.js";
 
@@ -137,7 +140,10 @@ async function realReplies() {
     "GET reporting/checks/{checkId}": await h.getCheck(
       event({ path: { checkId: "c1" } }),
     ),
-    "GET reporting/scope-options": await h.getScopeOptions(event()),
+    // The report dialog lists Sites from this; Overview's filters ask without it.
+    "GET reporting/scope-options": await h.getScopeOptions(
+      event({ query: { include: "sites" } }),
+    ),
     "POST reporting/trends": await h.postTrends(
       event({
         body: {
@@ -185,6 +191,7 @@ describe("the admin E2E Insights mock", () => {
       body("POST reporting/trends").categories.length,
       body("POST reporting/trends").breakdown.length,
       body("GET reporting/checks/{checkId}").issues.length,
+      body("GET reporting/scope-options").sites.length,
     ]).not.toContain(0);
     expect(body("GET reports/{jobId}").job.state).toBe("succeeded");
   });
@@ -214,23 +221,56 @@ describe("the admin E2E Insights mock", () => {
     },
   );
 
-  it.each(["ascending", ""])(
-    "refuses a sort direction of %j as the handler does",
-    async (dir) => {
-      const real = await handlers.getOverview(
-        event({ query: { ...october, dir } }),
-      );
-      const mock = insightsReply({
-        method: "GET",
-        path: "reporting/overview",
-        search: `period=month&month=2026-10&dir=${dir}`,
-      });
-      expect([mock?.status, mock?.json]).toEqual([
-        real.statusCode,
-        JSON.parse(real.body),
-      ]);
-    },
-  );
+  it.each([
+    ["reporting/overview", "dir=ascending", "getOverview"],
+    ["reporting/overview", "dir=", "getOverview"],
+    ["reporting/overview", "show=", "getOverview"],
+    ["reporting/overview", "show=bogus", "getOverview"],
+    ["reporting/overview", "siteIds=", "getOverview"],
+    ["reporting/overview", "responseState=overdue,bogus", "getOverview"],
+    ["reporting/overview", "period=", "getOverview"],
+    ["reporting/overview", "month=2026-00", "getOverview"],
+    ["reporting/issues", "responseState=bogus", "listIssues"],
+    ["reporting/issues", "severityBand=Severe", "listIssues"],
+    ["reporting/issues", "concern=fewChecks", "listIssues"],
+    ["reporting/issues", "sort=bogus", "listIssues"],
+    ["reporting/issues", "cursor=bogus", "listIssues"],
+    ["reporting/sites/nope", "period=bogus", "getSite"],
+  ])("refuses %s?%s as the handler does", async (path, extra, name) => {
+    const query = {
+      ...october,
+      ...Object.fromEntries(new URLSearchParams(extra)),
+    };
+    const real = await handlers[name](
+      event({ query, path: { siteId: path.split("/").pop() ?? "" } }),
+    );
+    const mock = insightsReply({
+      method: "GET",
+      path,
+      search: new URLSearchParams(query).toString(),
+    });
+    expect(real.statusCode).toBe(400);
+    expect([mock?.status, mock?.json]).toEqual([
+      real.statusCode,
+      JSON.parse(real.body),
+    ]);
+  });
+
+  it("leaves out the Site list unless a screen asks for it, as the handler does", async () => {
+    const real = await handlers.getScopeOptions(event());
+    const mock = insightsReply({
+      method: "GET",
+      path: "reporting/scope-options",
+    });
+    expect([
+      "sites" in JSON.parse(real.body),
+      "sites" in (mock?.json ?? {}),
+    ]).toEqual([false, false]);
+  });
+
+  it("explains on the admin pages the same concern limits the server flags", () => {
+    expect(ADMIN_CONCERN_RULES).toEqual(CONCERN_RULES);
+  });
 
   it("opens the record of every Issue its lists show", () => {
     const listed = insightsReply({

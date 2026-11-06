@@ -46,10 +46,14 @@ test("a manager selects every Site and gets a report link without leaving the pa
   await expect(page.locator("#insights-report")).toHaveText(
     t("admin.insights.report.generating"),
   );
-  await page.clock.runFor(2000);
-  await expect(page.getByRole("dialog")).toHaveAccessibleName(
-    t("admin.insights.report.done"),
-  );
+  // The poll's timer starts only once the POST returns, so step the clock until it fires.
+  await expect(async () => {
+    await page.clock.runFor(2000);
+    await expect(page.getByRole("dialog")).toHaveAccessibleName(
+      t("admin.insights.report.done"),
+      { timeout: 500 },
+    );
+  }).toPass();
   await expect(page.locator("#insights-report-download")).toBeVisible();
   expect(api.calls("POST", /^reports\/insights$/)[0].body.siteIds).toEqual([
     "s1",
