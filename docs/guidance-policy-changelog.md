@@ -17,10 +17,13 @@
   ([PR #62](https://github.com/Mayor-s-Office-of-Innovation/street-conditions-analysis/pull/62)),
   restoring its complete Animals description safeguards and the Blocked doorway
   or sidewalk severity 0–1 distinction between easy passage and meaningful
-  obstruction. The target analyzer rubric is `good-neighbor-app@3.0.0`.
-  The app retains its `2.0.0` request pin until the target environment serves
-  the explicit `3.0.0` rubric endpoint and successfully analyzes a synthetic
-  request pinned to `3.0.0`. No analyzer request-version change has been made.
+  obstruction. The app now pins `good-neighbor-app@3.0.0`, following successful
+  explicit-version endpoint checks and synthetic analyses in dev and prod on
+  2026-11-05. Both returned rubric `3.0.0`, grade Excellent, and zero concerns
+  for a clear-scene text including natural leaves and ordinary pavement repairs;
+  input retention and signed-URL return were disabled. Historical stored rubric
+  references and action policy `actions-escalations-v11` remain unchanged.
+  The live smoke script now checks the exact rubric endpoint and response version.
 - Bulky classifier fallbacks now use `1.1.4.7.21.0` for empty, unknown, malformed,
   or failed classifications. Recognized labels retain their explicit mappings.
 - Silent ticket resolution retains UpdateSR type 11, reason 1 (resolved).
