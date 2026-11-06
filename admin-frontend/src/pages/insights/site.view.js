@@ -2,22 +2,17 @@
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
 import { adminApi } from "../../services/admin-api.js";
-import {
-  overviewSearch,
-  periodApiParams,
-  periodSearch,
-  readOverview,
-  readPeriod,
-  samePeriod,
-} from "./insights-query.js";
-import { carriedQuery, safeReturnPath } from "./insights-routes.js";
+import { periodApiParams, periodSearch, readPeriod } from "./insights-query.js";
+import { safeReturnPath } from "./insights-routes.js";
 import { sessionOf } from "./insights-session.js";
+import { LatestLoad, superseded } from "./latest-load.js";
 import {
   drawPeriodControl,
   failedView,
   failureText,
   freshnessView,
   loadingView,
+  monthOfToday,
   showLoaded,
   showLoading,
   periodClicked,
@@ -25,6 +20,13 @@ import {
   periodName,
   rangeLabel,
 } from "./insights.templates.js";
+import {
+  alsoPath,
+  backPath,
+  isOverview,
+  listFilter,
+  toggleTile,
+} from "./site-rules.js";
 import {
   contactsView,
   SITE_LISTS,
@@ -37,7 +39,11 @@ import {
 
 /** @typedef {import("./insights-query.js").Period} Period */
 /** @typedef {import("./site.templates.js").SiteList} SiteList */
-/** @typedef {{ tile: string, issues: Record<string, any> | null, failed: string, generation: number }} ListState */
+/**
+ * concern: a concern's own list, shown instead of the tiles' until a tile is picked.
+ * more: "", "loading", or why the last Load more failed.
+ * @typedef {{ tile: string, concern: string, issues: Record<string, any> | null, failed: string, more: string, generation: number, controller?: AbortController }} ListState
+ */
 
 const LISTS = /** @type {SiteList[]} */ (Object.keys(SITE_LISTS));
 
@@ -49,18 +55,6 @@ const plainClick = (event) =>
   !event.shiftKey &&
   !event.altKey;
 
-/** @param {string} path */
-const isOverview = (path) =>
-  path.split("?")[0].replace(/\/$/, "") === "/insights";
-
-/** Keeps Overview's filters but shows the period picked here, as the tabs do. @param {string} path @param {Period | null} period */
-function withPeriod(path, period) {
-  const query = `?${path.split("?")[1] ?? ""}`;
-  if (samePeriod(readPeriod(query), period)) return path;
-  // Built as Overview builds its own URL, so Overview knows it on return.
-  return `/insights${overviewSearch(readOverview(query), period)}`;
-}
-
 class InsightsSite extends HTMLElement {
   connectedCallback() {
     this.session = sessionOf(this);
@@ -69,6 +63,8 @@ class InsightsSite extends HTMLElement {
     this.period = readPeriod(location.search);
     this.periodKind = this.period?.kind ?? "month";
     this.periodError = "";
+    /** @type {Period | null} */
+    this.fallback = null;
     /** @type {Record<string, any> | null} */
     this.reply = null;
     /** @type {import("./site.templates.js").ContactDetails} */
@@ -79,13 +75,20 @@ class InsightsSite extends HTMLElement {
       Object.fromEntries(
         LISTS.map((list) => [
           list,
-          { tile: "", issues: null, failed: "", generation: 0 },
+          {
+            tile: "",
+            concern: "",
+            issues: null,
+            failed: "",
+            more: "",
+            generation: 0,
+          },
         ]),
       )
     );
     /** @type {Map<string, string>} */
     this.managerNames = new Map();
-    this.generation = 0;
+    this.loads = new LatestLoad();
     // Opened from Overview, the next Overview link goes back to that view.
     const asked = safeReturnPath(
       new URLSearchParams(location.search).get("return"),
@@ -102,6 +105,7 @@ class InsightsSite extends HTMLElement {
         alsoPath: "",
       };
     this.urls = this.links();
+    this.rememberBack();
     const interval = periodInterval(this);
     // The heading is drawn now, so the dashboard can focus it on arrival.
     this.innerHTML = `
@@ -119,13 +123,9 @@ class InsightsSite extends HTMLElement {
   }
 
   disconnectedCallback() {
-    this.controller?.abort();
+    this.loads?.abort();
+    for (const list of LISTS) this.lists[list].controller?.abort();
     this.removeEventListener("click", this.clicked);
-  }
-
-  /** The path an Issue record links back to: this Site at this period. */
-  here() {
-    return this.dataset.here ?? location.pathname;
   }
 
   /** @param {string} name @returns {HTMLElement} */
@@ -142,39 +142,24 @@ class InsightsSite extends HTMLElement {
     );
   }
 
-  /** Back goes to the Overview this Site came from, else the last one seen. */
   links() {
-    const asked = safeReturnPath(
-      new URLSearchParams(location.search).get("return"),
-    );
-    const remembered = safeReturnPath(this.session.overview.path);
-    const back = withPeriod(
-      (isOverview(asked) && asked) ||
-        (isOverview(remembered) && remembered) ||
-        "/insights",
-      this.period,
-    );
-    const id = encodeURIComponent(this.siteId);
-    /** @param {string} kind */
-    const raw = (kind) => {
-      const query = new URLSearchParams(carriedQuery(location.search));
-      query.set("siteIds", this.siteId);
-      return `/insights/raw/${kind}?${query}`;
-    };
     return {
-      back,
+      back: backPath({
+        asked: safeReturnPath(
+          new URLSearchParams(location.search).get("return"),
+        ),
+        remembered: safeReturnPath(this.session.overview.path),
+        period: this.period,
+      }),
       // A new tab, so this page stays where it was.
-      contacts: `/sites/${id}?section=details`,
-      issues: raw("issues"),
-      checks: raw("checks"),
+      contacts: `/sites/${encodeURIComponent(this.siteId)}?section=details`,
     };
   }
 
-  /** Overview finds its place by exact path, so a Back at a new period is noted too. */
   rememberBack() {
     const overview = this.session.overview;
     if (overview.siteId !== this.siteId) return;
-    overview.alsoPath = this.urls.back === overview.path ? "" : this.urls.back;
+    overview.alsoPath = alsoPath(overview.path, this.urls.back);
   }
 
   async loadNames() {
@@ -191,11 +176,12 @@ class InsightsSite extends HTMLElement {
   /** Contact details are today's and don't change with the period, so they're read once. */
   async loadDetails() {
     try {
-      const { items } = await adminApi.getSite(this.siteId);
+      // Settings reads the Site's own record only, not its letters or staff.
+      const { items } = await adminApi.getSite(this.siteId, false, "settings");
       if (!this.isConnected) return;
       this.details =
         (items ?? []).find((/** @type {any} */ item) => item.sk === "#META") ??
-        null;
+        {};
       this.drawContacts();
     } catch {
       // Without the record, each contact shows its state alone.
@@ -212,34 +198,32 @@ class InsightsSite extends HTMLElement {
   }
 
   async load() {
-    const mine = ++this.generation;
-    for (const list of LISTS) this.lists[list].generation++;
-    this.controller?.abort();
-    this.controller = new AbortController();
-    const { signal } = this.controller;
+    const { signal, current } = this.loads.start();
+    for (const list of LISTS) {
+      this.lists[list].generation++;
+      this.lists[list].controller?.abort();
+    }
     const params = periodApiParams(this.period);
+    // Concerns and the data time belong to the period no longer shown.
+    this.region("freshness").innerHTML = freshnessView(null);
+    if (this.region("top").childElementCount) showLoading(this.region("top"));
     showLoading(this.region("body"));
-    // The old interval is for the period no longer shown.
-
     this.setAttribute("aria-busy", "true");
     /** @type {Record<string, any>} */
     let reply;
     try {
       reply = await adminApi.reportingSite(this.siteId, params, signal);
     } catch (err) {
-      if (
-        mine !== this.generation ||
-        /** @type {any} */ (err)?.name === "AbortError"
-      )
-        return;
+      if (superseded(err, current)) return;
       this.removeAttribute("aria-busy");
       this.reply = null;
-      // The old data time is for another period.
-      this.region("freshness").innerHTML = freshnessView(null);
+      // With no period asked or named, the controls step from this month.
+      if (!this.period) this.fallback = monthOfToday();
       this.drawHead();
-      this.region("top").innerHTML = "";
+      showLoaded(this.region("top"), "");
+      // Other 404s, such as a route the API lacks, are plain failures.
       showLoaded(
-        this.region("body"), // Other 404s, such as a route the API lacks, are plain failures.
+        this.region("body"),
         /** @type {any} */ (err)?.message === "site_not_found"
           ? `<p class="empty-state" data-insights-empty="site">${escapeHtml(t("admin.insights.siteNotFound"))}</p>`
           : failedView(failureText(err, t("admin.insights.siteFailed"))),
@@ -248,19 +232,20 @@ class InsightsSite extends HTMLElement {
       this.drawPeriod();
       return;
     }
-    if (mine !== this.generation) return;
+    if (!current()) return;
     this.removeAttribute("aria-busy");
     this.reply = reply;
-    for (const list of LISTS) this.lists[list].tile = SITE_LISTS[list].first;
+    for (const list of LISTS) {
+      this.lists[list].tile = SITE_LISTS[list].first;
+      this.lists[list].concern = "";
+    }
     this.drawHead();
     this.region("freshness").innerHTML = freshnessView(reply.meta);
-
     this.drawPeriod();
-    this.region("top").innerHTML = siteTopView({
-      reply,
-      details: this.details,
-      hrefs: this.urls,
-    });
+    showLoaded(
+      this.region("top"),
+      siteTopView({ reply, details: this.details, hrefs: this.urls }),
+    );
     showLoaded(
       this.region("body"),
       siteBodyView({
@@ -269,16 +254,34 @@ class InsightsSite extends HTMLElement {
           severity: this.lists.severity.tile,
           response: this.lists.response.tile,
         },
-        hrefs: this.urls,
       }),
     );
-    for (const list of LISTS)
-      void this.loadIssues(list);
+    for (const list of LISTS) void this.loadIssues(list);
   }
 
   /** @param {SiteList} list @returns {HTMLElement | null} */
   issuesRegion(list) {
     return this.querySelector(`[data-list="${list}"] [data-region="issues"]`);
+  }
+
+  /**
+   * @param {SiteList} list
+   * @param {string} [cursor] the last page's nextCursor
+   */
+  fetchIssues(list, cursor) {
+    const state = this.lists[list];
+    // Its own controller, so a newer pick stops the request it replaces.
+    state.controller?.abort();
+    state.controller = new AbortController();
+    return adminApi.reportingIssues(
+      {
+        ...periodApiParams(this.period),
+        siteIds: this.siteId,
+        ...listFilter(SITE_LISTS[list].param, state),
+        ...(cursor ? { cursor } : {}),
+      },
+      state.controller.signal,
+    );
   }
 
   /**
@@ -290,19 +293,16 @@ class InsightsSite extends HTMLElement {
     const mine = ++state.generation;
     state.issues = null;
     state.failed = "";
+    state.more = "";
     this.drawIssues(list);
     const region = this.issuesRegion(list);
-    if (!state.tile || !region) return;
+    if ((!state.tile && !state.concern) || !region) {
+      state.controller?.abort();
+      return;
+    }
     region.insertAdjacentHTML("beforeend", loadingView());
     try {
-      const issues = await adminApi.reportingIssues(
-        {
-          ...periodApiParams(this.period),
-          siteIds: this.siteId,
-          [SITE_LISTS[list].param]: state.tile,
-        },
-        /** @type {AbortController} */ (this.controller).signal,
-      );
+      const issues = await this.fetchIssues(list);
       if (mine !== state.generation) return;
       state.issues = issues;
     } catch (err) {
@@ -316,42 +316,85 @@ class InsightsSite extends HTMLElement {
     this.drawIssues(list);
   }
 
+  /** Adds the next page under the rows already shown. @param {SiteList} list */
+  async loadMore(list) {
+    const state = this.lists[list];
+    const cursor = state.issues?.nextCursor;
+    if (!cursor || state.more === "loading") return;
+    const mine = state.generation;
+    state.more = "loading";
+    this.drawIssues(list);
+    try {
+      const page = await this.fetchIssues(list, cursor);
+      if (mine !== state.generation || !state.issues) return;
+      state.issues = {
+        ...page,
+        issues: [...state.issues.issues, ...page.issues],
+      };
+      state.more = "";
+    } catch (err) {
+      if (
+        mine !== state.generation ||
+        /** @type {any} */ (err)?.name === "AbortError"
+      )
+        return;
+      state.more = failureText(err, t("admin.insights.issuesFailed"));
+    }
+    this.drawIssues(list);
+  }
+
   /** @param {SiteList} list */
   drawIssues(list) {
     const region = this.issuesRegion(list);
     if (!region) return;
     const state = this.lists[list];
+    const button = region.querySelector("[data-load-more]");
+    const focused = !!button && button === document.activeElement;
     region.innerHTML = siteIssuesView({
       list,
       issues: state.issues,
       failed: state.failed,
       tile: state.tile,
-      issueHref: (issue) => {
-        const query = new URLSearchParams(carriedQuery(location.search));
-        // Two Sites can share an Issue ID, so the record needs its Site.
-        query.set("siteId", issue.siteId);
-        query.set("return", this.here());
-        return `/insights/raw/issues/${encodeURIComponent(issue.issueId)}?${query}`;
-      },
+      concern: state.concern,
+      more: state.more,
     });
+    // The redraw replaces Load more, so keyboard users keep their place.
+    if (focused)
+      /** @type {HTMLElement | null} */ (
+        region.querySelector("[data-load-more]")
+      )?.focus();
+  }
+
+  /** @param {SiteList} list */
+  drawPressed(list) {
+    const on = this.lists[list].tile.split(",");
+    for (const button of this.querySelectorAll(
+      `[data-list="${list}"] [data-tile]`,
+    ))
+      button.setAttribute(
+        "aria-pressed",
+        `${on.includes(button.getAttribute("data-tile") ?? "")}`,
+      );
   }
 
   /** Each tile adds or removes its value from its own list. @param {SiteList} list @param {string} tile */
   pickTile(list, tile) {
     if (!this.reply) return;
     const state = this.lists[list];
-    const on = new Set(state.tile.split(",").filter(Boolean));
-    if (!on.delete(tile)) on.add(tile);
-    // Tile order, so the same picks make the same URL and request.
-    state.tile = SITE_LISTS[list].tiles.filter((key) => on.has(key)).join(",");
-    for (const button of this.querySelectorAll(
-      `[data-list="${list}"] [data-tile]`,
-    ))
-      button.setAttribute(
-        "aria-pressed",
-        `${on.has(button.getAttribute("data-tile") ?? "")}`,
-      );
+    state.tile = toggleTile(SITE_LISTS[list].tiles, state.tile, tile);
+    state.concern = "";
+    this.drawPressed(list);
     void this.loadIssues(list);
+  }
+
+  /** @param {string} concern */
+  showConcern(concern) {
+    if (!this.reply) return;
+    const state = this.lists.response;
+    state.tile = "";
+    state.concern = concern;
+    this.drawPressed("response");
+    void this.loadIssues("response");
   }
 
   /** @param {Element} element @returns {SiteList | undefined} */
@@ -399,7 +442,6 @@ class InsightsSite extends HTMLElement {
     if (back) next.set("return", back);
     const path = `${location.pathname}?${next}`;
     history.replaceState(history.state, "", path);
-    this.dataset.here = safeReturnPath(path) || location.pathname;
     this.dispatchEvent(new CustomEvent("insights-url", { bubbles: true }));
     this.urls = this.links();
     this.rememberBack();
@@ -415,6 +457,8 @@ class InsightsSite extends HTMLElement {
     const jump = target.closest('a[href^="#insights-"]');
     if (jump && plainClick(/** @type {MouseEvent} */ (event))) {
       event.preventDefault();
+      const concern = jump.getAttribute("data-show-concern");
+      if (concern) this.showConcern(concern);
       const heading = /** @type {HTMLElement | null} */ (
         this.querySelector(jump.getAttribute("href") ?? "")
       );
@@ -422,18 +466,14 @@ class InsightsSite extends HTMLElement {
       heading?.focus({ preventScroll: true });
       return;
     }
-    // A click anywhere on an Issue row opens it, as on Overview; the name stays the real link.
-    if (!target.closest("a, button, [popover]")) {
-      /** @type {HTMLElement | null | undefined} */ (
-        target.closest("[data-issue-row]")?.querySelector("a")
-      )?.click();
-    }
     const button = target.closest("button");
     if (!button || !this.contains(button)) return;
     if (button.id === "insights-retry") return void this.load();
     const list = this.listOf(button);
     if (list && button.id === SITE_LISTS[list].retry)
       return void this.loadIssues(list);
+    if (list && button.hasAttribute("data-load-more"))
+      return void this.loadMore(list);
     const tile = button.getAttribute("data-tile");
     if (list && tile) return this.pickTile(list, tile);
     if (this.periodBody().contains(button))

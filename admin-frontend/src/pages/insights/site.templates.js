@@ -1,4 +1,4 @@
-// Site insights markup, in the mock's order: Concerns, Contacts, Activity, Severe Issues, Issue Response Time.
+// Site insights markup, top to bottom: Concerns, Contacts, Activity, Severe Issues, Issue Response Time.
 import { resolutionTime } from "../../../../frontend/src/domain/reports-issues.js";
 import { hasKey, t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
@@ -16,14 +16,15 @@ import {
   noDataFor,
   oneDecimal,
   perDayText,
-  per30Days,
   per30Text,
   periodDays,
+  severityBand,
 } from "./insights.templates.js";
-import { bandView, severityBand } from "./overview.templates.js";
+import { bandView } from "./overview.templates.js";
+import { contactShown, showsTotal } from "./site-rules.js";
 
 /** @typedef {Record<string, any>} Reply */
-/** @typedef {{ publicContact?: Record<string, string>, primaryContact?: Record<string, string> } | null} ContactDetails the Site's Manage record */
+/** @typedef {{ publicContact?: Record<string, string>, primaryContact?: Record<string, string> } | null} ContactDetails the Site's Manage record; null until read */
 
 const ACTIVITY = [
   "completedPerimeterChecks",
@@ -47,7 +48,7 @@ export const SITE_LISTS = Object.freeze({
   response: {
     heading: "insights-response",
     param: "responseState",
-    // The mock's five; no response time is never late, so it has no tile.
+    // An Issue with no response time is never late, so it gets no tile.
     tiles: ["overdue", "late", "awaiting", "onTime", "unknown"],
     first: "overdue,late",
     warn: new Set(["overdue", "late"]),
@@ -104,7 +105,11 @@ function concernParams(reply) {
       min: reply.checksOwedPerDay ?? "",
     },
     repeatedSevere: { count: activity.severeIssues, min: rules.severeIssues },
-    manyIssues: { count: activity.issuesCreated, max: rules.issuesPer30Days },
+    manyIssues: {
+      count: activity.issuesCreated,
+      rate: oneDecimal(reply.issuesPer30Days ?? 0),
+      max: rules.issuesPer30Days,
+    },
     slowResponse: {
       overdue: response.overdue,
       late: response.late,
@@ -148,7 +153,9 @@ function concernLine(code, reply) {
       : code === "repeatedSevere"
         ? ["insights-severe", "admin.insights.seeSevere"]
         : ["insights-activity", "admin.insights.seeActivity"];
-  const link = `<a href="#${to}">${escapeHtml(t(words))}</a>`;
+  // Slow response lists its own Issues, since the tiles don't hold every one it counts.
+  const list = code === "slowResponse" ? ` data-show-concern="${code}"` : "";
+  const link = `<a href="#${to}"${list}>${escapeHtml(t(words))}</a>`;
   return `<li data-concern="${code}"><strong>${escapeHtml(t(key))}:</strong> ${escapeHtml(concernWhy(code, params))} ${link}</li>`;
 }
 
@@ -168,7 +175,13 @@ function contactState(contact) {
     .map((code) => codeKey("admin.insights.reason", code))
     .filter((key) => hasKey(key))
     .map((key) => t(key));
-  return `<div class="${contact.state === "missing" ? "insights__warn" : contact.state === "unknown" ? "insights__unknown" : ""}">${escapeHtml(contactWord(contact))}</div>${
+  const tone =
+    contact.state === "missing"
+      ? ' class="insights__warn" data-tone="warn"'
+      : contact.state === "unknown"
+        ? ' class="insights__unknown" data-tone="unknown"'
+        : "";
+  return `<div${tone}>${escapeHtml(contactWord(contact))}</div>${
     reasons.length
       ? `<div class="muted">${reasons.map((r) => escapeHtml(r)).join(" ")}</div>`
       : ""
@@ -196,17 +209,16 @@ function contactLines(person, named) {
 
 /**
  * The details come from Manage's record, read once; until then, or if that
- * read fails, each contact shows its state alone.
+ * read fails, the report's public contact shows instead.
  * @param {{ reply: Reply, details: ContactDetails }} view
  */
 export function contactsView({ reply, details }) {
-  /** @param {string} kind @param {{ state: string, reasonCodes: string[] } & Record<string, any>} contact @param {Record<string, string> | undefined} person */
-  const cell = (kind, contact, person) => {
-    // The report carries the public email and phone, so Sites Manage can't open still show them.
-    const known = person && (person.email || person.phone) ? person : contact;
-    const lines = contactLines(known, kind === "site");
+  /** @param {"public" | "site"} kind @param {{ state: string, reasonCodes: string[] } & Record<string, any>} reported @param {Record<string, string> | undefined} person */
+  const cell = (kind, reported, person) => {
+    const shown = contactShown(kind, reported, person, details !== null);
+    const lines = contactLines(shown.person, kind === "site");
     const state =
-      contact.state === "available" && lines ? "" : contactState(contact);
+      shown.state === "available" && lines ? "" : contactState(shown);
     return `<div data-contact="${kind}"><p class="insights__clabel">${escapeHtml(t(`admin.insights.contacts.${kind}`))}</p>${lines}${state}</div>`;
   };
   return `${cell("public", reply.publicContact, details?.publicContact)}${cell("site", reply.siteContact, details?.primaryContact)}`;
@@ -214,7 +226,7 @@ export function contactsView({ reply, details }) {
 
 /** @param {string} key @param {string} value already escaped @param {string} label @param {string} help @param {string} [note] already escaped */
 const tile = (key, value, label, help, note = "") =>
-  `<div class="insights__tile" data-activity="${key}"><span class="insights__tile-n">${value}</span><span class="insights__tile-l">${escapeHtml(label)}</span>${note}${helpTip(`insights-tip-activity-${key}`, label, help)}</div>`;
+  `<div class="insights__tile" data-activity="${key}"><span class="insights__tile-n" data-tile-n>${value}</span><span class="insights__tile-l">${escapeHtml(label)}</span>${note}${helpTip(`insights-tip-activity-${key}`, label, help)}</div>`;
 
 /**
  * A Site that owed no Checks has no number of its own to name.
@@ -226,8 +238,8 @@ const activityHelp = (key, owedPerDay) =>
     ? t("admin.insights.activityHelp.completedPerimeterChecksNoneOwed")
     : t(`admin.insights.activityHelp.${key}`, { min: owedPerDay ?? "" });
 
-/** @param {Reply} reply @param {string} checksHref */
-function activityView(reply, checksHref, issuesHref) {
+/** @param {Reply} reply */
+function activityView(reply) {
   const counts = reply.totals.activity;
   const noData = noDataFor(reply.meta);
   const interval = reply.meta.interval;
@@ -242,7 +254,7 @@ function activityView(reply, checksHref, issuesHref) {
       const label = t(`admin.insights.activity.${key}`);
       const help = activityHelp(key, reply.checksOwedPerDay);
       const count = counts[key] ?? 0;
-      // Before the records begin, a zero would claim a quiet period (plan §4).
+      // Before the records begin, a zero would claim a quiet period.
       if (noData)
         return tile(
           key,
@@ -255,8 +267,10 @@ function activityView(reply, checksHref, issuesHref) {
         reply.checksPerDay !== null &&
         reply.checksPerDay !== undefined
           ? `<span data-checks-per-day>${escapeHtml(perDayText(reply.checksPerDay))}</span>`
-          : key === "issuesCreated"
-            ? `<span data-issues-per-30d>${escapeHtml(per30Text(per30Days(count, interval)))}</span>`
+          : key === "issuesCreated" &&
+              reply.issuesPer30Days !== null &&
+              reply.issuesPer30Days !== undefined
+            ? `<span data-issues-per-30d>${escapeHtml(per30Text(reply.issuesPer30Days))}</span>`
             : "";
       if (!rate)
         return tile(
@@ -265,16 +279,14 @@ function activityView(reply, checksHref, issuesHref) {
           label,
           help,
         );
-      // Over a month or less the rate and the total say the same thing.
-      const total =
-        periodDays(interval) > 31
-          ? `<span class="insights__tile-l muted" data-activity-count>${escapeHtml(t(key === "issuesCreated" ? "admin.insights.raw.issuesCount" : "admin.insights.raw.checksCount", { count }))}</span>`
-          : "";
+      const total = showsTotal(key, periodDays(interval))
+        ? `<span class="insights__tile-l muted" data-activity-count>${escapeHtml(t(key === "issuesCreated" ? "admin.insights.raw.issuesCount" : "admin.insights.raw.checksCount", { count }))}</span>`
+        : "";
       return tile(key, rate, label, help, total);
     }).join("")}</div>
-    <div class="insights__charts">
-      <div><h3>${escapeHtml(t(`admin.insights.chart.checks.${unit}`))}</h3>${activityChart(interval, points("completedPerimeterChecks"), "checks")}<p><a href="${escapeHtml(checksHref)}" data-route id="insights-site-checks">${escapeHtml(t("admin.insights.viewChecks"))}</a></p></div>
-      <div><h3>${escapeHtml(t(`admin.insights.chart.issues.${unit}`))}</h3>${activityChart(interval, points("issuesCreated"), "issues")}<p><a href="${escapeHtml(issuesHref)}" data-route id="insights-site-issues">${escapeHtml(t("admin.insights.viewIssuesRaw"))}</a></p></div>
+    <div class="insights__charts" data-charts>
+      <div><h3>${escapeHtml(t(`admin.insights.chart.checks.${unit}`))}</h3>${activityChart(interval, points("completedPerimeterChecks"), "checks")}</div>
+      <div><h3>${escapeHtml(t(`admin.insights.chart.issues.${unit}`))}</h3>${activityChart(interval, points("issuesCreated"), "issues")}</div>
     </div>
     ${
       days.length
@@ -311,13 +323,13 @@ function tilesView(list, reply, tile) {
   return `<div class="insights__tiles insights__tiles--${tiles.length === 5 ? "five" : "four"}">${tiles
     .map(
       (key) =>
-        `<div class="insights__tile${warn.has(key) && counts[key] ? " insights__tile--warn" : ""}" data-${name}="${key}"><button type="button" data-tile="${key}" aria-pressed="${on.includes(key)}"><span class="insights__tile-n" data-${name}-count>${escapeHtml(counts[key] ?? 0)}</span><span class="insights__tile-l">${tileLabel(list, key)}</span></button>${helpTip(`insights-tip-${name}-${key}`, tileWord(list, key), t(`admin.insights.${name === "band" ? "severityHelp" : "responseHelp"}.${key}`))}</div>`,
+        `<div class="insights__tile${warn.has(key) && counts[key] ? " insights__tile--warn" : ""}" data-${name}="${key}"${warn.has(key) && counts[key] ? " data-warn" : ""}><button type="button" class="btn-plain" data-tile="${key}" aria-pressed="${on.includes(key)}"><span class="insights__tile-n" data-${name}-count>${escapeHtml(counts[key] ?? 0)}</span><span class="insights__tile-l">${tileLabel(list, key)}</span></button>${helpTip(`insights-tip-${name}-${key}`, tileWord(list, key), t(`admin.insights.${name === "band" ? "severityHelp" : "responseHelp"}.${key}`))}</div>`,
     )
     .join("")}</div>`;
 }
 
-/** @param {SiteList} list @param {Reply} reply @param {string} tile @param {string} issuesHref */
-function listView(list, reply, tile, issuesHref) {
+/** @param {SiteList} list @param {Reply} reply @param {string} tile */
+function listView(list, reply, tile) {
   const count = reply.totals.activity.issuesCreated;
   const id = SITE_LISTS[list].heading;
   const heading =
@@ -329,17 +341,12 @@ function listView(list, reply, tile, issuesHref) {
     ? `<p class="muted" data-site-issues-empty>${escapeHtml(t("admin.insights.empty.noIssueData"))}</p>`
     : !count
       ? `<p class="muted" data-site-issues-empty>${escapeHtml(t("admin.insights.noIssuesInPeriod"))}</p>`
-      : `${tilesView(list, reply, tile)}<div data-region="issues"></div>${
-          // One link to every Issue is enough; it sits under the last list.
-          list === "response"
-            ? `<p><a href="${escapeHtml(issuesHref)}" data-route id="insights-site-raw">${escapeHtml(t("admin.insights.viewAllIssues", { count }))}</a></p>`
-            : ""
-        }`;
+      : `${tilesView(list, reply, tile)}<div data-region="issues"></div>`;
   return `<section class="insights__group" aria-labelledby="${id}" id="${id}-section" data-list="${list}">${heading}${body}</section>`;
 }
 
 /**
- * @param {{ reply: Reply, details: ContactDetails, hrefs: { contacts: string, issues: string } }} view
+ * @param {{ reply: Reply, details: ContactDetails, hrefs: { contacts: string } }} view
  */
 export function siteTopView({ reply, details, hrefs }) {
   return `${concernsView(reply)}
@@ -352,12 +359,12 @@ export function siteTopView({ reply, details, hrefs }) {
 
 /**
  * The period picker sits between siteTopView and this, just above Activity.
- * @param {{ reply: Reply, tiles: Record<SiteList, string>, hrefs: { issues: string, checks: string } }} view
+ * @param {{ reply: Reply, tiles: Record<SiteList, string> }} view
  */
-export function siteBodyView({ reply, tiles, hrefs }) {
-  return `${activityView(reply, hrefs.checks, hrefs.issues)}
-  ${listView("severity", reply, tiles.severity, hrefs.issues)}
-  ${listView("response", reply, tiles.response, hrefs.issues)}`;
+export function siteBodyView({ reply, tiles }) {
+  return `${activityView(reply)}
+  ${listView("severity", reply, tiles.severity)}
+  ${listView("response", reply, tiles.response)}`;
 }
 
 /** @param {number} ms */
@@ -373,7 +380,7 @@ function responseTimeCell(issue) {
   const took = between(issue.createdAt, issue.firstResponseAt);
   return took
     ? escapeHtml(took)
-    : `<span class="muted">${escapeHtml(t("admin.insights.siteIssues.noResponse"))}</span>`;
+    : `<span class="muted" data-tone="muted">${escapeHtml(t("admin.insights.siteIssues.noResponse"))}</span>`;
 }
 
 /**
@@ -386,58 +393,90 @@ function onTimeCell(issue) {
     return escapeHtml(t("admin.insights.siteIssues.onTime"));
   if (state === "awaiting")
     return escapeHtml(t("admin.insights.siteIssues.notYetDue"));
+  // A 911 rule sets no response time, so it can't be late.
+  if (state === "notTimed")
+    return escapeHtml(t("admin.insights.response.notTimed"));
   if (state === "late" || state === "overdue") {
     const expected = between(issue.createdAt, issue.deadlineAt);
     const word = expected
-      ? t("admin.insights.siteIssues.lateBy", { expected })
+      ? t("admin.insights.siteIssues.lateDueWithin", { expected })
       : t("admin.insights.siteIssues.late");
-    return `<span class="insights__warn">${escapeHtml(word)}</span>`;
+    return `<span class="insights__warn" data-tone="warn">${escapeHtml(word)}</span>`;
   }
-  // No response time recorded, or a state the server adds later.
-  return `<span class="insights__unknown">${escapeHtml(t("admin.insights.response.unknown"))}</span>`;
+  // No response record, or a state the server adds later.
+  return `<span class="insights__unknown" data-tone="unknown">${escapeHtml(t("admin.insights.response.unknown"))}</span>`;
 }
 
 const ISSUE_COLUMNS = ["issue", "createdAt", "responseTime", "onTime"];
 
-/** The open-marker column, named for screen readers as on Overview. */
-const openColumnHead = () =>
-  `<th role="columnheader" scope="col"><span class="visually-hidden">${escapeHtml(t("admin.insights.raw.col.open"))}</span></th>`;
-
 /** @param {string} key */
 const colLabel = (key) => t(`admin.insights.siteIssues.col.${key}`);
 
-/** The Issues behind the selected tiles. @param {{ list: SiteList, issues: Reply | null, failed: string, tile: string, issueHref: (issue: Reply) => string }} view */
-export function siteIssuesView({ list, issues, failed, tile, issueHref }) {
-  if (!tile) return "";
+/**
+ * Below the rows: how many are shown, and Load more while the server has more.
+ * @param {Reply} issues
+ * @param {string} more "", "loading", or why the last Load more failed
+ */
+function moreView(issues, more) {
+  const shown = /** @type {Reply[]} */ (issues.issues).length;
+  const count =
+    issues.total > shown
+      ? `<p class="muted" data-issues-shown>${escapeHtml(t("admin.insights.issuesShown", { shown, count: issues.total }))}</p>`
+      : "";
+  const failed =
+    more && more !== "loading"
+      ? `<p class="error">${escapeHtml(more)}</p>`
+      : "";
+  const button = issues.nextCursor
+    ? `<p><button type="button" class="btn-secondary" data-load-more ${more === "loading" ? "disabled" : ""}>${escapeHtml(t("admin.status.loadMore"))}</button></p>`
+    : "";
+  return `${count}${failed}${button}`;
+}
+
+/**
+ * The Issues behind the selected tiles, or behind a concern.
+ * @param {{ list: SiteList, issues: Reply | null, failed: string, tile: string, concern?: string, more?: string }} view
+ */
+export function siteIssuesView({
+  list,
+  issues,
+  failed,
+  tile,
+  concern = "",
+  more = "",
+}) {
+  if (!tile && !concern) return "";
   if (failed) return failedView(failed, SITE_LISTS[list].retry);
   if (!issues) return "";
   const rows = /** @type {Reply[]} */ (issues.issues);
-  const label = tile
-    .split(",")
-    .map((key) => tileWord(list, key))
-    .join(", ");
+  // No tile is picked, so a line says which Issues these are.
+  const intro = concern
+    ? `<p class="muted" data-concern-list="${escapeHtml(concern)}">${escapeHtml(t(`admin.insights.concernList.${concern}`, { days: CONCERN_RULES.unresolvedDays }))}</p>`
+    : "";
   if (!rows.length)
-    return `<p class="muted" data-site-issues-empty>${escapeHtml(t("admin.insights.noTileIssues", { state: label }))}</p>`;
-  return `<div class="table-wrap insights__table insights__table--paged" data-insights-table>
+    return `${intro}<p class="muted" data-site-issues-empty>${escapeHtml(t("admin.insights.noTileIssues"))}</p>`;
+  const label = concern
+    ? t(`admin.insights.concern.${concern}`)
+    : tile
+        .split(",")
+        .map((key) => tileWord(list, key))
+        .join(", ");
+  return `${intro}<div class="table-wrap insights__table insights__table--paged" data-insights-table>
     <table role="table">
       <caption class="visually-hidden">${escapeHtml(label)}</caption>
-      <thead role="rowgroup"><tr role="row">${ISSUE_COLUMNS.map((key) => `<th role="columnheader" scope="col">${escapeHtml(colLabel(key))}</th>`).join("")}${openColumnHead()}</tr></thead>
+      <thead role="rowgroup"><tr role="row">${ISSUE_COLUMNS.map((key) => `<th role="columnheader" scope="col">${escapeHtml(colLabel(key))}</th>`).join("")}</tr></thead>
       <tbody role="rowgroup">${rows
         .map((i) => {
           const band = severityBand(i.severity);
+          // The space keeps the hidden severity word apart from the category when read aloud.
           return `<tr role="row" data-issue-row="${escapeHtml(i.issueId)}">
-        <th role="rowheader" scope="row" data-label="${escapeHtml(colLabel("issue"))}"><a href="${escapeHtml(issueHref(i))}" data-route><span class="insights__sev" data-severity="${band}"><span class="insights__dot" aria-hidden="true"></span><span class="visually-hidden">${escapeHtml(t(`admin.insights.severity.${band}`))}</span></span>${escapeHtml(i.category ? rulebookText(i.category, "rulebook.category") : t("admin.insights.issue.categoryUnknown"))}</a></th>
+        <th role="rowheader" scope="row" data-label="${escapeHtml(colLabel("issue"))}"><span class="insights__sev" data-severity="${band}"><span class="insights__dot" aria-hidden="true"></span><span class="visually-hidden">${escapeHtml(t(`admin.insights.severity.${band}`))}</span></span> ${escapeHtml(i.category ? rulebookText(i.category, "rulebook.category") : t("admin.insights.issue.categoryUnknown"))}</th>
         <td role="cell" data-label="${escapeHtml(colLabel("createdAt"))}" data-issue-created>${escapeHtml(formatInstant(i.createdAt))}</td>
         <td role="cell" data-label="${escapeHtml(colLabel("responseTime"))}" data-issue-took>${responseTimeCell(i)}</td>
         <td role="cell" data-label="${escapeHtml(colLabel("onTime"))}" data-issue-on-time>${onTimeCell(i)}</td>
-        <td role="cell" class="insights__chev" aria-hidden="true"><wa-icon name="chevron-right"></wa-icon></td>
       </tr>`;
         })
         .join("")}</tbody>
     </table>
-  </div>${
-    issues.total > rows.length
-      ? `<p class="muted">${escapeHtml(t("admin.insights.issuesShown", { shown: rows.length, count: issues.total }))}</p>`
-      : ""
-  }`;
+  </div>${moreView(issues, more)}`;
 }
