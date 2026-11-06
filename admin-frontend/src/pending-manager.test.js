@@ -1,5 +1,6 @@
+// @vitest-environment node
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { createAndAssignManager } from "./pending-manager.js";
 
 test("cancel and reopen resumes a partial creation but changed person or scope creates a separate user", async () => {

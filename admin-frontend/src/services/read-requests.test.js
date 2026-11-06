@@ -1,4 +1,5 @@
-import test from "node:test";
+// @vitest-environment node
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { createReadRequests } from "./read-requests.js";
 test("simultaneous identical reads share work, but reads after a write do not", async () => {

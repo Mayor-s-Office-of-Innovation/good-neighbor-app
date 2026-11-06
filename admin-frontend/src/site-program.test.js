@@ -1,5 +1,6 @@
+// @vitest-environment node
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { siteProviderPrograms } from "./site-program.js";
 
 test("site program choices include active programs independently of its provider", () => {

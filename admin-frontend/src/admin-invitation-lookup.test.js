@@ -1,4 +1,5 @@
-import test from "node:test";
+// @vitest-environment node
+import { onTestFinished, test } from "vitest";
 import assert from "node:assert/strict";
 import { bindAdminInvitationLookup } from "./admin-invitation-lookup.js";
 
@@ -195,7 +196,7 @@ test("a stale failure waits for a replacement lookup even when email changes bac
   assert.equal(calls, 2);
 });
 
-test("historical department options and their selections are cleared for a new email", async (t) => {
+test("historical department options and their selections are cleared for a new email", async () => {
   const original = globalThis.document;
   let f;
   globalThis.document = {
@@ -207,7 +208,7 @@ test("historical department options and their selections are cleared for a new e
       };
     },
   };
-  t.after(() => {
+  onTestFinished(() => {
     if (original) globalThis.document = original;
     else delete globalThis.document;
   });
@@ -233,14 +234,14 @@ test("historical department options and their selections are cleared for a new e
   assert.equal(f.controls.departmentId.value, "");
 });
 
-test("changing email preserves a manually selected active department", async (t) => {
+test("changing email preserves a manually selected active department", async () => {
   const original = globalThis.document;
   globalThis.document = {
     createElement() {
       return { remove() {} };
     },
   };
-  t.after(() => {
+  onTestFinished(() => {
     if (original) globalThis.document = original;
     else delete globalThis.document;
   });
