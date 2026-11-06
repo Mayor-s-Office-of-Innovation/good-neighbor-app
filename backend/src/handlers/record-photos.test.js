@@ -10,13 +10,16 @@ vi.mock("../s3.js", () => ({
 }));
 import { getRecordPhotos } from "./record-photos.js";
 
-/** @param {Record<string, string>} query @param {string} [role] */
-const event = (query, role = "compliance-supervisor") =>
+/**
+ * @param {Record<string, string>} query
+ * @param {{ role?: string, siteId?: string }} [opts]
+ */
+const event = (query, { role = "compliance-supervisor", siteId = "s1" } = {}) =>
   /** @type {any} */ ({
     requestContext: {
       authorizer: { jwt: { claims: { "cognito:groups": role } } },
     },
-    pathParameters: { siteId: "s1" },
+    pathParameters: { siteId },
     queryStringParameters: query,
   });
 /** @param {any} ev */
@@ -27,65 +30,180 @@ const call = async (ev) => {
   return { status: res.statusCode, body: JSON.parse(res.body) };
 };
 
-/** @type {Record<string, any>} */
-const rows = {
-  "TASK#t1": {
-    taskId: "t1",
-    checkId: "c1",
-    sourceArtifactIds: ["art-1"],
-  },
-  "CHECK#c1#ART#art-1": {
-    artifactId: "art-1",
-    s3Key: "p/check-1.jpg",
-    thumbS3Key: "p/check-1-thumb.jpg",
-    capturedAt: "2026-10-02T17:01:00.000Z",
-  },
-  "CHECK#c1#ART#art-2": {
-    artifactId: "art-2",
-    text: "Synthetic description",
-    capturedAt: "2026-10-02T17:02:00.000Z",
-  },
-  "TASK#t1#MEDIA#t1-u2-p1": {
-    artifactId: "t1-u2-p1",
-    s3Key: "p/update-1.jpg",
-    capturedAt: "2026-10-03T17:00:00.000Z",
-  },
-};
-const updates = [
-  {
-    sk: "TASK#t1#UPDATE#2026-10-03T17:00:00.000Z#t1-u2",
-    notes: ["Synthetic note"],
-    photoKeys: ["t1-u2-p1"],
-    occurredAt: "2026-10-03T17:00:00.000Z",
-  },
-  // A photo whose media row is gone still lets the rest show.
-  {
-    sk: "TASK#t1#UPDATE#2026-10-04T17:00:00.000Z#t1-u3",
-    photoKeys: ["t1-u3-p1"],
-    occurredAt: "2026-10-04T17:00:00.000Z",
-  },
-];
+const S1 = "checks/s1/c1";
+
+/** @returns {Map<string, Record<string, any>>} rows by `pk|sk` */
+const table = () =>
+  new Map(
+    /** @type {[string, string, Record<string, any>][]} */ ([
+      ["SITE#s1", "CHECK#c1", { checkId: "c1" }],
+      [
+        "SITE#s1",
+        "CHECK#c1#ART#art-1",
+        {
+          artifactId: "art-1",
+          s3Key: `${S1}/art-1`,
+          thumbS3Key: `${S1}/art-1.thumb.webp`,
+          capturedAt: "2026-10-02T17:01:00.000Z",
+        },
+      ],
+      [
+        "SITE#s1",
+        "CHECK#c1#ART#art-2",
+        {
+          artifactId: "art-2",
+          text: "Synthetic description",
+          capturedAt: "2026-10-02T17:02:00.000Z",
+        },
+      ],
+      [
+        "SITE#s1",
+        "TASK#t1",
+        {
+          taskId: "t1",
+          checkId: "c1",
+          sourceArtifactIds: ["art-1"],
+          assessmentId: "a1",
+          conditionId: "k1",
+        },
+      ],
+      [
+        "SITE#s1",
+        "TASK#t1#UPDATE#2026-10-03T17:00:00.000Z#u2",
+        {
+          notes: ["Synthetic note"],
+          photoKeys: ["t1-u2-p1"],
+          occurredAt: "2026-10-03T17:00:00.000Z",
+        },
+      ],
+      // A photo whose media row is gone still lets the rest show.
+      [
+        "SITE#s1",
+        "TASK#t1#UPDATE#2026-10-04T18:00:00.000Z#u3",
+        { photoKeys: ["t1-u3-p1"], occurredAt: "2026-10-04T18:00:00.000Z" },
+      ],
+      [
+        "SITE#s1",
+        "TASK#t1#MEDIA#t1-u2-p1",
+        {
+          artifactId: "t1-u2-p1",
+          s3Key: `${S1}/t1-u2-p1`,
+          displayS3Key: `${S1}/t1-u2-p1.display.jpg`,
+          capturedAt: "2026-10-05T17:00:00.000Z",
+        },
+      ],
+      // Its follow-up task, on the same condition.
+      ["SITE#s1", "ASSESSMENT#a1#COND#k1", { taskIds: ["t1", "t4", "t5"] }],
+      [
+        "SITE#s1",
+        "TASK#t4",
+        {
+          taskId: "t4",
+          checkId: "c1",
+          sourceArtifactIds: ["art-1"],
+          assessmentId: "a1",
+          conditionId: "k1",
+          status: "in_progress",
+        },
+      ],
+      [
+        "SITE#s1",
+        "TASK#t4#UPDATE#2026-10-04T17:00:00.000Z#u1",
+        {
+          type: "additional_action",
+          text: "Synthetic action",
+          photoKeys: ["t4-u1-p1"],
+          occurredAt: "2026-10-04T17:00:00.000Z",
+        },
+      ],
+      [
+        "SITE#s1",
+        "TASK#t4#MEDIA#t4-u1-p1",
+        {
+          artifactId: "t4-u1-p1",
+          s3Key: `${S1}/t4-u1-p1`,
+          capturedAt: "2026-10-04T17:00:00.000Z",
+        },
+      ],
+      // Uploaded but never saved with an update.
+      [
+        "SITE#s1",
+        "TASK#t4#MEDIA#t4-stray",
+        { artifactId: "t4-stray", s3Key: `${S1}/t4-stray` },
+      ],
+      ["SITE#s1", "TASK#t5", { taskId: "t5", status: "deleted" }],
+      [
+        "SITE#s1",
+        "TASK#t5#UPDATE#2026-10-04T17:00:00.000Z#u1",
+        { notes: ["Deleted note"], occurredAt: "2026-10-04T17:00:00.000Z" },
+      ],
+      // A duplicate sighting from another Check.
+      [
+        "SITE#s1",
+        "TASK#t6",
+        { taskId: "t6", checkId: "c2", sourceArtifactIds: ["art-9"] },
+      ],
+      ["SITE#s1", "DUP_LINK#t6", { taskId: "t6", originalTaskId: "t1" }],
+      [
+        "SITE#s1",
+        "CHECK#c2#ART#art-9",
+        {
+          artifactId: "art-9",
+          s3Key: "checks/s1/c2/art-9",
+          capturedAt: "2026-10-06T17:00:00.000Z",
+        },
+      ],
+      // A duplicate staff split back out.
+      ["SITE#s1", "TASK#t7", { taskId: "t7", checkId: "c1" }],
+      ["SITE#s1", "DUP_LINK#t7", { taskId: "t7", originalTaskId: "t1" }],
+      ["SITE#s1", 'DUP_OVERRIDE#["c1","art-7","k7"]', { taskId: "t7" }],
+      [
+        "SITE#s1",
+        "TASK#t7#UPDATE#2026-10-04T17:00:00.000Z#u1",
+        { notes: ["Separated note"], occurredAt: "2026-10-04T17:00:00.000Z" },
+      ],
+      // Another Site's Check with the same ID.
+      ["SITE#s2", "CHECK#c1", { checkId: "c1" }],
+      [
+        "SITE#s2",
+        "CHECK#c1#ART#art-x",
+        { artifactId: "art-x", s3Key: "checks/s2/c1/art-x" },
+      ],
+    ]).map(([pk, sk, row]) => [`${pk}|${sk}`, { pk, sk, ...row }]),
+  );
+
+/** @type {Map<string, Record<string, any>>} */
+let rows;
 
 beforeEach(() => {
+  rows = table();
   send.mockReset();
   send.mockImplementation(async (/** @type {any} */ command) => {
     const input = command.input;
-    if (input.Key) return { Item: rows[input.Key.sk] };
-    const prefix = input.ExpressionAttributeValues[":prefix"];
-    if (prefix === "CHECK#c1#ART#")
-      return {
-        Items: Object.entries(rows)
-          .filter(([sk]) => sk.startsWith(prefix))
-          .map(([, row]) => row),
-      };
-    if (prefix === "TASK#t1#UPDATE#") return { Items: updates };
-    return { Items: [] };
+    if (input.Key) return { Item: rows.get(`${input.Key.pk}|${input.Key.sk}`) };
+    const values = input.ExpressionAttributeValues;
+    return {
+      Items: [...rows.values()].filter(
+        (r) => r.pk === values[":pk"] && r.sk.startsWith(values[":prefix"]),
+      ),
+    };
   });
 });
 
+/**
+ * @param {string} key `pk|sk`
+ * @param {Record<string, unknown>} fields
+ */
+const edit = (key, fields) => Object.assign(rows.get(key) ?? {}, fields);
+
+/** @param {any[]} photos */
+const ids = (photos) => photos.map((p) => [p.artifactId, p.source]);
+
 describe("getRecordPhotos", () => {
   it("refuses compliance managers before reading, as the admin's photo route does", async () => {
-    const res = await call(event({ checkId: "c1" }, "compliance-manager"));
+    const res = await call(
+      event({ checkId: "c1" }, { role: "compliance-manager" }),
+    );
     expect(res.status).toBe(403);
     expect(send).not.toHaveBeenCalled();
   });
@@ -100,12 +218,13 @@ describe("getRecordPhotos", () => {
   it("gives a Check's photos with thumbnails, and its typed descriptions as notes", async () => {
     const { status, body } = await call(event({ checkId: "c1" }));
     expect(status).toBe(200);
+    // s2's Check c1 shares the ID, so this also shows only s1 is read.
     expect(body.photos).toEqual([
       expect.objectContaining({
         artifactId: "art-1",
         source: "check",
-        url: "https://example.test/p/check-1.jpg",
-        thumbnailUrl: "https://example.test/p/check-1-thumb.jpg",
+        url: `https://example.test/${S1}/art-1`,
+        thumbnailUrl: `https://example.test/${S1}/art-1.thumb.webp`,
       }),
     ]);
     expect(body.notes).toEqual([
@@ -117,28 +236,65 @@ describe("getRecordPhotos", () => {
     ]);
   });
 
-  it("gives an Issue's source photo first, then photos and notes staff added", async () => {
+  it("answers 404 for a Check the Site doesn't have", async () => {
+    expect((await call(event({ checkId: "nope" }))).status).toBe(404);
+  });
+
+  it("gives an Issue's sightings first, then photos and notes staff added on every task, oldest first", async () => {
     const { body } = await call(event({ issueId: "t1" }));
-    expect(
-      body.photos.map((/** @type {any} */ p) => [p.artifactId, p.source]),
-    ).toEqual([
+    expect(ids(body.photos)).toEqual([
       ["art-1", "check"],
+      ["art-9", "check"],
+      ["t4-u1-p1", "update"],
       ["t1-u2-p1", "update"],
     ]);
-    // No thumbnail stored, so the full photo stands in.
-    expect(body.photos[1].thumbnailUrl).toBe(
-      "https://example.test/p/update-1.jpg",
-    );
     expect(body.notes).toEqual([
       {
         source: "update",
         at: "2026-10-03T17:00:00.000Z",
         text: "Synthetic note",
       },
+      {
+        source: "update",
+        at: "2026-10-04T17:00:00.000Z",
+        text: "Synthetic action",
+      },
     ]);
+  });
+
+  it("shows an iPhone update photo through its JPEG copy", async () => {
+    const { body } = await call(event({ issueId: "t1" }));
+    const heic = body.photos.find(
+      (/** @type {any} */ p) => p.artifactId === "t1-u2-p1",
+    );
+    expect(heic.url).toBe(`https://example.test/${S1}/t1-u2-p1.display.jpg`);
+    // No thumbnail yet, so the JPEG copy stands in.
+    expect(heic.thumbnailUrl).toBe(heic.url);
+  });
+
+  it("ignores a JPEG copy stored under another name", async () => {
+    edit("SITE#s1|TASK#t1#MEDIA#t1-u2-p1", { displayS3Key: `${S1}/other.jpg` });
+    const { body } = await call(event({ issueId: "t1" }));
+    expect(
+      body.photos.find((/** @type {any} */ p) => p.artifactId === "t1-u2-p1")
+        .url,
+    ).toBe(`https://example.test/${S1}/t1-u2-p1`);
+  });
+
+  it("never signs a file outside the photo's own Site and Check", async () => {
+    edit("SITE#s1|CHECK#c1#ART#art-1", { thumbS3Key: "checks/s2/c1/thumb" });
+    edit("SITE#s1|TASK#t4#MEDIA#t4-u1-p1", { s3Key: "checks/s2/c1/t4-u1-p1" });
+    const { body } = await call(event({ issueId: "t1" }));
+    expect(ids(body.photos)).not.toContainEqual(["t4-u1-p1", "update"]);
+    expect(body.photos[0].thumbnailUrl).toBe(
+      `https://example.test/${S1}/art-1`,
+    );
   });
 
   it("answers 404 for an Issue the Site doesn't have", async () => {
     expect((await call(event({ issueId: "nope" }))).status).toBe(404);
+    expect(
+      (await call(event({ issueId: "t1" }, { siteId: "s2" }))).status,
+    ).toBe(404);
   });
 });

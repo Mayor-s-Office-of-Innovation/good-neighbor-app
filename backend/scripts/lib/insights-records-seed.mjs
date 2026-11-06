@@ -57,6 +57,8 @@ export function recordRows(items) {
     ),
   });
   return items.flatMap((item) => {
+    // The photo route answers 404 for a Check with no header.
+    if (/^CHECK#[^#]+$/.test(item.sk)) return [keep(item, ["checkId"])];
     if (/^CHECK#[^#]+#ART#/.test(item.sk))
       return [
         keep(item, [
@@ -69,9 +71,26 @@ export function recordRows(items) {
         ]),
       ];
     if (/^TASK#[^#]+$/.test(item.sk))
-      return [keep(item, ["taskId", "checkId", "sourceArtifactIds"])];
-    if (/^TASK#[^#]+#UPDATE#/.test(item.sk) && (item.notes || item.photoKeys))
-      return [keep(item, ["notes", "photoKeys", "occurredAt"])];
+      return [
+        keep(item, [
+          "taskId",
+          "checkId",
+          "sourceArtifactIds",
+          "assessmentId",
+          "conditionId",
+        ]),
+      ];
+    // An Issue's panel also shows its duplicates' and follow-up tasks' photos.
+    if (/^ASSESSMENT#[^#]+#COND#/.test(item.sk))
+      return [keep(item, ["taskIds"])];
+    if (/^DUP_LINK#/.test(item.sk))
+      return [keep(item, ["taskId", "originalTaskId"])];
+    if (/^DUP_OVERRIDE#/.test(item.sk)) return [keep(item, ["taskId"])];
+    if (
+      /^TASK#[^#]+#UPDATE#/.test(item.sk) &&
+      (item.notes || item.photoKeys || item.text)
+    )
+      return [keep(item, ["notes", "text", "photoKeys", "occurredAt"])];
     if (/^TASK#[^#]+#MEDIA#/.test(item.sk))
       return [keep(item, ["artifactId", "s3Key", "thumbS3Key", "capturedAt"])];
     return [];

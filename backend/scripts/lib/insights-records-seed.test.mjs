@@ -40,6 +40,20 @@ describe("recordRows", () => {
     }
   });
 
+  it("keeps the links that put duplicates and follow-ups in their Issue", () => {
+    const links = rows.filter((r) => r.sk.startsWith("DUP_LINK#"));
+    const conditions = rows.filter((r) => /#COND#/.test(r.sk));
+    expect(links.length).toBeGreaterThan(0);
+    expect(conditions.length).toBeGreaterThan(0);
+    for (const link of links)
+      for (const id of [link.taskId, link.originalTaskId])
+        expect(bySk.get(`${link.pk}|TASK#${id}`)).toBeDefined();
+    const onCondition = rows.filter(
+      (r) => /^TASK#[^#]+$/.test(r.sk) && r.conditionId,
+    );
+    expect(onCondition.length).toBeGreaterThan(0);
+  });
+
   it("spreads photos over every pooled image", () => {
     const keys = rows.flatMap((r) => (r.s3Key ? [r.s3Key] : []));
     const used = new Set(
