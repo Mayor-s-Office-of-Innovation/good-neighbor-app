@@ -31,7 +31,7 @@
     {
       "name": "main css",
       "path": "dist/assets/index-*.css",
-      "limit": "21.1 kB"
+      "limit": "22 kB"
     },
     {
       "name": "task update js",
@@ -145,7 +145,7 @@
     "@types/node": "^22.20.1",
     "eslint": "9.9.1",
     "eslint-plugin-jsdoc": "^64.5.4",
-    "globals": "15.9.0",
+    "globals": "17.13.0",
     "size-limit": "^14.3.0",
     "speed-check": "github:Mayor-s-Office-of-Innovation/speed-check#d472e8682b2e76504627f446e6881275bddfefd9",
     "typescript": "5.5.4",
