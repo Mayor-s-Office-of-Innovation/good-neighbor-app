@@ -428,3 +428,124 @@ it("keeps the task-list evidence selection when check artifacts arrive in a diff
   expect(task.evidence).toMatchObject({ kind: "photo", artifactId: "photo" });
   expect(task.mediaUrl).toBe("https://media/selected-photo");
 });
+
+describe("server media paths (signed cookies)", () => {
+  beforeEach(() => {
+    vi.mocked(getCheck).mockReset();
+    vi.mocked(getCheckEvidenceBatch).mockReset();
+  });
+  const pathTask = {
+    taskId: "t-path",
+    checkId: "chk-path",
+    sourceArtifactIds: ["a1"],
+    evidence: {
+      artifactId: "a1",
+      kind: "photo",
+      placeName: "North gate",
+      mediaPath: "/checks/site-1/chk-path/a1",
+      thumbnailPath: "/checks/site-1/chk-path/a1.thumb.webp",
+    },
+  };
+
+  it("hydrates a task from its evidence paths with no check read and no signing", async () => {
+    expect(needsTaskEvidenceHydration(pathTask)).toBe(true);
+    const [task] = await hydrateTaskEvidence([pathTask], { batch: true });
+    expect(getCheck).not.toHaveBeenCalled();
+    expect(getCheckEvidenceBatch).not.toHaveBeenCalled();
+    expect(getMediaUrl).not.toHaveBeenCalled();
+    expect(task).toMatchObject({
+      mediaUrl: "/checks/site-1/chk-path/a1",
+      thumbnailUrl: "/checks/site-1/chk-path/a1.thumb.webp",
+      mediaExpiresAt: Infinity,
+      mediaState: "ready",
+    });
+    expect(needsTaskEvidenceHydration(task)).toBe(false);
+    // A card mounting for the same artifact finds the paths in the cache.
+    expect(await cachedMediaUrls("chk-path", "a1")).toEqual({
+      downloadUrl: "/checks/site-1/chk-path/a1",
+      thumbnailUrl: "/checks/site-1/chk-path/a1.thumb.webp",
+      expiresAt: Infinity,
+    });
+    expect(getMediaUrl).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the presign route after a path fails and does not re-register during the cooldown", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-05T12:00:00Z"));
+    await hydrateTaskEvidence([pathTask], { batch: true });
+    // The image failed to load: the component invalidates, as for any URL.
+    invalidateMediaUrls("chk-path", "a1");
+    getMediaUrl.mockResolvedValueOnce({
+      downloadUrl: "https://signed/a1",
+      thumbnailUrl: "https://signed/a1.thumb",
+      expiresIn: 3600,
+    });
+    expect((await cachedMediaUrls("chk-path", "a1")).downloadUrl).toBe(
+      "https://signed/a1",
+    );
+    expect(getMediaUrl).toHaveBeenCalledTimes(1);
+    // The next list refresh carries the same paths; they are not re-adopted
+    // yet, and the photo is signed directly without a check read.
+    expect(needsTaskEvidenceHydration(pathTask)).toBe(false);
+    const [task] = await hydrateTaskEvidence([pathTask], { batch: true });
+    expect(task.mediaUrl).toBe("https://signed/a1");
+    expect(task.evidence.placeName).toBe("North gate");
+    expect(getCheck).not.toHaveBeenCalled();
+    expect(getMediaUrl).toHaveBeenCalledTimes(1);
+    // After the cookie renewal window the server path is trusted again.
+    vi.advanceTimersByTime(15 * 60 * 1000 + 1);
+    expect(needsTaskEvidenceHydration(pathTask)).toBe(true);
+    const [again] = await hydrateTaskEvidence([pathTask], { batch: true });
+    expect(again.mediaUrl).toBe("/checks/site-1/chk-path/a1");
+  });
+
+  it("registers paths carried by check artifacts so the photo strip signs nothing", async () => {
+    const detailWithPaths = {
+      checkId: "chk-detail",
+      artifacts: [
+        {
+          artifactId: "p9",
+          s3Key: "checks/site-1/chk-detail/p9",
+          contentType: "image/jpeg",
+          mediaPath: "/checks/site-1/chk-detail/p9",
+        },
+      ],
+      analyses: [],
+    };
+    const [task] = await hydrateTaskEvidenceFromCheck(
+      [{ taskId: "t9", checkId: "chk-detail", sourceArtifactIds: ["p9"] }],
+      detailWithPaths,
+    );
+    expect(task.mediaUrl).toBe("/checks/site-1/chk-detail/p9");
+    expect(task.thumbnailUrl).toBeUndefined();
+    expect(getMediaUrl).not.toHaveBeenCalled();
+    expect((await cachedMediaUrls("chk-detail", "p9")).downloadUrl).toBe(
+      "/checks/site-1/chk-detail/p9",
+    );
+  });
+
+  it("ignores paths that are not same-origin absolute paths", async () => {
+    vi.mocked(getCheck).mockResolvedValueOnce({
+      check: {},
+      artifacts: [
+        { artifactId: "a1", s3Key: "k/a1", contentType: "image/jpeg" },
+      ],
+      analyses: [],
+    });
+    const [task] = await hydrateTaskEvidence(
+      [
+        {
+          ...pathTask,
+          taskId: "t-bad",
+          checkId: "chk-bad",
+          evidence: { ...pathTask.evidence, mediaPath: "https://evil/x" },
+        },
+      ],
+      { batch: true },
+    );
+    // Falls through to the ordinary path: a check read, then signing.
+    expect(getCheckEvidenceBatch).not.toHaveBeenCalled();
+    expect(getCheck).toHaveBeenCalledWith("chk-bad");
+    expect(task.mediaUrl).toBe("https://media/default");
+  });
+});

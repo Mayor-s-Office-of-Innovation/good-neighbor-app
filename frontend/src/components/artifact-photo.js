@@ -119,7 +119,10 @@ export class ArtifactPhoto extends HTMLElement {
           urls.downloadUrl,
         urls.downloadUrl,
       );
-      this._schedule(urls.expiresAt - Date.now());
+      // Server media paths never expire (the cookie does, and a failed load
+      // falls back through _recover); only signed URLs schedule a renewal.
+      if (Number.isFinite(urls.expiresAt))
+        this._schedule(urls.expiresAt - Date.now());
       return true;
     } catch {
       if (!this.isConnected || generation !== this._generation) return;

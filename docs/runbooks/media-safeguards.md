@@ -138,6 +138,94 @@ expiry. A recovered database may reference expired or deleted images; keep the
 existing unavailable-media behavior and never extend retention as a recovery
 shortcut. See [recovery.md](recovery.md) for the database restore procedure.
 
+## Media access cookies
+
+Check photos are read through the app distribution as plain `/checks/<site>/<check>/<key>`
+paths (the object key; the SPA's own route is the singular `/check`) behind a CloudFront signed cookie (`infra/modules/app/media.tf`;
+`notes/media-signed-cookies-plan.md`). The api Lambda mints the cookie for the caller's site
+prefix with a one-hour lifetime and renews it on every token refresh. The S3 presigned media
+route remains for the admin app, care-work and complaint media, 311 attachments and the local
+harness.
+
+The whole feature is gated on the `media_signing_public_key_pem` variable of each environment
+root. While it is empty (the default) Terraform creates only the private-key secret container
+and nothing else changes; the api Lambda sees no `MEDIA_KEY_PAIR_ID` and does not advertise
+media cookies.
+
+### Enabling an environment
+
+1. Deploy once with the variable empty so `aws_secretsmanager_secret.media_signing_key`
+   exists (`<prefix>-media-signing-key`, for example `gnp-dev-media-signing-key`).
+2. Generate the key pair on a workstation, never in CI and never in the repo:
+
+   ```sh
+   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out media-signing-private.pem
+   openssl pkey -in media-signing-private.pem -pubout -out media-signing-public.pem
+   ```
+
+3. Store the private half out-of-band, then delete the local file:
+
+   ```sh
+   aws secretsmanager put-secret-value \
+     --secret-id <prefix>-media-signing-key \
+     --secret-string file://media-signing-private.pem
+   rm media-signing-private.pem
+   ```
+
+4. Commit the public half in the environment's `terraform.tfvars` (a public key is not a
+   secret):
+
+   ```hcl
+   media_signing_public_key_pem = <<-PEM
+     -----BEGIN PUBLIC KEY-----
+     ...
+     -----END PUBLIC KEY-----
+   PEM
+   ```
+
+5. The next deploy creates the CloudFront public key and key group, the uploads-bucket origin
+   access control and bucket policy statement (read limited to `checks/*`), the `/checks/*`
+   behaviour with its one-hour cache policy, and sets `MEDIA_KEY_PAIR_ID` and
+   `MEDIA_SIGNING_KEY_SECRET_ARN` on the api Lambda.
+
+### Verifying
+
+Without cookies every `/checks/*` request is a 403 from the edge:
+
+```sh
+curl -sS -o /dev/null -w '%{http_code}\n' https://<app host>/checks/<site>/<check>/<artifact>.thumb.webp
+```
+
+With cookies signed by the private key for the matching site prefix the same request is a 200
+(sign with `@aws-sdk/cloudfront-signer` `getSignedCookies` and a custom policy whose
+`Resource` is `https://<app host>/checks/<site>/*`). A path outside `/checks/`, a trailing
+slash, or `..` is a 404 from the viewer function before any origin call; the function never
+rewrites the URI, so the URL the signature is checked against is the one S3 receives. Also
+confirm that the cache policy's `cookies: none` leaves signed-cookie validation intact (AWS
+documents the validation but not its interaction with cache policies). The `/checks/*` 4xx rate
+is visible in the distribution's CloudFront metrics.
+
+### Rotation
+
+Rotation is a cutover, not an overlap: the variable holds one public key, so an apply with a
+new PEM creates the new CloudFront key, points the key group at it, updates the Lambda's
+`MEDIA_KEY_PAIR_ID` (which also makes new execution environments read the new private key)
+and removes the old key. Put the new private key in Secrets Manager first, then change the
+tfvars and deploy. Cookies signed with the old key fail with 403 for the few minutes the edge
+and the Lambda disagree; the client treats a media 403 as "cookie stale", re-mints through the
+token refresh and retries the image once, so users see at most one placeholder flash. If a
+graceful overlap is ever needed, widen the variable to a list and add both keys to the group.
+
+Revocation of a device or site follows the cookie lifetime: at most one hour, the same window
+a presigned URL has today.
+
+### What the cookie does not change
+
+Deleting a photo must remove the S3 object (and its `.thumb.webp` / `.display.jpg`
+derivatives), not only the DynamoDB row, because a site cookie reads by path. The edge cache
+holds an object for at most one hour after that. Care-work deletion already removes objects;
+check-artifact deletion is updated with the backend part of this work.
+
 ## 311 attachment leases
 
 Silent and manual 311 filings snapshot each image into `sf311-media/` in the

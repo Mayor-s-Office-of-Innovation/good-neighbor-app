@@ -131,6 +131,12 @@ variable "duplicate_alarm_route_confirmed" {
   default     = false
 }
 
+variable "media_signing_public_key_pem" {
+  type        = string
+  default     = ""
+  description = "PEM public key for CloudFront signed media cookies; see the module variable of the same name and docs/runbooks/media-safeguards.md."
+}
+
 variable "posthog_digest_route_confirmed" {
   description = "Cut PostHog warnings over to the digest only after both forwarding paths and actual digest receipt are verified in this environment."
   type        = bool

@@ -12,7 +12,14 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { ddb } from "../db.js";
-import { headObject, presignGet, presignPut, setObjectTags } from "../s3.js";
+import {
+  deleteObject,
+  headObject,
+  presignGet,
+  presignPut,
+  setObjectTags,
+} from "../s3.js";
+import { thumbnailKeyFor } from "../media/thumbnail.js";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveActorId, deriveSiteId } from "../lib/principal.js";
@@ -972,6 +979,11 @@ export const deleteArtifact = async (event) => {
       ],
     }),
   );
+  // With media behind a site-scoped cookie (lib/media-cookie.js) the object
+  // itself must go, not only the row: a path stays readable until the bucket's
+  // lifecycle rule runs otherwise. Best effort, tenant-checked, logged on
+  // failure; the 30-day expiry remains the backstop.
+  await removeArtifactObjects({ siteId, checkId, artifact });
   // Retried even when the artifact is already absent: an interrupted cleanup
   // must not strand generated tasks forever.
   try {
@@ -1116,6 +1128,40 @@ export const presignMedia = async (event) => {
     expiresIn,
   });
 };
+
+/**
+ * Delete a check artifact's original and thumbnail from S3 after its row is
+ * gone. Keys outside the caller's tenant prefix are never touched (stored data
+ * is untrusted); a missing object is a successful delete to S3.
+ * @param {{ siteId: string, checkId: string, artifact: Record<string, any> | undefined }} input
+ */
+async function removeArtifactObjects({ siteId, checkId, artifact }) {
+  const s3Key = artifact?.s3Key;
+  const tenantPrefix = `checks/${siteId}/${checkId}/`;
+  if (typeof s3Key !== "string" || !s3Key.startsWith(tenantPrefix)) return;
+  const { uploadBucket } = getConfig();
+  const keys = new Set([s3Key, thumbnailKeyFor(s3Key)]);
+  if (
+    typeof artifact?.thumbS3Key === "string" &&
+    artifact.thumbS3Key.startsWith(tenantPrefix)
+  )
+    keys.add(artifact.thumbS3Key);
+  await Promise.all(
+    [...keys].map((key) =>
+      deleteObject({ bucket: uploadBucket, key }).catch((error) => {
+        console.error(
+          JSON.stringify({
+            marker: "MediaObjectDeleteFailed",
+            siteId,
+            checkId,
+            artifactId: artifact?.artifactId,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }),
+    ),
+  );
+}
 
 /**
  * Build one conditional quota reservation update for a DynamoDB transaction.
