@@ -162,15 +162,24 @@ describe("parsePeriodParams", () => {
     ).toMatchObject({ startDay: "2026-11-01" });
   });
 
-  it("opens on last month once it has 14 days of data", () => {
-    // October holds Oct 18–31: exactly 14 days, though November has 30.
+  it("opens on last month once it has 14 days of data, and not with 13", () => {
+    // October holds Oct 18–31, exactly 14 days, or Oct 19–31; November has 30.
     expect(
-      parsePeriodParams(
-        {},
-        "2026-11-30T19:00:00.000Z",
-        daysOfData("2026-10-18", "2026-11-30"),
+      ["2026-10-18", "2026-10-19"].map(
+        (from) =>
+          parsePeriodParams(
+            {},
+            "2026-11-30T19:00:00.000Z",
+            daysOfData(from, "2026-11-30"),
+          ).startDay,
       ),
-    ).toMatchObject({ startDay: "2026-10-01", endDay: "2026-11-01" });
+    ).toEqual(["2026-10-01", "2026-11-01"]);
+  });
+
+  it("treats a missing list of days with data as no data yet", () => {
+    expect(parsePeriodParams({}, EVALUATED)).toMatchObject({
+      startDay: "2026-11-01",
+    });
   });
 
   it("opens on the running month when there's no data yet", () => {
@@ -333,10 +342,22 @@ describe("parseListQuery", () => {
     ).toMatchObject({ code: "invalid_severityBand", statusCode: 400 });
   });
 
-  it("refuses a comma list of Site response states, which Overview never sends", () => {
+  it("takes a comma list of Site response states, as Issues lists do", () => {
     expect(
-      errorOf(() => parseListQuery("sites", { responseState: "overdue,late" })),
+      parseListQuery("sites", { responseState: "overdue,late" }).filters,
+    ).toEqual({ responseState: "overdue,late" });
+    expect(
+      errorOf(() => parseListQuery("sites", { responseState: "late,bogus" })),
     ).toMatchObject({ code: "invalid_responseState", statusCode: 400 });
+  });
+
+  it("takes a concern flag's Issues filter, and refuses one that isn't a flag", () => {
+    expect(
+      parseListQuery("issues", { concern: "slowResponse" }).filters,
+    ).toEqual({ concern: "slowResponse" });
+    expect(
+      errorOf(() => parseListQuery("issues", { concern: "fewChecks" })),
+    ).toMatchObject({ code: "invalid_concern", statusCode: 400 });
   });
 
   it("keeps a valid Issue filter", () => {

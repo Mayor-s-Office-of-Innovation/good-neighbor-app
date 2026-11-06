@@ -37,6 +37,35 @@ export const CONCERN_RULES = Object.freeze({
 });
 
 /**
+ * Timed to its resolution as well, so a past period's count doesn't change
+ * with the day it's run. Overdue and late are left out: slow response counts
+ * them already.
+ * @param {Record<string, any>} issue
+ * @param {number} evaluatedAtMs
+ * @returns {boolean}
+ */
+export function isLongUnresolved(issue, evaluatedAtMs) {
+  if (issue.responseState === "overdue" || issue.responseState === "late")
+    return false;
+  const end = issue.resolvedAt ? Date.parse(issue.resolvedAt) : evaluatedAtMs;
+  return (
+    end - Date.parse(issue.createdAt) > CONCERN_RULES.unresolvedDays * DAY_MS
+  );
+}
+
+/**
+ * The Issues behind each concern flag, so a flag's "See" link lists them.
+ * @type {Record<string, (issue: Record<string, any>, evaluatedAtMs: number) => boolean>}
+ */
+const CONCERN_ISSUES = {
+  slowResponse: (issue, evaluatedAtMs) =>
+    issue.responseState === "overdue" ||
+    issue.responseState === "late" ||
+    isLongUnresolved(issue, evaluatedAtMs),
+  repeatedSevere: (issue) => issue.severityBand === "severe",
+};
+
+/**
  * @param {Snapshot} snap
  * @param {Interval | null} interval
  * @param {number} now
@@ -211,6 +240,7 @@ function compareValues(a, b, key) {
 }
 
 // A fixed tie-break keeps every page boundary stable.
+// Exported for the admin E2E fake, so its lists come out in the same order.
 /**
  * @template {Record<string, any>} T
  * @param {T[]} rows
@@ -218,7 +248,7 @@ function compareValues(a, b, key) {
  * @param {string[]} ties
  * @returns {T[]}
  */
-function sortRows(rows, sort, ties) {
+export function sortRows(rows, sort, ties) {
   const sign = sort.dir === "desc" ? -1 : 1;
   return [...rows].sort((a, b) => {
     const primary = compareValues(a, b, sort.key);
@@ -238,7 +268,7 @@ function sortRows(rows, sort, ties) {
  * @param {ListQuery} list
  * @param {unknown} query everything that shaped `rows`, for the cursor
  * @param {Snapshot} snap
- * @returns {{ page: T[], nextCursor: string | null, offset: number }}
+ * @returns {{ page: T[], nextCursor: string | null }}
  */
 function paginate(rows, list, query, snap) {
   const offset = list.cursor
@@ -248,7 +278,6 @@ function paginate(rows, list, query, snap) {
   const next = offset + list.limit;
   return {
     page,
-    offset,
     nextCursor:
       next < rows.length ? encodeCursor(query, snap.snapshotId, next) : null,
   };
@@ -283,7 +312,7 @@ function contacts(snap, siteId) {
   };
 }
 
-// Today's public contact, as posted for neighbors; the Site manager's stays out (plan §8).
+// Only the contact posted for neighbors; the Site manager's is private.
 /**
  * @param {Snapshot} snap
  * @param {string} siteId
@@ -320,8 +349,6 @@ function siteDims(site) {
  * @param {Record<string, any>[]} sites
  */
 function siteRows(snap, interval, sites) {
-  const ids = new Set(sites.map((s) => s.siteId));
-  const { total } = sumDays(snap, interval, ids);
   const rows = sites.map((site) => {
     const facts = siteFacts(snap, site, interval);
     const indicators = contacts(snap, site.siteId);
@@ -332,6 +359,7 @@ function siteRows(snap, interval, sites) {
       checksPerDay: facts.checksPerDay,
       checksOwedPerDay: facts.checksOwedPerDay,
       checksPerOwedDay: facts.checksPerOwedDay,
+      issuesPer30Days: facts.issuesPer30Days,
       longUnresolved: facts.longUnresolved,
       ...indicators,
       concerns: facts.concerns,
@@ -341,7 +369,21 @@ function siteRows(snap, interval, sites) {
       manageHref: manageHref(site.siteId),
     };
   });
-  return { rows, total, ids };
+  return rows;
+}
+
+// From the rows already summed, so Overview reads each Site's days once.
+/**
+ * @param {{ activity: Record<string, number>, response: Record<string, number> }[]} rows
+ * @returns {Record<string, number>}
+ */
+function totalOf(rows) {
+  const total = Object.fromEntries(SITE_DAY_METRICS.map((m) => [m, 0]));
+  for (const row of rows) {
+    for (const m of ACTIVITY) total[m] += row.activity[m];
+    for (const m of RESPONSE_STATES) total[m] += row.response[m];
+  }
+  return total;
 }
 
 /**
@@ -414,19 +456,29 @@ const oneDecimal = (n) => Math.round(n * 10) / 10;
  * @param {Interval} interval
  */
 function siteFacts(snap, site, interval) {
-  const ids = new Set([site.siteId]);
-  const totals = split(sumDays(snap, interval, ids).total);
   const today = pacificDateKey(snap.manifest.evaluatedAt);
   const range = wholeDays(snap, site, interval, today);
   const days = range ? dayKeysBetween(range.startDay, range.endDay).length : 0;
-  // Issues are counted to the update, today included, so their limit spans the same days.
+  // Issues are counted to the update, today included, so their rate spans the same days.
   const issueDays = dayKeysBetween(
     interval.startDay,
     earlierDay(interval.endDay, addDays(today, 1)),
   ).length;
-  const checks = range
-    ? sumDays(snap, range, ids).total.completedPerimeterChecks
-    : 0;
+  // One pass over the Site's days; the whole days sit inside the period.
+  const sum = Object.fromEntries(SITE_DAY_METRICS.map((m) => [m, 0]));
+  let checks = 0;
+  const own = snap.daysBySite.get(site.siteId) ?? [];
+  for (
+    let i = firstOnOrAfter(own, interval.startDay);
+    i < own.length && own[i].day < interval.endDay;
+    i++
+  ) {
+    const row = own[i];
+    for (const m of SITE_DAY_METRICS) sum[m] += row[m] ?? 0;
+    if (range && row.day >= range.startDay && row.day < range.endDay)
+      checks += row.completedPerimeterChecks ?? 0;
+  }
+  const totals = split(sum);
   // No perimeter means nothing to walk, so no average.
   const owed =
     site.hasPerimeter && range ? owedChecks(snap, site.siteId, range) : null;
@@ -444,12 +496,7 @@ function siteFacts(snap, site, interval) {
       continue;
     severity[issue.severityBand] += 1;
     if (issue.severity > (maxSeverity ?? 0)) maxSeverity = issue.severity;
-    const openFor = evaluated - Date.parse(issue.createdAt);
-    if (
-      issue.resolvedAt === null &&
-      openFor > CONCERN_RULES.unresolvedDays * DAY_MS
-    )
-      longUnresolved += 1;
+    if (isLongUnresolved(issue, evaluated)) longUnresolved += 1;
   }
   const checksPerDay =
     site.hasPerimeter && days ? oneDecimal(checks / days) : null;
@@ -465,6 +512,10 @@ function siteFacts(snap, site, interval) {
     checksPerOwedDay !== null &&
     checksOwedPerDay !== null &&
     checksPerOwedDay < checksOwedPerDay;
+  // Short periods count as 30 days, so a quiet week isn't flagged for 2 Issues.
+  const issuesPer30Days = issueDays
+    ? oneDecimal((totals.activity.issuesCreated * 30) / Math.max(issueDays, 30))
+    : null;
   const facts = {
     totals,
     severity,
@@ -472,21 +523,22 @@ function siteFacts(snap, site, interval) {
     checksPerDay,
     checksOwedPerDay,
     checksPerOwedDay,
+    issuesPer30Days,
     longUnresolved,
-    days,
   };
   const concerns = concernsOf(
-    { ...facts, underOwed, issueDays },
+    { ...facts, underOwed },
     site.status !== "inactive",
   );
   return { ...facts, concerns };
 }
 
 /**
- * Plan §7's flags, in the mock's order. Awaiting isn't one: there's still
- * time to answer. A closed Site can't be flagged for few Checks. Missing
- * contacts are flagged on the Site but never counted (plan §0.2 Q3).
- * @param {{ totals: ReturnType<typeof split>, underOwed: boolean, longUnresolved: number, days: number, issueDays: number }} facts
+ * In the order the pages list them. Awaiting isn't one: there's still time
+ * to answer. A closed Site can't be flagged for few Checks. A missing
+ * contact shows on the Site page but isn't a concern, since it isn't
+ * activity in the period.
+ * @param {{ totals: ReturnType<typeof split>, underOwed: boolean, longUnresolved: number, issuesPer30Days: number | null }} facts
  * @param {boolean} active
  * @returns {string[]}
  */
@@ -495,19 +547,19 @@ function concernsOf(
     totals: { activity, response },
     underOwed,
     longUnresolved,
-    days,
-    issueDays,
+    issuesPer30Days,
   },
   active,
 ) {
   const rules = CONCERN_RULES;
-  // Short periods keep the 30-day limit, so a quiet week isn't flagged for 2 Issues.
-  const manyIssues = (rules.issuesPer30Days * Math.max(issueDays, 30)) / 30;
   return [
     active && underOwed && "fewChecks",
     activity.severeIssues >= rules.severeIssues && "repeatedSevere",
-    days > 0 && activity.issuesCreated > manyIssues && "manyIssues",
-    // One flag for all three, since managers read them as one problem (Bryan, 11/05).
+    // The rounded rate, so the flag agrees with the number on screen.
+    issuesPer30Days !== null &&
+      issuesPer30Days > rules.issuesPer30Days &&
+      "manyIssues",
+    // One flag for all three, since managers read them as one problem.
     (longUnresolved > 0 || response.overdue > 0 || response.late > 0) &&
       "slowResponse",
   ].filter((c) => typeof c === "string");
@@ -535,7 +587,8 @@ export const SITE_ROW_FILTERS = {
   show: (row, value) =>
     value === "all" ||
     (value === "top" ? row.concerns : row.unknownEvidence).length > 0,
-  responseState: (row, value) => row.response[value] > 0,
+  responseState: (row, value) =>
+    value.split(",").some((state) => row.response[state] > 0),
   publicContact: (row, value) => row.publicContact.state === value,
   siteContact: (row, value) => row.siteContact.state === value,
 };
@@ -548,14 +601,12 @@ export const SITE_ROW_FILTERS = {
  * @param {Record<string, string>} filters
  */
 function filteredSiteRows(snap, interval, filter, filters) {
-  const all = siteRows(snap, interval, matchSites(snap, filter));
   const active = outcomeFilters(filters);
-  if (!active.length) return all;
-  const rows = all.rows.filter((row) =>
-    active.every(([name, value]) => SITE_ROW_FILTERS[name](row, value)),
+  const rows = siteRows(snap, interval, matchSites(snap, filter)).filter(
+    (row) =>
+      active.every(([name, value]) => SITE_ROW_FILTERS[name](row, value)),
   );
-  const ids = new Set(rows.map((r) => r.siteId));
-  return { rows, total: sumDays(snap, interval, ids).total, ids };
+  return { rows, ids: new Set(rows.map((r) => r.siteId)) };
 }
 
 // The filters that drop rows; All Sites keeps every row, so it isn't one.
@@ -572,8 +623,9 @@ function outcomeFilters(filters) {
 // Must cover every key in SORTS.sites; a test holds the two together.
 const SITE_SORT_VALUE = {
   /** @param {any} r */ name: (r) => r.name ?? r.siteId,
+  // Long-unresolved leaves out overdue and late, so no Issue counts twice.
   /** @param {any} r */ overdueLate: (r) =>
-    r.response.overdue + r.response.late + (r.longUnresolved ?? 0),
+    r.response.overdue + r.response.late + r.longUnresolved,
   /** @param {any} r */ maxSeverity: (r) => r.maxSeverity,
   /** @param {any} r */
   completedPerimeterChecks: (r) => r.activity.completedPerimeterChecks,
@@ -586,7 +638,7 @@ const SITE_SORT_VALUE = {
  * @param {{ key: string, dir: "asc" | "desc" }} sort
  * @returns {T[]}
  */
-function sortSiteRows(rows, sort) {
+export function sortSiteRows(rows, sort) {
   const value =
     SITE_SORT_VALUE[/** @type {keyof typeof SITE_SORT_VALUE} */ (sort.key)];
   if (!value) throw requestError("invalid_sort");
@@ -607,15 +659,10 @@ function sortSiteRows(rows, sort) {
  * @param {{ interval: Interval, filter: SiteFilter, list: ListQuery, now: number }} req
  */
 export function overview(snap, { interval, filter, list, now }) {
-  const { rows, total, ids } = filteredSiteRows(
-    snap,
-    interval,
-    filter,
-    list.filters,
-  );
+  const { rows, ids } = filteredSiteRows(snap, interval, filter, list.filters);
   return {
     meta: meta(snap, interval, now),
-    totals: split(total),
+    totals: split(totalOf(rows)),
     // Over the same Sites as totals, so its change explains those numbers.
     comparison: comparison(snap, interval, ids),
     siteCount: rows.length,
@@ -676,6 +723,7 @@ export function siteDetail(snap, siteId, { interval, now }) {
     checksPerDay: facts.checksPerDay,
     checksOwedPerDay: facts.checksOwedPerDay,
     checksPerOwedDay: facts.checksPerOwedDay,
+    issuesPer30Days: facts.issuesPer30Days,
     longUnresolved: facts.longUnresolved,
     concerns: facts.concerns,
     comparison: comparison(snap, interval, ids),
@@ -707,19 +755,34 @@ function withSiteName(snap, row) {
  */
 function issuesIn(snap, interval, filter, filters) {
   const ids = new Set(matchSites(snap, filter).map((s) => s.siteId));
+  const evaluated = Date.parse(snap.manifest.evaluatedAt);
   return snap.tables.issues.filter(
     (i) =>
       ids.has(i.siteId) &&
       i.createdDay >= interval.startDay &&
       i.createdDay < interval.endDay &&
-      (!filters.severityBand ||
-        filters.severityBand.split(",").includes(i.severityBand)) &&
-      (!filters.responseState ||
-        filters.responseState.split(",").includes(i.responseState)) &&
-      (!filters.source || i.source === filters.source) &&
-      (!filters.category || i.category === filters.category) &&
-      (!filters.issueStatus ||
-        (filters.issueStatus === "resolved") === (i.resolvedAt !== null)),
+      issueMatches(i, filters, evaluated),
+  );
+}
+
+/**
+ * The Issues list filters, shared with the admin E2E fake so the two agree.
+ * @param {Record<string, any>} i
+ * @param {Record<string, string>} filters
+ * @param {number} evaluatedAtMs
+ * @returns {boolean}
+ */
+export function issueMatches(i, filters, evaluatedAtMs) {
+  return (
+    (!filters.severityBand ||
+      filters.severityBand.split(",").includes(i.severityBand)) &&
+    (!filters.responseState ||
+      filters.responseState.split(",").includes(i.responseState)) &&
+    (!filters.source || i.source === filters.source) &&
+    (!filters.category || i.category === filters.category) &&
+    (!filters.issueStatus ||
+      (filters.issueStatus === "resolved") === (i.resolvedAt !== null)) &&
+    (!filters.concern || CONCERN_ISSUES[filters.concern](i, evaluatedAtMs))
   );
 }
 
@@ -1170,6 +1233,7 @@ export function reportDataset(snap, { siteIds, interval, now }) {
         checksPerDay: detail.checksPerDay,
         checksOwedPerDay: detail.checksOwedPerDay,
         checksPerOwedDay: detail.checksPerOwedDay,
+        issuesPer30Days: detail.issuesPer30Days,
         longUnresolved: detail.longUnresolved,
         concerns: detail.concerns,
         comparison: detail.comparison,

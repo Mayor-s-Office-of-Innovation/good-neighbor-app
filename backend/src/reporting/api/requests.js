@@ -89,10 +89,10 @@ function defaultMonth(evaluatedAt, dataDays) {
 /**
  * @param {Params} params
  * @param {string} evaluatedAt
- * @param {string[]} dataDays the snapshot's days with a site_days row
+ * @param {string[]} [dataDays] the snapshot's days with a site_days row
  * @returns {import("../periods.js").Interval}
  */
-export function parsePeriodParams(params, evaluatedAt, dataDays) {
+export function parsePeriodParams(params, evaluatedAt, dataDays = []) {
   const kind = str(params.period) ?? "month";
   /** @type {import("../periods.js").PeriodSpec} */
   let spec;
@@ -224,7 +224,11 @@ export const SORTS = Object.freeze({
 });
 
 // The Site page lists several states or bands at once, e.g. "overdue,late".
-const MULTI = new Set(["issues.responseState", "issues.severityBand"]);
+const MULTI = new Set([
+  "issues.responseState",
+  "issues.severityBand",
+  "sites.responseState",
+]);
 
 /** Fixed values, so a typo is a 400, not an empty list; null is free text. */
 const CONTACT_STATES = ["available", "missing", "unknown"];
@@ -242,6 +246,8 @@ export const LIST_FILTERS = Object.freeze({
     source: ["perimeter", "single-problem", "unknown"],
     // Not "status": that name filters Sites.
     issueStatus: ["open", "resolved"],
+    // A Site's concern flag, for its "View Issues" link.
+    concern: ["slowResponse", "repeatedSevere"],
     category: null,
   },
   checks: {

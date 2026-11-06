@@ -21,7 +21,6 @@ import {
   siteDetail,
   trends,
 } from "./read-model.js";
-import { CONCERN_RULES as ADMIN_CONCERN_RULES } from "../../../../admin-frontend/src/pages/insights/concern-rules.js";
 import { indexSnapshot } from "./snapshot.js";
 import { TEST_EVALUATED_AT, syntheticProjection } from "./test-projection.js";
 
@@ -258,7 +257,7 @@ describe("overview", () => {
       maxSeverity: 5,
       response: { overdue: 1, onTime: 2 },
       publicContact: { state: "available", basis: "current" },
-      siteContact: { state: "missing" },
+      siteContact: { state: "available" },
       manageHref: "/sites/s1",
     });
     expect(Object.keys(s1)).not.toContain("compliant");
@@ -330,14 +329,14 @@ describe("overview", () => {
     });
 
   it("lists why each Site is a top concern, and what evidence is unknown", () => {
-    // s1: two Severe Issues, two open since early October, one Overdue; s2: one open, late.
+    // s1: two Severe Issues, one Overdue and one open since early October; s2: one late.
     const rows = shown({}, s3Contacted("unknown")).sites;
     expect(rows.map((r) => [r.siteId, r.concerns, r.unknownEvidence])).toEqual([
       ["s1", ["repeatedSevere", "slowResponse"], []],
       ["s2", ["slowResponse"], []],
       ["s3", [], ["publicContact", "siteContact"]],
     ]);
-    expect(rows.map((r) => r.longUnresolved)).toEqual([2, 1, 0]);
+    expect(rows.map((r) => r.longUnresolved)).toEqual([1, 0, 0]);
   });
 
   it("keeps each threshold as a named rule, the same one the pages explain", () => {
@@ -346,7 +345,6 @@ describe("overview", () => {
       issuesPer30Days: 4,
       unresolvedDays: 14,
     });
-    expect(ADMIN_CONCERN_RULES).toEqual(CONCERN_RULES);
   });
 
   /**
@@ -414,13 +412,50 @@ describe("overview", () => {
     expect([busy(4), busy(5)]).toEqual([false, true]);
   });
 
-  /** s1's open t2 created `ms` before the snapshot was evaluated. @param {number} ms */
+  it("sends the Issues per 30 days the Many Issues flag compares, so the two agree", () => {
+    const long = days("2026-09-21", "2026-11-05");
+    const rows = [3, 4, 5, 6, 7].map(
+      (count) =>
+        overview(issuesInTenDays(count), {
+          interval: long,
+          filter: { siteIds: ["s1"] },
+          list: list("sites"),
+          now: NOW,
+        }).sites[0],
+    );
+    // 5 to 9 Issues over 45 days.
+    expect(
+      rows.map((r) => [r.issuesPer30Days, r.concerns.includes("manyIssues")]),
+    ).toEqual([
+      [3.3, false],
+      [4, false],
+      [4.7, true],
+      [5.3, true],
+      [6, true],
+    ]);
+  });
+
+  it("can flag Many Issues on a period's first day, before any whole day", () => {
+    const firstDay = edited((t, m) => {
+      m.evaluatedAt = "2026-11-01T17:00:00.000Z";
+      // Nothing after Nov 1 has happened yet.
+      t.site_days = t.site_days.filter((d) => d.day < "2026-11-02");
+      t.site_days.push({ siteId: "s1", day: "2026-11-01", issuesCreated: 5 });
+    });
+    const row = overview(firstDay, {
+      interval: november,
+      filter: { siteIds: ["s1"] },
+      list: list("sites"),
+      now: NOW,
+    }).sites[0];
+    expect([row.issuesPer30Days, row.concerns]).toEqual([5, ["manyIssues"]]);
+  });
+
+  /** s1's open, answered t1, created `ms` before the snapshot was evaluated. @param {number} ms */
   const openFor = (ms) =>
     edited((t) => {
-      for (const i of t.issues)
-        if (i.issueId === "t1") i.resolvedAt = "2026-10-03T00:00:00.000Z";
-      const t2 = t.issues.find((i) => i.issueId === "t2");
-      t2.createdAt = new Date(Date.parse(TEST_EVALUATED_AT) - ms).toISOString();
+      const t1 = t.issues.find((i) => i.issueId === "t1");
+      t1.createdAt = new Date(Date.parse(TEST_EVALUATED_AT) - ms).toISOString();
     });
 
   it("flags an Issue created in the period and still open over 14 days at the data update", () => {
@@ -431,11 +466,25 @@ describe("overview", () => {
     ]).toEqual([0, 1]);
   });
 
-  it("doesn't count a resolved Issue as long unresolved", () => {
-    const resolved = edited((t) => {
-      for (const i of t.issues) i.resolvedAt ??= "2026-10-30T00:00:00.000Z";
+  /** s1's t1, resolved this many days after it was created. @param {number} n */
+  const resolvedAfter = (n) =>
+    edited((t) => {
+      const t1 = t.issues.find((i) => i.issueId === "t1");
+      t1.resolvedAt = new Date(
+        Date.parse(t1.createdAt) + n * 86_400_000,
+      ).toISOString();
     });
-    expect(longOpen(resolved)).toEqual(0);
+
+  it("times a resolved Issue to its resolution, so a past period's count stays put", () => {
+    expect([longOpen(resolvedAfter(13)), longOpen(resolvedAfter(15))]).toEqual([
+      0, 1,
+    ]);
+  });
+
+  it("leaves overdue and late Issues out of long unresolved, so none counts twice", () => {
+    // t2 is Overdue and open since Oct 10; t1 was answered on time but is still open.
+    const s1 = shown({}).sites.find((r) => r.siteId === "s1");
+    expect([s1?.response.overdue, s1?.longUnresolved]).toEqual([1, 1]);
   });
 
   it("shows only top concerns when asked, leaving out a quiet Site", () => {
@@ -563,7 +612,7 @@ describe("overview", () => {
     ]);
   });
 
-  it("judges each day by what the Site owed that day", () => {
+  it("averages what the Site owed over its days, as its terms change", () => {
     // Its terms rose from 2 to 4 on Oct 13, so it owed 3 a day on average.
     expect([owing([2, 4], [2, 4]), owing([3, 2], [2, 4])].map(few)).toEqual([
       [3, 3, false],
@@ -625,8 +674,14 @@ describe("overview", () => {
   });
 
   it("averages over whole days only, leaving out today, which is still running", () => {
-    // s1's one November Check is on Nov 3; Nov 1–3 are whole, Nov 4 is today.
-    const row = overview(walked(), {
+    // s1 has a Check on Nov 3 and one today, Nov 4; only Nov 1–3 are whole.
+    const today = walked((t) => {
+      const row = t.site_days.find(
+        (d) => d.siteId === "s1" && d.day === "2026-11-04",
+      );
+      row.completedPerimeterChecks = 1;
+    });
+    const row = overview(today, {
       interval: november,
       filter: { siteIds: ["s1"] },
       list: list("sites"),
@@ -698,14 +753,12 @@ describe("overview", () => {
     expect(noChecks(garbled, november)).toEqual(["s1", "s2"]);
   });
 
-  it("keeps every row for All Sites, however the filter is applied", () => {
-    const rows = overview(snap, {
-      interval: october,
-      filter: {},
-      list: list("sites"),
-      now: NOW,
-    }).sites;
-    expect(rows.every((r) => SITE_ROW_FILTERS.show(r, "all"))).toBe(true);
+  it("keeps every row for All Sites, quiet ones too", () => {
+    expect(shown({ show: "all" }).sites.map((r) => r.siteId)).toEqual([
+      "s1",
+      "s2",
+      "s3",
+    ]);
   });
 
   it("keeps Sites flagged only for few Checks in Top concerns", () => {
@@ -804,7 +857,13 @@ describe("overview", () => {
         { publicContact: "missing" },
         { siteContact: "missing" },
       ].map((params) => shown(params).sites.map((r) => r.siteId)),
-    ).toEqual([["s2"], ["s2", "s3"], ["s1", "s2", "s3"]]);
+    ).toEqual([["s2"], ["s2", "s3"], ["s2", "s3"]]);
+  });
+
+  it("filters by several response states at once, as a Site page link sends them", () => {
+    expect(
+      shown({ responseState: "overdue,late" }).sites.map((r) => r.siteId),
+    ).toEqual(["s1", "s2"]);
   });
 
   it("counts and totals only the Sites the filters keep", () => {
@@ -845,6 +904,10 @@ describe("siteDetail", () => {
   it("agrees with its Overview row and the report on every flag and average", () => {
     const walkedSnap = edited((t) => {
       for (const site of t.sites) site.hasPerimeter = true;
+      // A day s1 owed nothing, so its owed-days average differs from its whole-days one.
+      t.checks_owed = t.checks_owed.filter(
+        (r) => r.siteId !== "s1" || r.day !== "2026-10-12",
+      );
     });
     const rows = overview(walkedSnap, {
       interval: october,
@@ -861,6 +924,8 @@ describe("siteDetail", () => {
       r.concerns,
       r.checksPerDay,
       r.checksOwedPerDay,
+      r.checksPerOwedDay,
+      r.issuesPer30Days,
       r.longUnresolved,
     ];
     expect(
@@ -882,7 +947,9 @@ describe("siteDetail", () => {
     expect(
       siteDetail(snap, "s2", { interval: october, now: NOW }).publicContact,
     ).toMatchObject({ state: "missing", email: null, phone: null });
-    expect(JSON.stringify(res)).not.toMatch(/primaryContact|firstName/);
+    expect(JSON.stringify(res)).not.toMatch(
+      /primaryContact|lead@example\.org|415-555-0101|Synthetic Lead/,
+    );
   });
 
   it("counts the period's Issues by severity band, to match the Issue list", () => {
@@ -973,6 +1040,38 @@ describe("listIssues", () => {
       ["t5"],
       ["t2", "t5"],
     ]);
+  });
+
+  it("lists the Issues behind each concern flag, as many as the flag counted", () => {
+    /** @param {string} concern @param {string} siteId */
+    const ids = (concern, siteId) =>
+      listIssues(snap, {
+        interval: october,
+        filter: { siteIds: [siteId] },
+        list: list("issues", { concern }),
+        now: NOW,
+      })
+        .issues.map((i) => i.issueId)
+        .sort();
+    // t1 is open since Oct 2, t2 Overdue, t5 late; t1 and t3 are Severe.
+    expect([
+      ids("slowResponse", "s1"),
+      ids("slowResponse", "s2"),
+      ids("repeatedSevere", "s1"),
+    ]).toEqual([["t1", "t2"], ["t5"], ["t1", "t3"]]);
+    const rows = overview(snap, {
+      interval: october,
+      filter: {},
+      list: list("sites"),
+      now: NOW,
+    }).sites;
+    expect(
+      rows.map(
+        (r) =>
+          r.response.overdue + r.response.late + r.longUnresolved ===
+          ids("slowResponse", r.siteId).length,
+      ),
+    ).toEqual([true, true, true]);
   });
 
   it("pages through every Issue once with a cursor", () => {
@@ -1296,17 +1395,20 @@ describe("exportRows", () => {
     expect(res.columns).toContain("responseState");
   });
 
-  it("writes the same Sites to the CSV as the filtered Overview shows", () => {
-    const req = {
-      dataset: /** @type {const} */ ("sites"),
-      interval: october,
-      filter: {},
-      list: list("sites", { responseState: "late" }),
-    };
+  it.each([
+    { responseState: "late" },
+    { show: "top" },
+    { siteContact: "missing" },
+  ])("writes the same Sites to the CSV as Overview shows for %j", (params) => {
+    const args = { interval: october, filter: {}, list: list("sites", params) };
+    const shown = overview(snap, { ...args, now: NOW }).sites.map(
+      (r) => r.siteId,
+    );
+    const req = { dataset: /** @type {const} */ ("sites"), ...args };
     expect([
       exportRowCount(snap, req),
       exportRows(snap, req).rows.map((r) => r.siteId),
-    ]).toEqual([1, ["s2"]]);
+    ]).toEqual([shown.length, shown]);
   });
 
   it("flattens Overview rows for the Sites CSV", () => {
@@ -1373,7 +1475,9 @@ describe("reportDataset", () => {
       // Closed, so its missing contact isn't flagged, as on Overview.
       ["s3", "missing", null, null, false],
     ]);
-    expect(JSON.stringify(res)).not.toMatch(/primaryContact|firstName/);
+    expect(JSON.stringify(res)).not.toMatch(
+      /primaryContact|lead@example\.org|415-555-0101|Synthetic Lead/,
+    );
   });
 
   it("leaves out Severe Issues from outside the period", () => {

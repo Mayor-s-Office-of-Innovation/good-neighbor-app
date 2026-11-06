@@ -426,6 +426,29 @@ describe("export and report jobs", () => {
     });
   });
 
+  it("exports only the Issues behind a concern flag, as its list shows them", async () => {
+    const { h, started } = setup();
+    const created = json(
+      await h.postExport(
+        event({
+          headers: key,
+          body: {
+            dataset: "issues",
+            period: "month",
+            month: "2026-10",
+            concern: "repeatedSevere",
+          },
+        }),
+      ),
+    );
+    await h.runJob(started[0]);
+    const done = json(
+      await h.getJob(event({ path: { jobId: created.job.jobId } })),
+    ).job;
+    // t1 and t3 are October's Severe Issues.
+    expect(done.result.rows).toBe(2);
+  });
+
   it("builds the CSV the requester downloads, with formulas defused", async () => {
     const { h, started, jobStore, projection } = setup();
     projection.tables.sites[0].name = "=HYPERLINK(1)";
@@ -465,7 +488,7 @@ describe("export and report jobs", () => {
     const none = await h.postReport(
       event({ headers: key, body: { siteIds: [] } }),
     );
-    const eleven = await h.postReport(
+    const tooMany = await h.postReport(
       event({
         headers: key,
         body: {
@@ -476,7 +499,7 @@ describe("export and report jobs", () => {
         },
       }),
     );
-    expect([json(none).error, json(eleven).error]).toEqual([
+    expect([json(none).error, json(tooMany).error]).toEqual([
       "invalid_site_ids",
       "too_many_sites",
     ]);
@@ -492,19 +515,31 @@ describe("export and report jobs", () => {
 
   it("builds a report for a quarter, as the dialog asked", async () => {
     const { h, started, jobStore } = setup();
-    await h.postReport(
+    const res = await h.postReport(
       event({
         headers: key,
-        body: { siteIds: ["s1"], period: "quarter", year: 2026, quarter: 4 },
+        body: {
+          siteIds: ["s1", "s2"],
+          period: "quarter",
+          year: 2026,
+          quarter: 4,
+        },
       }),
     );
     await h.runJob(started[0]);
     const report = JSON.parse([...jobStore.results.values()][0]);
+    expect(res.statusCode).toBe(202);
     expect(report.meta.interval).toMatchObject({
       kind: "quarter",
       startDay: "2026-10-01",
       endDay: "2027-01-01",
     });
+    // s1's November Issue falls inside the quarter, s2's September one outside.
+    expect(
+      report.sites.map(
+        (/** @type {any} */ s) => s.totals.activity.issuesCreated,
+      ),
+    ).toEqual([4, 1]);
   });
 
   it("lists only Site IDs and names in scope options, and only when asked", async () => {

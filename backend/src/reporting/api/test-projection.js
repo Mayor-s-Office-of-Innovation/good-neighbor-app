@@ -124,6 +124,13 @@ function syntheticInputs() {
   const sites = [
     site("s1", {
       publicContact: { email: "desk@example.org", phone: "415-555-0100" },
+      // Private: tests check it never reaches a reply.
+      primaryContact: {
+        firstName: "Synthetic",
+        lastName: "Lead",
+        email: "lead@example.org",
+        phone: "415-555-0101",
+      },
     }),
     site("s2", {
       siteType: "drop_in",

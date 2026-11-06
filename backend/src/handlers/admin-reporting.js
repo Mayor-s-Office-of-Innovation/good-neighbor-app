@@ -67,6 +67,7 @@ const LIST_PARAMS = [
   "responseState",
   "source",
   "issueStatus",
+  "concern",
   "category",
   "state",
   "show",
@@ -86,8 +87,6 @@ const pick = (params, keys) =>
   );
 
 /**
- * Days with data pick the default month: this month when last month has
- * under 14 days of data and this month has as many.
  * @param {Snapshot} snap
  * @param {Record<string, unknown>} params
  */
