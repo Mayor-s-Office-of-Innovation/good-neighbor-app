@@ -68,7 +68,6 @@ function isoOrNull(value) {
   return typeof value === "string" && value ? value : null;
 }
 
-// Older rulebooks used other names for some categories; one name each keeps their counts together.
 /**
  * @param {string} category
  * @returns {string}
@@ -85,11 +84,8 @@ function reportCategory(category) {
  * @returns {{ sites: Record<string, any>[], siteContacts: Record<string, any>[] }}
  */
 function buildSiteTables(sites, evaluatedAt) {
-  const sorted = [...sites].sort((a, b) =>
-    String(a.siteId).localeCompare(String(b.siteId)),
-  );
   return {
-    sites: sorted.map((s) => ({
+    sites: sites.map((s) => ({
       siteId: String(s.siteId),
       name: s.name ?? null,
       status: s.status ?? null,
@@ -105,7 +101,7 @@ function buildSiteTables(sites, evaluatedAt) {
         typeof s.perimeter === "string" && s.perimeter.trim() !== "",
       createdAt: s.createdAt ?? null,
     })),
-    siteContacts: sorted.map((s) => {
+    siteContacts: sites.map((s) => {
       const pub = publicContactState(s);
       const site = siteContactState(s);
       return {
@@ -286,6 +282,37 @@ export async function buildProjection(
   // A bad snapshot time would quietly mark every Issue as awaiting.
   if (!Number.isFinite(Date.parse(evaluatedAt)))
     throw new Error("buildProjection needs a valid evaluatedAt");
+  try {
+    return await project(conn, dir, { evaluatedAt, snapshotId, inputs });
+  } finally {
+    // Frees the connection's memory, even after a failed build.
+    for (const name of TEMP_TABLES)
+      await conn.run(`DROP TABLE IF EXISTS ${name}`);
+    for (const name of TEMP_MACROS)
+      await conn.run(`DROP MACRO IF EXISTS ${name}`);
+  }
+}
+
+const TEMP_TABLES = [
+  ...Object.keys(INPUT_SCHEMAS),
+  "category_names",
+  "rule_hours",
+  "p_sites",
+  "p_site_contacts",
+  ...Array.from(RULES_SQL.matchAll(/TEMP TABLE (\w+)/g), (m) => m[1]),
+];
+const TEMP_MACROS = Array.from(
+  snapshotMacrosSql(new Date(0).toISOString()).matchAll(/TEMP MACRO (\w+)/g),
+  (m) => m[1],
+);
+
+/**
+ * @param {any} conn
+ * @param {string} dir
+ * @param {{ evaluatedAt: string, snapshotId: string, inputs?: ProjectionInputs }} opts
+ * @returns {Promise<{ manifest: Record<string, any>, written: string[] }>}
+ */
+async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
   /** @type {Record<string, any>[]} */
   let siteRecords;
   /** @type {string | null} */
@@ -327,8 +354,6 @@ export async function buildProjection(
       reportCategory: reportCategory(category),
     })),
   );
-  // Tasks from before rules carried a window get the current rule's, as
-  // handlers/tasks.js does.
   const ruleHours = new Map(
     activeCatalog().rules.map((r) => [r.ruleId, r.maxAcceptableResponseHours]),
   );
@@ -388,15 +413,5 @@ export async function buildProjection(
     );
     return [...names, "manifest.json"];
   });
-  // Frees the connection's memory for whatever runs next on it.
-  for (const name of [
-    ...Object.keys(INPUT_SCHEMAS),
-    "category_names",
-    "rule_hours",
-    "p_sites",
-    "p_site_contacts",
-    ...Array.from(RULES_SQL.matchAll(/TEMP TABLE (\w+)/g), (m) => m[1]),
-  ])
-    await conn.run(`DROP TABLE IF EXISTS ${name}`);
   return { manifest, written };
 }

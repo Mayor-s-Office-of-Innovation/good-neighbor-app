@@ -12,7 +12,7 @@ import { DuckDBInstance } from "@duckdb/node-api";
 import { sqlString, toRow, writeEntityParquet } from "../analytics/convert.js";
 import { createLocalViews, writeLocalLake } from "./local-lake.js";
 import { buildProjection } from "./projection.js";
-import { readProjection } from "./test-build.js";
+import { buildFromRows, readProjection } from "./test-build.js";
 
 const EVALUATED = "2026-10-20T00:00:00.000Z";
 const SITE = "SITE#s1";
@@ -170,10 +170,11 @@ describe("buildProjection over a lake written like an export", () => {
   });
 
   it("times each Issue by the window its rule stored on the task", async () => {
-    // Answered 7 h 50 min after creation: late against a 4-hour rule.
+    // Answered 7 h 50 min after creation: late against the stored 4 hours,
+    // on time against LITTER-1's current 48.
     const ruled = items.map((i) =>
       i.sk === "TASK#t1"
-        ? { ...i, ruleId: "BLOCK-1", maxAcceptableResponseHours: 4 }
+        ? { ...i, ruleId: "LITTER-1", maxAcceptableResponseHours: 4 }
         : i,
     );
     await writeLocalLake(conn, dir, ruled, {
@@ -186,6 +187,166 @@ describe("buildProjection over a lake written like an export", () => {
       deadlineAt: "2026-10-01T20:10:00.000Z",
       responseState: "late",
     });
+  });
+
+  it.each([
+    [
+      "a creation time without seconds",
+      { sk: "TASK#t1", createdAt: "2026-10-01T16:10Z" },
+      {
+        createdAt: "2026-10-01T16:10Z",
+        deadlineAt: "2026-10-04T16:10:00.000Z",
+      },
+    ],
+    [
+      "a response time with a lowercase z",
+      {
+        sk: "TASK#t1#UPDATE#2026-10-02T00:00:00.000Z#u1",
+        occurredAt: "2026-10-02T00:00:00.000z",
+      },
+      { firstResponseAt: "2026-10-02T00:00:00.000Z" },
+    ],
+  ])("reads %s, as Date.parse does", async (_name, change, expected) => {
+    const changed = items.map((i) =>
+      i.sk === change.sk ? { ...i, ...change } : i,
+    );
+    await writeLocalLake(conn, dir, changed, {
+      exportedAt: "2026-10-19T18:00:00.000Z",
+      exportId: "e1",
+    });
+    await createLocalViews(conn, dir);
+    const { tables } = await build();
+    expect(tables.issues).toHaveLength(1);
+    expect(tables.issues[0]).toMatchObject(expected);
+  });
+
+  it("reads task times, IDs and condition order from the raw item", async () => {
+    const at = (/** @type {string} */ time) => `2026-10-${time}:00.000Z`;
+    const task = {
+      pk: SITE,
+      checkId: "c1",
+      assessmentId: "a1",
+      conditionId: "k1",
+      severity: 2,
+    };
+    await writeLocalLake(
+      conn,
+      dir,
+      [
+        ...items.slice(0, 2),
+        // The condition lists t2 first, so t2 leads though t1 is older.
+        {
+          pk: SITE,
+          sk: "ASSESSMENT#a1#COND#k1",
+          assessmentId: "a1",
+          conditionId: "k1",
+          taskIds: ["t2", "t1"],
+          createdAt: at("01T16:10"),
+        },
+        // A follow-up task completed first, so its completion is the response.
+        {
+          ...task,
+          sk: "TASK#t1",
+          taskId: "t1",
+          status: "completed",
+          createdAt: at("01T16:10"),
+          completedAt: at("01T17:00"),
+          updatedAt: at("01T17:00"),
+        },
+        // Closed, then reopened; its last edit is the latest activity.
+        {
+          ...task,
+          sk: "TASK#t2",
+          taskId: "t2",
+          status: "in_progress",
+          createdAt: at("01T16:20"),
+          updatedAt: at("05T00:00"),
+        },
+        {
+          pk: SITE,
+          sk: "TASK#t2#UPDATE#2026-10-02T00:00:00.000Z#u1",
+          taskId: "t2",
+          updateId: "u1",
+          type: "task_completed",
+          occurredAt: at("02T00:00"),
+        },
+        // A second sighting, linked to the follow-up task.
+        {
+          pk: SITE,
+          sk: "TASK#t3",
+          taskId: "t3",
+          checkId: "c1",
+          status: "open",
+          createdAt: at("01T16:30"),
+        },
+        {
+          pk: SITE,
+          sk: "DUP_LINK#t3",
+          taskId: "t3",
+          originalTaskId: "t1",
+          occurredAt: at("01T16:30"),
+        },
+        // Started with no timeline event, so only inProgressAt times it.
+        {
+          ...task,
+          sk: "TASK#t4",
+          taskId: "t4",
+          conditionId: "k2",
+          status: "in_progress",
+          createdAt: at("03T00:00"),
+          inProgressAt: at("03T02:00"),
+        },
+      ],
+      { exportedAt: "2026-10-19T18:00:00.000Z", exportId: "e1" },
+    );
+    await createLocalViews(conn, dir);
+    const { tables } = await build();
+    expect(
+      tables.issues.map((i) => [
+        i.issueId,
+        i.checkId,
+        i.source,
+        i.firstResponseAt,
+        i.latestActivityAt,
+        i.reopened,
+        i.sightings,
+        i.followUpTasks,
+      ]),
+    ).toEqual([
+      ["t2", "c1", "perimeter", at("01T17:00"), at("05T00:00"), true, 2, 1],
+      ["t4", "c1", "perimeter", at("03T02:00"), at("03T02:00"), false, 1, 0],
+    ]);
+  });
+
+  it("orders Sites by the bytes of their IDs, like the other tables", async () => {
+    const { tables } = await buildFromRows(
+      { sites: [{ siteId: "b" }, { siteId: "B" }, { siteId: "a" }] },
+      EVALUATED,
+    );
+    expect(tables.sites.map((s) => s.siteId)).toEqual(["B", "a", "b"]);
+    expect(tables.site_contacts.map((s) => s.siteId)).toEqual(["B", "a", "b"]);
+  });
+
+  it("leaves no temp tables or macros on the connection", async () => {
+    const leftovers = async () =>
+      (
+        await conn.runAndReadAll(
+          `SELECT (SELECT count(*)::INTEGER FROM duckdb_tables() WHERE temporary),
+             (SELECT count(*)::INTEGER FROM duckdb_functions() WHERE function_name = 'snapshot_at')`,
+        )
+      ).getRowsJS()[0];
+    await writeLocalLake(conn, dir, items, {
+      exportedAt: "2026-10-19T18:00:00.000Z",
+      exportId: "e1",
+    });
+    await createLocalViews(conn, dir);
+    await build();
+    expect(await leftovers()).toEqual([0, 0]);
+    // A build that fails part-way cleans up too.
+    await expect(build("2026-10-19T17:59:59.999Z")).rejects.toThrow(
+      "latest export",
+    );
+    expect(await leftovers()).toEqual([0, 0]);
   });
 
   it("describes each Site and says when the data is from", async () => {

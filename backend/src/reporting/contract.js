@@ -4,7 +4,7 @@
 export const CONTRACT_VERSION = "insights-v1";
 
 /** Bump when a counting rule changes, even if no column does. */
-export const RULE_VERSION = "2026-11-05";
+export const RULE_VERSION = "2026-11-06";
 
 export const RESPONSE_STATES = Object.freeze([
   "awaiting",

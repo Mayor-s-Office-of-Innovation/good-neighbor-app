@@ -4,6 +4,7 @@
 // records as of that time, never the reader's clock.
 
 import { PACIFIC_TIME_ZONE } from "../lib/pacific-dates.js";
+import { RESPONSE_STATES } from "./contract.js";
 
 // Staff taps that start work on an Issue, so they time the first response.
 const RESPONSE_TYPES = `('task_completed', 'escalation_action_taken',
@@ -22,10 +23,15 @@ const RESPONDED_STATUSES = `('in_progress', 'completed', 'resolving', 'completin
  */
 export function snapshotMacrosSql(evaluatedAt) {
   return `
--- A date with no time is UTC midnight, as Date.parse reads it; infinity isn't a time.
+-- Reads ISO-8601, plus times without seconds and a lowercase z, which
+-- Date.parse also takes. A bare date is UTC midnight, as Date.parse reads it.
 CREATE OR REPLACE TEMP MACRO cast_time(v) AS
   TRY_CAST(CASE WHEN regexp_full_match(v, '\\d{4}-\\d{2}-\\d{2}')
-    THEN v || 'T00:00:00Z' ELSE v END AS TIMESTAMPTZ);
+    THEN v || 'T00:00:00Z'
+    ELSE regexp_replace(regexp_replace(v,
+      '^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2})([zZ]|[+-]\\d{2}:\\d{2})?$', '\\1:00\\2'),
+      '(\\d)z$', '\\1Z') END AS TIMESTAMPTZ);
+-- Infinity isn't a time.
 CREATE OR REPLACE TEMP MACRO parse_time(v) AS
   CASE WHEN isfinite(cast_time(v)) THEN date_trunc('millisecond', cast_time(v)) END;
 CREATE OR REPLACE TEMP MACRO iso_time(t) AS
@@ -52,7 +58,7 @@ SELECT *, parse_time(createdAt) AS createdTs,
 FROM in_tasks;
 
 CREATE OR REPLACE TEMP TABLE condition_orders AS
-SELECT siteId, assessmentId, conditionId, any_value(taskIds) AS taskIds
+SELECT siteId, assessmentId, conditionId, min(taskIds) AS taskIds
 FROM in_conditions GROUP BY ALL;
 
 -- Rule 2: one condition is one Issue, led by the task the app lists first,
@@ -73,7 +79,7 @@ WHERE t.state = 'live';
 -- separated it; a link to a follow-up task means that task's Issue.
 CREATE OR REPLACE TEMP TABLE task_links AS
 SELECT l.siteId, l.taskId,
-  any_value(coalesce(o.primaryId, l.originalTaskId, '')) AS nextId
+  min(coalesce(o.primaryId, l.originalTaskId, '')) AS nextId
 FROM in_links l
 LEFT JOIN live_tasks o ON o.siteId = l.siteId AND o.taskId = l.originalTaskId
 WHERE NOT EXISTS (SELECT 1 FROM in_overrides x
@@ -153,7 +159,7 @@ WITH timed AS (
     coalesce(earliestTs > snapshot_at(), false) AS notYet
   FROM issue_timing),
 flows AS (
-  SELECT siteId, checkId, any_value(flowType) AS flowType
+  SELECT siteId, checkId, min(flowType) AS flowType
   FROM in_checks GROUP BY ALL)
 SELECT t.taskId AS issueId, t.siteId, t.checkId,
   -- The app treats any flow type but single-problem as perimeter.
@@ -174,10 +180,11 @@ SELECT t.taskId AS issueId, t.siteId, t.checkId,
   t.kind, t.type, t.status,
   -- Rule 6: the Issue's first task is the one staff saw, so its window
   -- applies. Older tasks get their rule's current window, as
-  -- handlers/tasks.js does, else the plan's 72 hours.
-  CASE WHEN isfinite(t.maxAcceptableResponseHours)
-      AND t.maxAcceptableResponseHours >= 0 THEN t.maxAcceptableResponseHours
-    WHEN isfinite(h.hours) AND h.hours >= 0 THEN h.hours
+  -- handlers/tasks.js does, else the plan's 72 hours. A window of a
+  -- million hours or more is bad data, and would overflow the deadline.
+  CASE WHEN t.maxAcceptableResponseHours >= 0
+      AND t.maxAcceptableResponseHours < 1e6 THEN t.maxAcceptableResponseHours
+    WHEN h.hours >= 0 AND h.hours < 1e6 THEN h.hours
     ELSE 72 END AS hours,
   CASE WHEN m.notYet THEN NULL ELSE m.earliestTs END AS firstResponseTs,
   m.firstEventTs,
@@ -257,12 +264,7 @@ SELECT siteId, day,
   count(*) FILTER (WHERE checkKind = 'unfinished') AS unfinishedChecks,
   count(responseState) AS issuesCreated,
   count(*) FILTER (WHERE severityBand = 'severe') AS severeIssues,
-  count(*) FILTER (WHERE responseState = 'awaiting') AS awaiting,
-  count(*) FILTER (WHERE responseState = 'overdue') AS overdue,
-  count(*) FILTER (WHERE responseState = 'onTime') AS onTime,
-  count(*) FILTER (WHERE responseState = 'late') AS late,
-  count(*) FILTER (WHERE responseState = 'unknown') AS "unknown",
-  count(*) FILTER (WHERE responseState = 'notTimed') AS notTimed
+  ${RESPONSE_STATES.map((s) => `count(*) FILTER (WHERE responseState = '${s}') AS "${s}"`).join(",\n  ")}
 FROM activity GROUP BY siteId, day;
 
 -- Counts of left-out records, so a drop in totals can be explained.
@@ -278,9 +280,11 @@ SELECT
   (SELECT count(*) FILTER (WHERE countedTs IS NULL) FROM check_days) AS undatedChecks;
 `;
 
-// How each projection table's rows are ordered in its file.
+// Fixed row order, so the same lake always writes the same files.
 /** @type {Record<string, string>} */
 export const TABLE_ORDER = {
   site_days: "siteId, day",
   issues: "siteId, createdTs, issueId",
+  site_contacts: "siteId",
+  sites: "siteId",
 };

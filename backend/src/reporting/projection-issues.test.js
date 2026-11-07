@@ -714,6 +714,16 @@ describe("each Issue's response window", () => {
     ).toBe("2026-10-01T20:00:00.000Z");
   });
 
+  it.each([[1e6], [1e12]])(
+    "ignores a stored window of %s hours, too long to be real",
+    async (hours) => {
+      expect(
+        (await one({ ruleId: "BLOCK-1", maxAcceptableResponseHours: hours }))
+          .deadlineAt,
+      ).toBe("2026-10-01T20:00:00.000Z");
+    },
+  );
+
   it("counts elapsed hours across the fall-back", async () => {
     expect(
       (
