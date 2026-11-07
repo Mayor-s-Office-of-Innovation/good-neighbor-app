@@ -322,6 +322,7 @@ describe("unfinished Checks in the answer key", () => {
   });
 
   it("counts each one in the Pacific month it started", () => {
+    /** @type {Record<string, number>} */
     const counted = {};
     for (const i of items)
       if (i.flowType === "perimeter" && i.status === "in_progress") {
