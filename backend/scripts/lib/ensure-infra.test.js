@@ -3,7 +3,11 @@ import {
   DescribeTableCommand,
   UpdateTableCommand,
 } from "@aws-sdk/client-dynamodb";
-import { TABLE_SCHEMA, ensureLocalTableIndexes } from "./ensure-infra.mjs";
+import {
+  TABLE_SCHEMA,
+  emulatedLakeBuckets,
+  ensureLocalTableIndexes,
+} from "./ensure-infra.mjs";
 
 /**
  * A DynamoDB Local stand-in whose table has every schema index except GSI3.
@@ -30,6 +34,24 @@ function fakeTable({ updateError } = {}) {
   });
   return { send };
 }
+
+it("creates the lake bucket only for a stack that reads the lake from MinIO", () => {
+  expect(
+    emulatedLakeBuckets({
+      INSIGHTS_PROJECTION_DIR: "",
+      LAKE_BUCKET: "e2e-lake",
+    }),
+  ).toEqual(["e2e-lake"]);
+  // A developer's .env.local may name the real lake, which CreateBucket can't touch.
+  expect(emulatedLakeBuckets({ LAKE_BUCKET: "real-lake" })).toEqual([]);
+  expect(
+    emulatedLakeBuckets({
+      INSIGHTS_PROJECTION_DIR: "/tmp/projection",
+      LAKE_BUCKET: "real-lake",
+    }),
+  ).toEqual([]);
+  expect(emulatedLakeBuckets({ INSIGHTS_PROJECTION_DIR: "" })).toEqual([]);
+});
 
 it("adds a missing index with only its own attribute definitions and waits for it", async () => {
   const ddb = fakeTable();

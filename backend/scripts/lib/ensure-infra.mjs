@@ -73,6 +73,18 @@ async function waitForService(probe, label) {
 // Insights export and report files; private, like the lake bucket they mimic.
 export const LOCAL_INSIGHTS_JOBS_BUCKET = "gnp-local-insights-jobs";
 
+/**
+ * A blank INSIGHTS_PROJECTION_DIR means the lake lives in MinIO. Otherwise
+ * LAKE_BUCKET may name a real AWS lake, which local startup mustn't try to create.
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {string[]}
+ */
+export function emulatedLakeBuckets(env) {
+  return env.INSIGHTS_PROJECTION_DIR === "" && env.LAKE_BUCKET
+    ? [env.LAKE_BUCKET]
+    : [];
+}
+
 export const TABLE_SCHEMA = {
   BillingMode: "PAY_PER_REQUEST", // matches Terraform; no ProvisionedThroughput anywhere
   AttributeDefinitions: [
@@ -253,6 +265,7 @@ export async function ensureLocalInfra() {
       complaintBucket,
       complianceLetterBucket,
       process.env.INSIGHTS_JOBS_BUCKET || LOCAL_INSIGHTS_JOBS_BUCKET,
+      ...emulatedLakeBuckets(process.env),
     ]) {
       try {
         await s3.send(new CreateBucketCommand({ Bucket: bucket }));

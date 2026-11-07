@@ -25,3 +25,25 @@ export const E2E_URLS = {
   mq: `http://localhost:${E2E_PORTS.mq}`,
   minio: `http://localhost:${E2E_PORTS.minio}`,
 };
+
+// The Insights emulator suite's own stack (insights-aws.config.js), so it can run beside the others.
+export const INSIGHTS_AWS_PORTS = {
+  api: 3021,
+  admin: 5196,
+  ddb: 8020,
+  mq: 9344,
+  minio: 9020,
+  minioConsole: 9021,
+};
+
+/** @param {keyof typeof INSIGHTS_AWS_PORTS} name */
+const insightsAwsUrl = (name) =>
+  `http://${name === "mq" || name === "minio" ? "localhost" : "127.0.0.1"}:${INSIGHTS_AWS_PORTS[name]}`;
+
+export const INSIGHTS_AWS_URLS = {
+  api: insightsAwsUrl("api"),
+  admin: insightsAwsUrl("admin"),
+  ddb: insightsAwsUrl("ddb"),
+  mq: insightsAwsUrl("mq"),
+  minio: insightsAwsUrl("minio"),
+};

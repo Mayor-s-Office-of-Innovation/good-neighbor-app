@@ -6,6 +6,18 @@ import path from "node:path";
 import { insightsReply, recordPhotosReply } from "./insights-mock.js";
 
 /**
+ * The checked-in config.js would overwrite the settings an init script gave the page.
+ * @param {import("@playwright/test").Page} page
+ */
+export function blankConfigJs(page) {
+  return page.route(/\/config\.js$/, (route) =>
+    new URL(route.request().url()).pathname === "/config.js"
+      ? route.fulfill({ contentType: "application/javascript", body: "" })
+      : route.fallback(),
+  );
+}
+
+/**
  * @typedef {{ method: string, path: string, search: string, body: any, headers: Record<string, string> }} AdminRequest
  * @typedef {{ status?: number, json?: any, body?: string, contentType?: string, headers?: Record<string, string>, delay?: Promise<unknown> }} AdminReply
  * @typedef {(request: AdminRequest, match: RegExpExecArray) => AdminReply | undefined | Promise<AdminReply | undefined>} AdminHandler
@@ -1169,11 +1181,7 @@ export async function mockAdmin(page, options = {}) {
       insightsEnabled,
     };
   }, options.insights === true);
-  await page.route(/\/config\.js$/, (route) =>
-    new URL(route.request().url()).pathname === "/config.js"
-      ? route.fulfill({ contentType: "application/javascript", body: "" })
-      : route.fallback(),
-  );
+  await blankConfigJs(page);
   await page.route("**/admin/v1/**", async (route) => {
     const url = new URL(route.request().url());
     // settle()'s probe request; not logged, so api.calls() counts only the admin pages' requests.

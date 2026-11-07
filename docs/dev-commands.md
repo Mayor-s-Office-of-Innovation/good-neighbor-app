@@ -333,8 +333,9 @@ boots and tears down every process via `webServer`; the only prerequisite is
 
 CI runs the main suite in two shards, each with its own emulator stack and one
 worker. The support, task-update, error-state, and offline UI suites run in a
-separate job alongside them. The required **E2E (Playwright)** check passes only
-when all three jobs pass.
+separate job alongside them, and the admin and Insights emulator suites run in
+jobs of their own. The required **E2E (Playwright)** check passes only when all
+of them pass.
 
 To reproduce one shard locally, use `npm run e2e -w e2e -- --shard=1/2` (or
 `--shard=2/2`). Run them one at a time locally; they use the same test ports.

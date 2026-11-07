@@ -2,6 +2,8 @@ import { handler as updateMediaThumbnail } from "../src/workers/update-media-thu
 import { handler as sf311Job } from "../src/workers/sf311-job.js";
 import { projectStatus, statusRecords } from "../src/domain/system-status.js";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { expireComplianceTerms } from "../src/workers/expire-compliance-terms.js";
 // SQS → worker pump — the local stand-in for the Lambda event source mapping.
 // Long-polls ElasticMQ, wraps each message in an SQSEvent, invokes the SAME
@@ -29,6 +31,13 @@ import { TRANSLATE_MESSAGE_TYPE } from "../src/analysis/translate-enqueue.js";
 
 const sqs = new SQSClient({});
 let running = true;
+
+// Loads DuckDB on the first job, so a worker that never sees one doesn't carry it.
+/** @type {import("aws-lambda").SQSHandler} */
+const runInsightsJob = async (event) => {
+  const { runJobs } = await import("../src/lambda/analytics-query.js");
+  return runJobs(event);
+};
 
 /**
  * Reduce a thrown error to compact, non-sensitive fields for logging. The worker
@@ -62,9 +71,10 @@ function summarizeError(err) {
  * @param {string | undefined} body
  * @returns {import("aws-lambda").SQSHandler}
  */
-function pickHandler(body) {
+export function pickHandler(body) {
   try {
     const msg = JSON.parse(body ?? "");
+    if (msg?.insightsJob) return runInsightsJob;
     if (msg?.type === "update_media_thumbnail") return updateMediaThumbnail;
     if (msg?.type === "sf311_job") return sf311Job;
     if (msg?.type === "reconcile_site_revocation") {
@@ -309,7 +319,10 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error("[worker] failed to start:", err);
-  process.exit(1);
-});
+// Only when run as a script, so a test can import pickHandler without starting the poller.
+if (realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error("[worker] failed to start:", err);
+    process.exit(1);
+  });
+}
