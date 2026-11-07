@@ -82,6 +82,11 @@ locals {
     # and are deliberately absent from lambda_throttle_alarms; the queue-age
     # alarm in client-events.tf covers "not keeping up".
     "client-events-consumer" = { function = aws_lambda_function.client_events_consumer.function_name, threshold = 5 }
+    # No user is waiting on the first and the second has few runs, so one failure
+    # is worth a look. Like the consumer above, neither gets a throttle alarm:
+    # both are reserved to what their trigger sends.
+    "analytics-projection" = { function = aws_lambda_function.analytics_projection.function_name, threshold = 1 }
+    "insights-jobs"        = { function = aws_lambda_function.insights_jobs.function_name, threshold = 1 }
   }
 
   # Watch both reserved capacity and shared account-pool exhaustion.

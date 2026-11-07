@@ -183,6 +183,20 @@ Each env root configures **two AWS providers** and passes both into the `app` mo
 Omitting the `aws.us_east_1` provider (or dropping it from the module's `providers = { … }` map)
 fails on first apply.
 
+## Building the first Insights snapshot
+
+The projection Lambda runs after each analytics convert, every 6 hours. Until one finishes,
+Insights says its data isn't ready, and the same happens after a `CONTRACT_VERSION` bump, because
+readers refuse the older snapshot. To avoid the wait, start a build once by hand after the deploy,
+with credentials that may invoke the function:
+
+```bash
+aws lambda invoke --function-name good-neighbor-app-<env>-analytics-projection \
+  --invocation-type Event /dev/null
+```
+
+Then check its log group for an `InsightsProjectionPublished` line.
+
 ## What the module provisions
 
 DynamoDB (SSE-KMS, PITR, Streams), the SQS submissions queue + DLQ, the S3 upload + frontend +

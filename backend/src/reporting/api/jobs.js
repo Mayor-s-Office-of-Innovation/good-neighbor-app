@@ -6,9 +6,10 @@ import { isRequestError, queryHash, requestError } from "./requests.js";
 
 export const JOB_LIMITS = Object.freeze({
   ttlMs: 24 * 3_600_000,
-  // Past the Lambda timeout a job has surely died; the queue's visibility timeout must be longer still.
-  stallMs: 2 * 60_000,
-  // Exports share the query Lambda's few slots, so a busy queue can be slow.
+  // Past the insights-jobs Lambda's 5 minutes a job has surely died; the queue's
+  // visibility timeout must be longer still. jobs.test.js reads both from insights.tf.
+  stallMs: 6 * 60_000,
+  // The insights-jobs Lambda runs two at a time, so a busy queue can be slow.
   queueWaitMs: 15 * 60_000,
   downloadSeconds: 300,
 });
@@ -349,10 +350,14 @@ export function createJobs({
     async run({ ownerKey, jobId }) {
       const read = await store.read(ownerKey, jobId);
       if (!read) return;
-      // SQS delivers at least once; a live run or a cancel ends it here.
+      // SQS delivers at least once; a live run or a cancel ends it here. A job a
+      // status poll timed out reruns: returning would delete the message, and a
+      // job that always dies would never reach the DLQ.
       const claim = await update(ownerKey, read, (r) =>
-        r.state === "queued" || (r.state === "running" && isStalled(r))
-          ? { ...r, state: "running", updatedAt: iso() }
+        r.state === "queued" ||
+        (r.state === "running" && isStalled(r)) ||
+        (r.state === "failed" && r.error === "job_timed_out")
+          ? { ...r, state: "running", error: null, updatedAt: iso() }
           : null,
       );
       if (!claim.changed) return;

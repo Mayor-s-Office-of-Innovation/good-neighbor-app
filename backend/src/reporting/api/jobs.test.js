@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { JOB_LIMITS, createJobs, memoryJobStore } from "./jobs.js";
 import { requestError } from "./requests.js";
@@ -379,6 +380,55 @@ describe("createJobs", () => {
     clock.now = T0 + JOB_LIMITS.stallMs + 1;
     await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
     expect((await jobs.get("owner1", job.jobId)).state).toBe("succeeded");
+  });
+
+  it("reruns a job a status poll timed out, so a job that always dies still reaches the DLQ", async () => {
+    const { jobs, store, clock, request } = setup();
+    const { job } = await jobs.create("owner1", {
+      ...request,
+      idempotencyKey: "k1",
+    });
+    const record = /** @type {any} */ (await store.get("owner1", job.jobId));
+    await store.put("owner1", job.jobId, { ...record, state: "running" });
+    clock.now = T0 + JOB_LIMITS.stallMs + 1;
+    await jobs.get("owner1", job.jobId);
+    await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
+    expect(await jobs.get("owner1", job.jobId)).toMatchObject({
+      state: "succeeded",
+      error: null,
+    });
+  });
+
+  it("doesn't rerun a job that failed with its own error", async () => {
+    let renders = 0;
+    const { jobs, request } = setup({
+      render: async () => {
+        renders += 1;
+        throw new Error("render broke");
+      },
+    });
+    const { job } = await jobs.create("owner1", {
+      ...request,
+      idempotencyKey: "k1",
+    });
+    await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
+    await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
+    expect(renders).toBe(1);
+  });
+
+  it("gives up on a run only after the jobs Lambda's timeout, and before SQS redelivers it", () => {
+    const terraform = readFileSync(
+      new URL("../../../../infra/modules/app/insights.tf", import.meta.url),
+      "utf8",
+    );
+    const seconds = (/** @type {RegExp} */ pattern) =>
+      Number(pattern.exec(terraform)?.[1]) * 1000;
+    const lambda = seconds(
+      /"aws_lambda_function" "insights_jobs"[\s\S]*?\n {2}timeout\s*=\s*(\d+)/,
+    );
+    const visibility = seconds(/visibility_timeout_seconds = (\d+)/);
+    expect(lambda).toBeLessThan(JOB_LIMITS.stallMs);
+    expect(JOB_LIMITS.stallMs).toBeLessThan(visibility);
   });
 
   it("keeps a job cancelled when its build then fails", async () => {
