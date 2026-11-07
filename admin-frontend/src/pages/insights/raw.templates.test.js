@@ -316,7 +316,7 @@ test("the trail starts at Raw data and the list, or at Site insights", () => {
   );
 });
 
-test("an Issue's Response heading has its ? and the mock's fact labels", () => {
+test("an Issue's Response heading has its ? and names each response fact", () => {
   const html = issueBodyView({
     reply: {
       issue,

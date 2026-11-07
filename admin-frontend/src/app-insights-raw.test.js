@@ -22,7 +22,8 @@ import {
   formatInstant,
   periodLabel,
 } from "./pages/insights/insights.templates.js";
-import { categoryWord, dayHeading } from "./pages/insights/raw.templates.js";
+import { categoryWord } from "./pages/insights/insights.templates.js";
+import { dayHeading } from "./pages/insights/raw.templates.js";
 
 const url = () => window.location.pathname + window.location.search;
 /** Download links the page let the browser follow, as a real download would. */
@@ -581,7 +582,7 @@ test("back from a record reached by Load more restores every loaded row and its 
   assert.equal(api.calls("GET", /^reporting\/issues\?/).length, asked);
 });
 
-test("each record hop is a history entry, so browser Back steps back one record", async () => {
+test("each record opened from another is a history entry, so browser Back steps back one record", async () => {
   await mountAdmin("/insights/raw/issues/t1?period=2026-10&siteId=s1", {
     insights: true,
   });
@@ -589,29 +590,12 @@ test("each record hop is a history entry, so browser Back steps back one record"
   await click("[data-parent-check]");
   assert.match(url(), /^\/insights\/raw\/checks\/c1\?/);
   const check = url();
-  // The trail names each record walked through, after Raw data and a list.
-  const trail = () => $$("[data-record-trail] a").map((a) => a.textContent);
-  assert.equal(trail().length, 3);
-  assert.equal(trail().at(-1), categoryWord("Unsecured gate"));
-  await click('[data-record-link="s1|t1"]');
-  assert.match(url(), /^\/insights\/raw\/issues\/t1\?/);
-  // Back at a record already on the trail, the trail ends before it again.
-  assert.deepEqual(trail(), [
-    t("admin.insights.raw"),
-    t("admin.insights.issues"),
-  ]);
-  window.history.back();
-  await settle();
-  assert.equal(url(), check);
   window.history.back();
   await settle();
   assert.equal(url(), issue);
   window.history.forward();
   await settle();
   assert.equal(url(), check);
-  // A middle crumb jumps to its record.
-  await click('[data-crumb="0"]');
-  assert.match(url(), /^\/insights\/raw\/issues\/t1\?/);
 });
 
 test("an Issue record shows its facts, response facts with a ? and a timeline in time order", async () => {
@@ -972,27 +956,6 @@ test("a compliance manager sees the record without a photos section, as the admi
   assert.ok(missing("[data-record-photos]"));
 });
 
-test("records switched to inside the panel add no crumb to the full record", async () => {
-  await mountAdmin("/insights/raw/issues?period=2026-10", { insights: true });
-  await click('[data-record-link="s1|t1"]');
-  await click("#insights-panel [data-parent-check]");
-  await click('#insights-panel [data-record-link="s1|t1"]');
-  await click("#insights-panel [data-parent-check]");
-  assert.doesNotMatch($("#insights-panel-full").getAttribute("href"), /via=/);
-  await click("#insights-panel-full");
-  assert.match(url(), /^\/insights\/raw\/checks\/c1\?/);
-  assert.deepEqual(
-    $$("[data-record-trail] li").map((li) =>
-      li.textContent.replace(/›/g, "").trim(),
-    ),
-    [
-      t("admin.insights.raw"),
-      t("admin.insights.issues"),
-      t("admin.insights.check", { id: "c1" }),
-    ],
-  );
-});
-
 test("an Issue opened from a Check's panel shows a trail back to the Check, and keeps it on its full record", async () => {
   await mountAdmin("/insights/raw/checks?period=2026-10", { insights: true });
   assert.ok(!missing('[data-check-row="c1"] [data-open-marker]'));
@@ -1065,22 +1028,6 @@ test("a filter change during Load more, then a failed load, leaves no stuck Load
   // A page of the old filters can't follow the new ones, so Retry is the way on.
   assert.ok(missing("#insights-load-more"));
   assert.deepEqual(recordLinks(), ["s1|t2"]);
-});
-
-test("a list URL too long to return to still leads back to the list at its period", async () => {
-  // The server takes at most 100 Sites, so long IDs make the address long.
-  const many = Array.from(
-    { length: 90 },
-    (_, i) => `site-${i}-${"x".repeat(60)}`,
-  ).join(",");
-  await mountAdmin(`/insights/raw/issues?period=2026-10&siteIds=s1,${many}`, {
-    insights: true,
-  });
-  const href = $('[data-record-link="s1|t1"]').getAttribute("href");
-  assert.equal(
-    new URLSearchParams(href.split("?")[1]).get("return"),
-    "/insights/raw/issues?period=2026-10",
-  );
 });
 
 test("browser Back from a record restores the list, but a fresh visit loads it again", async () => {

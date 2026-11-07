@@ -5,14 +5,16 @@ import {
   pacificDateKey,
 } from "../../../../frontend/src/i18n/dates.js";
 import { dayInstant } from "../../../../frontend/src/domain/reports-periods.js";
-import { rulebookText } from "../../../../frontend/src/i18n/rulebook.js";
 import { escapeHtml } from "../../dom.js";
 import { jobButtonView, resultBarView } from "./job-action.js";
 import { controlRow, select, severityView } from "./overview.templates.js";
 import {
+  categoryWord,
   formatInstant,
   helpTip,
   noDataFor,
+  openColumnHead,
+  openMarkerCell,
   periodLabel,
   severityBand,
 } from "./insights.templates.js";
@@ -59,12 +61,6 @@ export function categoryOptions(categories) {
     .map((value) => ({ value, label: categoryWord(value) }))
     .sort((a, b) => a.label.localeCompare(b.label));
 }
-
-/** @param {string | null} category */
-export const categoryWord = (category) =>
-  category
-    ? rulebookText(category, "rulebook.category")
-    : t("admin.insights.issue.categoryUnknown");
 
 /** Colour only adds to the word beside it, so screen readers skip the dot. @param {number | null} severity */
 export const dotView = (severity) =>
@@ -294,14 +290,6 @@ const col = (kind, key) =>
 const label = (kind, key) =>
   `data-label="${escapeHtml(t(`admin.insights.raw.${kind}.${key}`))}"`;
 
-/** The Overview table's open marker, so every openable row looks the same. */
-const chevCell =
-  '<td role="cell" class="insights__chev" aria-hidden="true" data-open-marker><wa-icon name="chevron-right"></wa-icon></td>';
-
-/** Its header, named for screen readers as on Overview. */
-export const openColumnHead = () =>
-  `<th role="columnheader" scope="col"><span class="visually-hidden">${escapeHtml(t("admin.insights.raw.col.open"))}</span></th>`;
-
 /** @param {Row} row */
 const siteName = (row) => row.siteName || row.siteId;
 
@@ -325,7 +313,7 @@ export function issueRow(issue, href, columns = ISSUE_COLUMNS) {
     status: `<td role="cell" ${label("issue", "status")}${issue.resolvedAt ? ' class="muted" data-muted' : ""}>${escapeHtml(issueStateWord(issue))}</td>`,
     response: `<td role="cell" ${label("issue", "response")} data-response="${escapeHtml(state)}"><span class="${responseClass(state)}">${escapeHtml(responseWord(state))}</span></td>`,
   };
-  return `<tr role="row" data-issue-row="${escapeHtml(issue.issueId)}">${columns.map((c) => cells[c]).join("")}${chevCell}</tr>`;
+  return `<tr role="row" data-issue-row="${escapeHtml(issue.issueId)}">${columns.map((c) => cells[c]).join("")}${openMarkerCell}</tr>`;
 }
 
 /** @param {string} day YYYY-MM-DD @returns {string} e.g. "Monday · Sep 28" */
@@ -392,7 +380,7 @@ export const checkRowsView = (checks, href) =>
         <td role="cell" ${label("check", "time")}${c.state === "completed" ? "" : ' class="muted" data-muted'}>${escapeHtml(checkTime(c))}</td>
         <td role="cell" ${label("check", "state")}${c.state === "completed" ? "" : ' class="insights__unknown" data-muted'}>${escapeHtml(checkStateWord(c))}</td>
         <td role="cell" class="insights__num" ${label("check", "issues")}>${escapeHtml(c.issues ?? 0)}</td>
-        ${chevCell}
+        ${openMarkerCell}
       </tr>`,
     )
     .join("");

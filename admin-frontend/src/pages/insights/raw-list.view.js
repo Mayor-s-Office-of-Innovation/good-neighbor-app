@@ -18,7 +18,7 @@ import { optionsView } from "./overview.templates.js";
 import { confirmFirst } from "./confirm-dialog.js";
 import { plainClick } from "./overview-rules.js";
 import { recordHref } from "./record-links.js";
-import { RecordPanel, hopOf } from "./record-panel.js";
+import { RecordPanel, cameBack, hopOf, markWayBack } from "./record-panel.js";
 import { JobAction } from "./job-action.js";
 import { exportBody, rawApiParams, rawSearch, readRaw } from "./raw-query.js";
 import {
@@ -73,9 +73,7 @@ class InsightsRawList extends HTMLElement {
     this.panel = new RecordPanel(this, {
       fullLabel: t("admin.insights.panel.open"),
       back: () => this.backPath(),
-      // Marks this history entry, so only browser Back to it restores the rows.
-      left: () =>
-        history.replaceState({ ...history.state, insightsReturn: true }, ""),
+      left: markWayBack,
     });
     this.innerHTML = `
       ${rawHeadView()}
@@ -104,10 +102,7 @@ class InsightsRawList extends HTMLElement {
     this.drawExport();
     void this.loadOptions();
     const memory = this.session.raw[this.kind];
-    const back =
-      !!history.state?.insightsReturn ||
-      this.session.returning === this.currentPath();
-    this.session.returning = "";
+    const back = cameBack(this.session, this.currentPath());
     if (restores(memory, this.currentPath(), back)) {
       this.reply = memory.reply;
       this.rows = memory.rows;

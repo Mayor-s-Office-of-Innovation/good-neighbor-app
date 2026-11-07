@@ -6,6 +6,7 @@ import { phoneWithExtension } from "../shared.templates.js";
 import { activityChart, chartUnit } from "./activity-chart.js";
 import { CONCERN_RULES } from "./concern-rules.js";
 import {
+  categoryWord,
   codeKey,
   contactWord,
   countWords,
@@ -16,13 +17,14 @@ import {
   helpTip,
   noDataFor,
   oneDecimal,
+  openColumnHead,
+  openMarkerCell,
   perDayText,
   per30Text,
   periodDays,
   severityBand,
 } from "./insights.templates.js";
 import { bandView } from "./overview.templates.js";
-import { categoryWord, openColumnHead } from "./raw.templates.js";
 import { contactShown, showsTotal } from "./site-rules.js";
 
 /** @typedef {Record<string, any>} Reply */
@@ -526,7 +528,7 @@ export function siteIssuesView({
         <td role="cell" data-label="${escapeHtml(colLabel("createdAt"))}" data-issue-created>${escapeHtml(formatInstant(i.createdAt))}</td>
         <td role="cell" data-label="${escapeHtml(colLabel("responseTime"))}" data-issue-took>${responseTimeCell(i)}</td>
         <td role="cell" data-label="${escapeHtml(colLabel("onTime"))}" data-issue-on-time>${onTimeCell(i)}</td>
-        <td role="cell" class="insights__chev" aria-hidden="true"><wa-icon name="chevron-right"></wa-icon></td>
+        ${openMarkerCell}
       </tr>`;
         })
         .join("")}</tbody>

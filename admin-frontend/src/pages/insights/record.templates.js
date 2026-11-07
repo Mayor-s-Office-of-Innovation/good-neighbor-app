@@ -2,22 +2,22 @@
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
 import {
+  categoryWord,
   codeKey,
   failedView,
   failureText,
   formatInstant,
   helpTip,
+  openColumnHead,
   severityKnown,
   severityWord,
 } from "./insights.templates.js";
 import {
-  categoryWord,
   checkStateWord,
   checkTime,
   dotView,
   issueRow,
   issueStateWord,
-  openColumnHead,
   responseClass,
   responseWord,
   wordFor,
@@ -315,7 +315,7 @@ export function recordFailedView(kind, err, retryId) {
 }
 
 /**
- * The side panel. A native modal dialog, as the app's other dialogs are,
+ * The side panel. A native modal dialog, as the admin site's other dialogs are,
  * laid out at the right so the list stays in view.
  * @param {{ kind: RecordKind, full: Crumb }} view
  */

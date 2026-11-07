@@ -13,7 +13,7 @@ import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 import { readVia } from "./pages/insights/record-links.js";
-import { categoryWord } from "./pages/insights/raw.templates.js";
+import { categoryWord } from "./pages/insights/insights.templates.js";
 
 const url = () => window.location.pathname + window.location.search;
 const crumbs = () =>
