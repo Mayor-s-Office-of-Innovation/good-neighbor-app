@@ -8,13 +8,7 @@ import { join } from "node:path";
 import { activeCatalog } from "../analysis/guidance/catalog-registry.js";
 import { resolveCategory } from "../analysis/guidance/category-resolver.js";
 import { sqlString } from "../analytics/convert.js";
-import {
-  PACIFIC_TIME_ZONE,
-  addDays,
-  dayKeysBetween,
-  pacificDateKey,
-} from "../lib/pacific-dates.js";
-import { checksOwedResolver } from "../lib/site-compliance.js";
+import { PACIFIC_TIME_ZONE } from "../lib/pacific-dates.js";
 import { SITE_DAY_METRICS } from "./activity.js";
 import {
   CONTRACT_VERSION,
@@ -49,7 +43,8 @@ const LAKE_INPUT_SQL = {
     startedAt, completedAt, synthesizedAt FROM checks`,
   in_sites: `SELECT siteId, raw->>'$.status' AS status,
     raw->>'$.updatedAt' AS updatedAt FROM sites`,
-  in_terms: `SELECT siteId, raw->>'$.effectiveStart' AS effectiveStart,
+  in_terms: `SELECT siteId, termsVersionId,
+    raw->>'$.effectiveStart' AS effectiveStart, raw->>'$.createdAt' AS createdAt,
     raw->>'$.expiresOnExclusive' AS expiresOnExclusive, raw->>'$.status' AS status,
     raw->>'$.requiredChecksPerDay' AS requiredChecksPerDay FROM compliance_terms`,
 };
@@ -133,77 +128,6 @@ function buildSiteTables(sites, evaluatedAt) {
       };
     }),
   };
-}
-
-/**
- * One row per Site per day it owed Checks, using getChecksReport's rule so
- * Few Checks agrees with the Check report. A row a day is no bigger than
- * site_days: 1,000 Sites for a year is 366,000 rows, about 56 MB loaded.
- * @param {Record<string, any>[]} sites
- * @param {Record<string, any>[]} terms every COMPLIANCE_TERMS# version
- * @param {string} evaluatedAt
- * @returns {{ siteId: string, day: string, checksOwed: number }[]}
- */
-export function buildChecksOwed(sites, terms, evaluatedAt) {
-  const today = pacificDateKey(evaluatedAt);
-  /** @type {Map<string, Record<string, any>[]>} */
-  const bySite = new Map();
-  for (const term of terms) {
-    const list = bySite.get(String(term.siteId)) ?? [];
-    list.push(term);
-    bySite.set(String(term.siteId), list);
-  }
-  const rows = [];
-  for (const site of [...sites].sort((a, b) =>
-    String(a.siteId).localeCompare(String(b.siteId)),
-  )) {
-    const siteId = String(site.siteId);
-    const own = bySite.get(siteId) ?? [];
-    const first = own
-      .map((term) => term.effectiveStart)
-      .filter((day) => typeof day === "string" && day <= today)
-      .sort()[0];
-    if (!first) continue;
-    const { owedOn } = checksOwedResolver(site, own, today);
-    // Closing a Site leaves its terms open, so owing stops at the close.
-    const last = site.status === "inactive" ? closedOn(site) : today;
-    if (!last || last < first) continue;
-    for (const day of dayKeysBetween(
-      first,
-      addDays(earlierOf(last, today), 1),
-    )) {
-      const checksOwed = owedOn(day);
-      if (checksOwed > 0) rows.push({ siteId, day, checksOwed });
-    }
-  }
-  return rows;
-}
-
-/**
- * The app records no close date, so a closed Site's last update stands in.
- * @param {Record<string, any>} site
- * @returns {string} Pacific day key, or "" when the update time doesn't parse
- */
-const closedOn = (site) => pacificDateKey(site.updatedAt ?? "");
-
-/**
- * @param {string} a
- * @param {string} b day keys
- */
-const earlierOf = (a, b) => (b < a ? b : a);
-
-/**
- * Open Sites with no compliance terms owe no Checks, so Few Checks can't fire
- * for them; counted so a missing export shows.
- * @param {Record<string, any>[]} sites
- * @param {Record<string, any>[]} terms
- * @returns {number}
- */
-export function openSitesWithoutTerms(sites, terms) {
-  const termed = new Set(terms.map((t) => String(t.siteId)));
-  return sites.filter(
-    (s) => s.status !== "inactive" && !termed.has(String(s.siteId)),
-  ).length;
 }
 
 const V = "VARCHAR";
@@ -343,10 +267,12 @@ const INPUT_SCHEMAS = {
     synthesizedAt: V,
   },
   in_sites: { siteId: V, status: V, updatedAt: V },
-  // Text, as the lake's JSON gives it, so both paths judge the same values.
+  // Text, as the lake's JSON gives it, so rows handed in and lake rows are judged alike.
   in_terms: {
     siteId: V,
+    termsVersionId: V,
     effectiveStart: V,
+    createdAt: V,
     expiresOnExclusive: V,
     status: V,
     requiredChecksPerDay: V,

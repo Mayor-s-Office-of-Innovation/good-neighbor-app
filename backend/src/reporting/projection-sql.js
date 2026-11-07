@@ -290,12 +290,14 @@ FROM activity GROUP BY siteId, day;
 -- of its own owes the default, so a new term doesn't change past months.
 CREATE OR REPLACE TEMP TABLE term_versions AS
 WITH typed AS (
-  SELECT *, TRY_CAST(requiredChecksPerDay AS DOUBLE) AS perDayValue,
-    row_number() OVER () AS ord
+  SELECT *, TRY_CAST(requiredChecksPerDay AS DOUBLE) AS perDayValue
   FROM in_terms)
-SELECT siteId, effectiveStart, nullif(expiresOnExclusive, '') AS expiresOn,
-  coalesce(status = 'cancelled', false) AS cancelled, ord,
+SELECT siteId, termsVersionId, effectiveStart, createdAt,
+  nullif(expiresOnExclusive, '') AS expiresOn,
+  coalesce(status = 'cancelled', false) AS cancelled,
+  -- A million or more a day is bad data, and would overflow the INTEGER cast.
   CASE WHEN perDayValue > 0 AND perDayValue = trunc(perDayValue)
+      AND perDayValue < 1e6
     THEN perDayValue ELSE ${DEFAULT_REQUIRED_CHECKS_PER_DAY} END AS perDay
 FROM typed;
 
@@ -304,14 +306,18 @@ FROM typed;
 -- date, so the closed Site's last update stands in.
 CREATE OR REPLACE TEMP TABLE p_checks_owed AS
 WITH spans AS (
-  SELECT s.siteId, min(t.effectiveStart) AS firstDay,
+  -- A cancelled or unreadable start never applied, so it can't move the first day.
+  SELECT s.siteId,
+    strftime(min(TRY_CAST(t.effectiveStart AS DATE))
+      FILTER (WHERE NOT t.cancelled), '%Y-%m-%d') AS firstDay,
     CASE WHEN s.status = 'inactive'
       THEN strftime(pacific_day(parse_time(s.updatedAt)), '%Y-%m-%d')
       ELSE strftime(pacific_day(snapshot_at()), '%Y-%m-%d') END AS lastDay
   FROM in_sites s
   JOIN term_versions t ON t.siteId = s.siteId
-    AND t.effectiveStart <= strftime(pacific_day(snapshot_at()), '%Y-%m-%d')
   GROUP BY s.siteId, s.status, s.updatedAt),
+-- No days for a close before the first term; a close time that can't be read
+-- compares false, so that Site owes nothing rather than owing forever.
 days AS (
   SELECT siteId, CAST(unnest(generate_series(TRY_CAST(firstDay AS DATE),
     least(TRY_CAST(lastDay AS DATE), pacific_day(snapshot_at())),
@@ -323,8 +329,11 @@ applicable AS (
   SELECT d.siteId, d.day, t.expiresOn, t.perDay
   FROM days d JOIN term_versions t ON t.siteId = d.siteId AND NOT t.cancelled
     AND t.effectiveStart <= strftime(d.day, '%Y-%m-%d')
+  -- Of two versions that start the same day, the later-made one wins, as on
+  -- the Site's own page; the ID only makes the pick repeatable.
   QUALIFY row_number() OVER (PARTITION BY d.siteId, d.day
-    ORDER BY t.effectiveStart DESC, t.ord DESC) = 1)
+    ORDER BY t.effectiveStart DESC, t.createdAt DESC NULLS LAST,
+      t.termsVersionId) = 1)
 SELECT siteId, day, CAST(perDay AS INTEGER) AS checksOwed
 FROM applicable
 WHERE NOT coalesce(strftime(day, '%Y-%m-%d') >= expiresOn, false);

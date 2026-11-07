@@ -150,8 +150,9 @@ export function projectSiteCompliance(site, periods, today = pacificToday()) {
 }
 
 /**
- * The Check report's rule for what a Site owed each day. Shared with Insights,
- * so its Few Checks flag agrees with the Check report.
+ * The Check report's rule for what a Site owed each day. Rule 9 in
+ * reporting/projection-sql.js matches it, so Insights' Few Checks agrees,
+ * except after a Site closes or when two versions start the same day.
  * @param {Record<string, any>} site the Site's #META item
  * @param {Record<string, any>[]} periods every COMPLIANCE_TERMS# version
  * @param {string} today Pacific day key

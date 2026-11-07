@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { sqlString, toRow, writeEntityParquet } from "../analytics/convert.js";
 import { createLocalViews, writeLocalLake } from "./local-lake.js";
-import { buildChecksOwed, buildProjection } from "./projection.js";
+import { buildProjection } from "./projection.js";
 import { buildFromRows, readProjection } from "./test-build.js";
 
 const EVALUATED = "2026-10-20T00:00:00.000Z";
@@ -183,106 +183,6 @@ const terms = (siteId, effectiveStart, extra = {}) => ({
   status: "active",
   createdAt: `${effectiveStart}T16:00:00.000Z`,
   ...extra,
-});
-
-describe("buildChecksOwed", () => {
-  /** @param {ReturnType<typeof buildChecksOwed>} rows */
-  const owedByDay = (rows) =>
-    Object.fromEntries(rows.map((r) => [`${r.siteId} ${r.day}`, r.checksOwed]));
-
-  it("owes each day what the terms in force that day set, as the Check report does", () => {
-    const rows = buildChecksOwed(
-      [{ siteId: "s1" }, { siteId: "s2" }],
-      [
-        terms("s1", "2026-10-14", { requiredChecksPerDay: 2 }),
-        // A raise from Oct 16 that ends after Oct 17.
-        terms("s1", "2026-10-16", {
-          requiredChecksPerDay: 5,
-          expiresOnExclusive: "2026-10-18",
-        }),
-        // Never applied, so it doesn't change Oct 15.
-        terms("s1", "2026-10-15", { status: "cancelled" }),
-      ],
-      EVALUATED,
-    );
-    // Evaluated on Oct 19 Pacific; nothing from Oct 18, when the raise ended.
-    expect(owedByDay(rows)).toEqual({
-      "s1 2026-10-14": 2,
-      "s1 2026-10-15": 2,
-      "s1 2026-10-16": 5,
-      "s1 2026-10-17": 5,
-    });
-  });
-
-  it("owes nothing for a Site with no terms, even with #META.compliance set", () => {
-    expect(
-      buildChecksOwed(
-        [
-          {
-            siteId: "s1",
-            compliance: {
-              perimeterChecksRequired: true,
-              requiredChecksPerDay: 5,
-              periodStart: "2026-10-01",
-            },
-          },
-        ],
-        [],
-        EVALUATED,
-      ),
-    ).toEqual([]);
-  });
-
-  it("owes a past term with no number of its own the default, whatever today's term says", () => {
-    const rows = buildChecksOwed(
-      [{ siteId: "s1" }],
-      [
-        terms("s1", "2026-10-16", {
-          requiredChecksPerDay: undefined,
-          expiresOnExclusive: "2026-10-18",
-        }),
-        terms("s1", "2026-10-18", { requiredChecksPerDay: 5 }),
-      ],
-      EVALUATED,
-    );
-    expect(owedByDay(rows)).toEqual({
-      "s1 2026-10-16": 3,
-      "s1 2026-10-17": 3,
-      "s1 2026-10-18": 5,
-      "s1 2026-10-19": 5,
-    });
-  });
-
-  it("stops owing after the day a Site was closed, though its terms stay open", () => {
-    const rows = buildChecksOwed(
-      [
-        // Closed at 10 PM Pacific on Oct 16.
-        {
-          siteId: "s1",
-          status: "inactive",
-          updatedAt: "2026-10-17T05:00:00.000Z",
-        },
-        // Closed before its terms began.
-        {
-          siteId: "s2",
-          status: "inactive",
-          updatedAt: "2026-10-01T17:00:00.000Z",
-        },
-      ],
-      [terms("s1", "2026-10-15"), terms("s2", "2026-10-15")],
-      EVALUATED,
-    );
-    expect(owedByDay(rows)).toEqual({ "s1 2026-10-15": 3, "s1 2026-10-16": 3 });
-  });
-
-  it("stops at the snapshot's day and skips terms that start after it", () => {
-    const rows = buildChecksOwed(
-      [{ siteId: "s1" }, { siteId: "s2" }],
-      [terms("s1", "2026-10-18"), terms("s2", "2026-10-25")],
-      EVALUATED,
-    );
-    expect(owedByDay(rows)).toEqual({ "s1 2026-10-18": 3, "s1 2026-10-19": 3 });
-  });
 });
 
 describe("buildProjection over a lake written like an export", () => {
