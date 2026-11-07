@@ -46,13 +46,10 @@ function holdInsightsLoad() {
   return hold;
 }
 
-test("with Insights switched off, no tabs show and Insights links say why", async () => {
-  await mountAdmin("/insights/trends");
-  assert.equal(url(), "/insights/trends");
-  assert.ok(missing("#admin-modes"));
-  assert.equal(heading(), t("admin.insights.off.title"));
-  await click("[data-insights-off-manage]");
+test("with Insights switched off, no tabs show and Insights links open Sites", async () => {
+  await mountAdmin("/insights/sites/s1");
   assert.equal(url(), "/sites");
+  assert.ok(missing("#admin-modes"));
 });
 
 test("a session without Insights keeps it hidden even when switched on", async () => {

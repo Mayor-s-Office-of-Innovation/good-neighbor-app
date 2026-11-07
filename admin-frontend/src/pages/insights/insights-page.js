@@ -28,13 +28,10 @@ export function insightsOn(session) {
   return insightsAvailable(getAdminConfig(), session.capabilities);
 }
 
-// Bookmarks outlive the deploy switch, so its pages say why rather than silently open Sites.
+// Analytics bookmarks outlive the deploy switch, so they say why rather than silently open Sites.
 /** @param {Route} route @returns {boolean} */
 function showsOffNotice(route) {
-  return (
-    !getAdminConfig().insightsEnabled &&
-    (route.name === "analytics" || routeMode(route.name) === "insights")
-  );
+  return route.name === "analytics" && !getAdminConfig().insightsEnabled;
 }
 
 export class AdminInsightsPage extends HTMLElement {
