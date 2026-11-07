@@ -4,7 +4,9 @@ Static central-admin console for managing providers, full site information,
 compliance-letter PDFs, contacts, setup codes, and devices, plus Insights
 reporting (`index.html`). Insights replaced the Analytics page: the old
 `analytics.html` bookmark is a static redirect in `public/` to `/analytics/`,
-which opens Insights.
+which opens Insights, or says Insights is off while `insightsEnabled` is false.
+An Analytics tab left open across the deploy gets a not-found error on its next
+query; reloading it opens Insights.
 
 ## Local Debug Mode
 

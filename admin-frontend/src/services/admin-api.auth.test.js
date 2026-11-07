@@ -159,7 +159,22 @@ for (const [path, kept] of [
     saveSession();
     void f.adminApi.getSession();
     await f.navigation;
-    assert.equal(sessionStorage.getItem("good-neighbor-admin-return-to"), kept);
+    // Come back from the login page as Cognito would.
+    const state = new URL(f.redirects[0]).searchParams.get("state");
+    Object.assign(location, {
+      pathname: "/auth/callback",
+      search: `?code=c1&state=${state}`,
+    });
+    vi.stubGlobal("history", { replaceState() {} });
+    vi.mocked(fetch).mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ access_token: "a1", expires_in: 3600 })),
+    );
+    const { completeAdminLoginFromUrl } = await import("./admin-auth.js");
+    assert.deepEqual(
+      await completeAdminLoginFromUrl(),
+      kept ? { handled: true, returnTo: kept } : { handled: true },
+    );
   });
 }
 

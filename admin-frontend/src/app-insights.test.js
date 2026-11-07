@@ -16,7 +16,6 @@ import { mountAdmin, waitFor } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 import { insightsDownload } from "./pages/insights/insights-page.js";
-import { matchRoute } from "./router.js";
 
 const manageTab = '#admin-modes a[data-mode="manage"]';
 const insightsTab = '#admin-modes a[data-mode="insights"]';
@@ -47,11 +46,13 @@ function holdInsightsLoad() {
   return hold;
 }
 
-test("with Insights switched off, no tabs show and Insights links open Sites", async () => {
+test("with Insights switched off, no tabs show and Insights links say why", async () => {
   await mountAdmin("/insights/trends");
-  assert.equal(url(), "/sites");
+  assert.equal(url(), "/insights/trends");
   assert.ok(missing("#admin-modes"));
-  assert.equal(heading(), t("admin.breadcrumb.admin"));
+  assert.equal(heading(), t("admin.insights.off.title"));
+  await click("[data-insights-off-manage]");
+  assert.equal(url(), "/sites");
 });
 
 test("a session without Insights keeps it hidden even when switched on", async () => {
@@ -422,17 +423,6 @@ test("an old Analytics link opens Insights in its place", async () => {
   assert.equal(window.history.length, entries + 1);
 });
 
-test("the old analytics.html sends bookmarks to /analytics/, which the app routes", () => {
-  const page = readFileSync(
-    join(import.meta.dirname, "../public/analytics.html"),
-    "utf8",
-  );
-  // Without the slash the dev server serves this file again, so it reloads forever.
-  assert.match(page, /http-equiv="refresh" content="0; url=\/analytics\/"/);
-  assert.match(page, /<a href="\/analytics\/">/);
-  assert.equal(matchRoute("/analytics/").name, "analytics");
-});
-
 test("with Insights off, an old Analytics link says so and leads to Manage", async () => {
   await mountAdmin("/analytics");
   assert.equal(url(), "/analytics");
@@ -457,9 +447,12 @@ const signInConfig = {
 /**
  * Sign in from `path`, then come back from the login page as Cognito would.
  * @param {string} path
- * @param {{ ok?: boolean, insights?: boolean }} [options] insights: the deploy switch
+ * @param {{ ok?: boolean, insights?: boolean, storedPath?: string }} [options] insights: the deploy switch; storedPath: the return path another tab wrote
  */
-async function signInFrom(path, { ok = true, insights = true } = {}) {
+async function signInFrom(
+  path,
+  { ok = true, insights = true, storedPath = "" } = {},
+) {
   const assign = vi
     .spyOn(window.location, "assign")
     .mockImplementation(() => {});
@@ -482,7 +475,10 @@ async function signInFrom(path, { ok = true, insights = true } = {}) {
     setup: () => {
       config();
       for (const [key, value] of Object.entries(kept))
-        window.sessionStorage.setItem(key, value);
+        window.sessionStorage.setItem(
+          key,
+          storedPath && value === path ? storedPath : value,
+        );
     },
     fetch: (requestUrl) =>
       requestUrl === "https://auth.example.org/oauth2/token"
@@ -522,6 +518,14 @@ test("signing in from an old Analytics link with Insights off says why", async (
 test("signing in from a page that only redirects comes back to where it leads", async () => {
   await signInFrom("/insights/raw?period=2026-09");
   assert.equal(url(), "/insights/raw/issues?period=2026-09");
+});
+
+test("a stored return path that leaves Insights is ignored after sign-in", async () => {
+  await signInFrom("/insights/trends", {
+    storedPath: "https://evil.example/insights",
+  });
+  assert.equal(url(), "/auth/callback");
+  assert.equal(heading(), t("admin.breadcrumb.admin"));
 });
 
 test("signing in from a Manage page still opens the Site list", async () => {

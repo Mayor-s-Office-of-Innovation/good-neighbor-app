@@ -121,7 +121,7 @@ export class AdminApp extends HTMLElement {
     if (callback.handled) {
       this.state.hasToken = hasAdminSession();
       this.state.error = errorLineText(callback.error || "", t);
-      // Checked again, since another page could have written the stored path.
+      // Checked again, since another tab can rewrite the pending login in localStorage.
       const back = signInReturnPath(
         /** @type {{ returnTo?: string }} */ (callback).returnTo,
       );

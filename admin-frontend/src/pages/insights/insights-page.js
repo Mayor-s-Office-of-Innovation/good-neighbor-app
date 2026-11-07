@@ -3,7 +3,12 @@ import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { appMessageError } from "../../admin-error-messages.js";
 import { getAdminConfig } from "../../config.js";
 import { currentRoute, navigate } from "../../router.js";
-import { MODE_HOME, carriedQuery, routeMode } from "./insights-routes.js";
+import {
+  MODE_HOME,
+  carriedQuery,
+  redirectTarget,
+  routeMode,
+} from "./insights-routes.js";
 import { insightsAvailable } from "./mode-memory.js";
 import { insightsOffView } from "./shell.templates.js";
 
@@ -21,6 +26,15 @@ export const insightsDownload = {
 /** @param {AdminSession} session @returns {boolean} */
 export function insightsOn(session) {
   return insightsAvailable(getAdminConfig(), session.capabilities);
+}
+
+// Bookmarks outlive the deploy switch, so its pages say why rather than silently open Sites.
+/** @param {Route} route @returns {boolean} */
+function showsOffNotice(route) {
+  return (
+    !getAdminConfig().insightsEnabled &&
+    (route.name === "analytics" || routeMode(route.name) === "insights")
+  );
 }
 
 export class AdminInsightsPage extends HTMLElement {
@@ -62,22 +76,19 @@ export class AdminInsightsPage extends HTMLElement {
   /** @param {Route} route @returns {Promise<boolean>} false if the user left or it redirects */
   async open(route) {
     const path = location.pathname + location.search;
-    // Insights replaced Analytics, so its bookmarks open Insights, or say why it is off.
-    if (route.name === "analytics") {
-      if (!insightsOn(this.session)) return true;
-      navigate(MODE_HOME.insights, { replace: true });
-      return false;
-    }
+    if (showsOffNotice(route)) return true;
     if (!insightsOn(this.session)) {
       navigate("/sites", { replace: true });
       return false;
     }
-    if (route.name === "insights-raw") {
-      navigate(`/insights/raw/issues${location.search}`, { replace: true });
+    // Insights replaced Analytics, so its bookmarks open Insights.
+    if (route.name === "analytics") {
+      navigate(MODE_HOME.insights, { replace: true });
       return false;
     }
-    if (route.name === "insights-unknown") {
-      navigate("/insights", { replace: true });
+    const target = redirectTarget(route.name, location.search);
+    if (target) {
+      navigate(target, { replace: true });
       return false;
     }
     if (this.views) return true;
@@ -99,7 +110,7 @@ export class AdminInsightsPage extends HTMLElement {
 
   /** @param {Route} route */
   shows(route) {
-    if (route.name === "analytics") return !insightsOn(this.session);
+    if (showsOffNotice(route)) return true;
     return Boolean(this.views) && routeMode(route.name) === "insights";
   }
 
@@ -111,8 +122,8 @@ export class AdminInsightsPage extends HTMLElement {
 
   render() {
     const route = currentRoute();
-    if (route.name === "analytics") {
-      this.innerHTML = this.shows(route) ? insightsOffView() : "";
+    if (showsOffNotice(route)) {
+      this.innerHTML = insightsOffView();
       return;
     }
     this.innerHTML =

@@ -1,9 +1,11 @@
-import { INSIGHTS_ROUTES } from "./pages/insights/insights-routes.js";
+import {
+  ANALYTICS_ROUTE,
+  INSIGHTS_ROUTES,
+} from "./pages/insights/insights-routes.js";
 
 const ROUTES = [
   ...INSIGHTS_ROUTES,
-  // Bookmarks of the Analytics page, which Insights replaced.
-  ["analytics", /^\/analytics\/?$/],
+  ANALYTICS_ROUTE,
   [
     "system-status",
     /^\/system-status(?:\/(network|analysis|submissions|checks|issues|actions|deletions|duplicates))?\/?$/,

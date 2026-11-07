@@ -517,6 +517,29 @@ test("a login started with a return path hands it back after the callback", asyn
   });
 });
 
+test("a login that keeps a refresh token also hands back its return path", async () => {
+  const { local, callback } = loginFixture();
+  vi.stubGlobal("fetch", async () => ({
+    ok: true,
+    json: async () => ({
+      access_token: "access-r",
+      refresh_token: "refresh-r",
+      expires_in: 3600,
+    }),
+  }));
+  const auth = await import("./admin-auth.js");
+  await auth.startAdminLogin("/insights/sites/s1?period=2026-09");
+  callback();
+  assert.deepEqual(await auth.completeAdminLoginFromUrl(), {
+    handled: true,
+    returnTo: "/insights/sites/s1?period=2026-09",
+  });
+  assert.equal(
+    JSON.parse(local.getItem(SESSION_KEY)).refreshToken,
+    "refresh-r",
+  );
+});
+
 test("a failed or stale callback hands back no return path", async () => {
   const { callback } = loginFixture();
   const auth = await import("./admin-auth.js");

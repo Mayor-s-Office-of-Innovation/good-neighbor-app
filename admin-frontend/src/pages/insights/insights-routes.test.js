@@ -172,3 +172,25 @@ test("sign-in comes back only to Insights pages and old Analytics links", () => 
   for (const value of ["/sites", "/programs/p1", "//evil.example", "", null])
     assert.equal(signInReturnPath(value), "", String(value));
 });
+
+test("sign-in keeps a record page's way back, and only a safe one", () => {
+  const back = encodeURIComponent("/insights/sites/s1?period=2026-09");
+  assert.equal(
+    signInReturnPath(`/insights/raw/issues/i1?period=2026-09&return=${back}`),
+    `/insights/raw/issues/i1?period=2026-09&return=${back}`,
+  );
+  assert.equal(
+    signInReturnPath(
+      `/insights/raw/issues/i1?return=${encodeURIComponent("//evil.example/insights")}`,
+    ),
+    "/insights/raw/issues/i1",
+  );
+});
+
+test("sign-in past the length cap comes back to the page at its period", () => {
+  const sites = Array.from({ length: 600 }, (_, i) => `site-${i}`).join(",");
+  assert.equal(
+    signInReturnPath(`/insights/trends?period=2026-09&sites=${sites}`),
+    "/insights/trends?period=2026-09",
+  );
+});

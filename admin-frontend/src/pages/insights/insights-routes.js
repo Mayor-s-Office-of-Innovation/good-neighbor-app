@@ -94,6 +94,21 @@ export const returnPathTo = (pathname, search) =>
   safeReturnPath(`${pathname}${search}`) ||
   `${pathname}${carriedQuery(search)}`;
 
+// Bookmarks of the Analytics page, which Insights replaced.
+/** @type {[string, RegExp]} */
+export const ANALYTICS_ROUTE = ["analytics", /^\/analytics\/?$/];
+
+/**
+ * Where a redirect-only Insights page leads, or "" for a real page.
+ * @param {string} name
+ * @param {string} search
+ */
+export function redirectTarget(name, search) {
+  if (name === "insights-raw") return `/insights/raw/issues${search}`;
+  if (name === "insights-unknown") return MODE_HOME.insights;
+  return "";
+}
+
 /**
  * The page to reopen after sign-in. Only Insights pages and old Analytics
  * bookmarks come back; a redirect-only page comes back as where it leads.
@@ -104,12 +119,21 @@ export function signInReturnPath(value) {
   const [pathname = "", query = ""] = String(value ?? "").split(/\?(.*)/s);
   const search = query ? `?${query}` : "";
   // Kept as is, so with Insights off the bookmark still explains why.
-  if (/^\/analytics\/?$/.test(pathname)) return "/analytics";
+  if (ANALYTICS_ROUTE[1].test(pathname)) return "/analytics";
   const name = INSIGHTS_ROUTES.find(([, pattern]) =>
     pattern.test(pathname),
   )?.[0];
-  if (name === "insights-raw")
-    return safeReturnPath(`/insights/raw/issues${search}`);
-  if (name === "insights-unknown") return MODE_HOME.insights;
-  return safeReturnPath(`${pathname}${search}`);
+  if (!name) return "";
+  const page = redirectTarget(name, search) || `${pathname}${search}`;
+  const path =
+    safeReturnPath(page) ||
+    safeReturnPath(`${page.split("?")[0]}${carriedQuery(search)}`);
+  // safeReturnPath drops `return`, but a record or Site page needs it for its Back link.
+  const back = safeReturnPath(new URLSearchParams(search).get("return"));
+  if (!path || !back || REDIRECT_ROUTES.has(name)) return path;
+  const [kept, keptQuery = ""] = path.split("?");
+  const params = new URLSearchParams(keptQuery);
+  params.set("return", back);
+  const withBack = `${kept}?${params}`;
+  return withBack.length > MAX_RETURN_LENGTH ? path : withBack;
 }
