@@ -7,7 +7,7 @@ const DEFAULT_RESPONSE_HOURS = 72;
 
 // Tasks from before rules carried a window get the current rule's, as
 // handlers/tasks.js does.
-const RULE_HOURS = new Map(
+export const RULE_HOURS = new Map(
   activeCatalog().rules.map((r) => [r.ruleId, r.maxAcceptableResponseHours]),
 );
 
