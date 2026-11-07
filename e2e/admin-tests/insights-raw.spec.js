@@ -99,3 +99,46 @@ test("a supervisor exports every filtered Issue as CSV and stays on the list", a
     /\/insights\/raw\/issues\?period=2026-10&severityBand=severe$/,
   );
 });
+
+test("on a phone, a Check's panel shows each Issue card's open marker and every fact in full", async ({
+  page,
+}) => {
+  await mockAdmin(page, { insights: true });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto("/insights/raw/checks?period=2026-10");
+  await page.locator('[data-record-link="s1|c1"]').click();
+  const panel = page.getByRole("dialog", {
+    name: t("admin.insights.panel.check"),
+  });
+  const cards = panel.locator("[data-issue-row]");
+  await expect(cards.first()).toBeVisible();
+  for (const card of await cards.all()) {
+    await expect(card.locator("[data-open-marker]")).toBeVisible();
+    // The category is the card's heading, so a "Category" line above it would repeat it.
+    const label = await card
+      .locator("th[data-label]")
+      .evaluate((th) => getComputedStyle(th, "::before").content);
+    expect(label).toBe("none");
+    // Each field reads "Label: value" on one line, so the card stays short.
+    const stacked = await card
+      .locator("td[data-label]")
+      .evaluateAll(
+        (cells) =>
+          cells.filter(
+            (td) => getComputedStyle(td, "::before").display !== "inline",
+          ).length,
+      );
+    expect(stacked).toBe(0);
+  }
+  const box = await panel.boundingBox();
+  await expect(panel.locator("[data-fact]").first()).toBeVisible();
+  for (const fact of await panel.locator("[data-fact] > *").all()) {
+    const part = await fact.boundingBox();
+    expect(
+      part &&
+        box &&
+        part.x >= box.x &&
+        part.x + part.width <= box.x + box.width,
+    ).toBe(true);
+  }
+});

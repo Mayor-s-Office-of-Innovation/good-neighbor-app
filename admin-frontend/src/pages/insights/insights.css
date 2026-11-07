@@ -962,13 +962,9 @@ insights-record h2 > .insights__tip-body {
   color: var(--muted);
 }
 
-/* Phone card rules would otherwise add a label line, hide the open marker and stack each label. */
+/* The category is the card's heading, so the phone rules' label line would repeat it. */
 .insights__panel .insights__table tbody th[data-label]::before {
   content: none;
-}
-
-.insights__panel .insights__table td.insights__chev {
-  display: block;
 }
 
 .insights__panel [data-panel-body] {
