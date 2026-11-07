@@ -6,6 +6,8 @@ import { debounce } from "../../debounce.js";
 import {
   OVERVIEW_FILTERS,
   SHOW,
+  SITE_SORTS,
+  SITE_SORT_DIR,
   keptSelection,
   overviewApiParams,
   overviewSearch,
@@ -13,6 +15,7 @@ import {
   periodOf,
   readOverview,
   readPeriod,
+  sortDir,
 } from "./insights-query.js";
 import { carriedQuery } from "./insights-routes.js";
 import { reportSignInError, sessionOf } from "./insights-session.js";
@@ -67,6 +70,8 @@ class InsightsOverview extends HTMLElement {
     this.allSites = null;
     /** Site rows drawn; Load more adds a page. */
     this.shown = SITES_PAGE;
+    /** The sort key of the header last pressed, until the table redraws. */
+    this.sortFocus = "";
     /** @type {Period | null} */
     this.fallback = null;
     this.periodKind = this.period?.kind ?? "month";
@@ -87,7 +92,7 @@ class InsightsOverview extends HTMLElement {
     this.innerHTML = `
       <div data-region="freshness">${freshnessView(null)}</div>
       <div data-region="filters">${filtersView(this.state, NO_OPTIONS, this.me)}</div>
-      <div data-region="bar">${overviewBarView(this.state)}</div>
+      <div data-region="bar">${overviewBarView()}</div>
       <div data-region="results"></div>
 `;
     this.report = new JobAction(this, {
@@ -326,9 +331,16 @@ class InsightsOverview extends HTMLElement {
     this.reload();
   }
 
-  /** Every Site is listed, so a new order keeps the picks. @param {string} sort */
+  /** Every Site is listed, so a new order keeps the picks. A second click on the sorted column flips it. @param {string} sort */
   resort(sort) {
+    const dir =
+      sort === this.state.sort
+        ? sortDir(this.state) === "asc"
+          ? "desc"
+          : "asc"
+        : SITE_SORT_DIR[sort];
     this.state.sort = sort;
+    this.state.dir = dir === SITE_SORT_DIR[sort] ? "" : dir;
     this.reload();
   }
 
@@ -380,8 +392,7 @@ class InsightsOverview extends HTMLElement {
     if (filter) {
       const value = String(target.value ?? "");
       if (value === /** @type {any} */ (this.state)[filter]) return;
-      if (filter === "sort") this.resort(value);
-      else this.refine({ [filter]: value });
+      this.refine({ [filter]: value });
       return;
     }
     if (target.id === "insights-select-all")
@@ -440,6 +451,12 @@ class InsightsOverview extends HTMLElement {
       return void this.load();
     }
     if (button.hasAttribute("data-more-sites")) return this.showMoreSites();
+    const sortKey = button.getAttribute("data-sort-key");
+    if (sortKey && SITE_SORTS.includes(sortKey)) {
+      this.refocus = true;
+      this.sortFocus = sortKey;
+      return this.resort(sortKey);
+    }
     if (button.id === "insights-clear-filters") {
       this.refocus = inTable;
       return this.refine(
@@ -486,6 +503,12 @@ class InsightsOverview extends HTMLElement {
   restoreFocus() {
     if (!this.refocus) return;
     this.refocus = false;
+    const header =
+      this.sortFocus &&
+      this.querySelector(`[data-sort-key="${this.sortFocus}"]`);
+    this.sortFocus = "";
+    // A redrawn header takes focus back, so its new order is read out.
+    if (header instanceof HTMLElement) return header.focus();
     if (!this.contains(document.activeElement))
       /** @type {HTMLElement | null} */ (
         this.querySelector("#insights-count")

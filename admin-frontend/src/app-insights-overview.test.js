@@ -328,9 +328,42 @@ test("a new sort keeps the picks, since every Site is still listed", async () =>
     insights: true,
   });
   await fill('[data-select-site="s1"]', true);
-  await fill('wa-select[data-filter="sort"]', "issuesCreated");
+  await click('[data-sort-key="issuesCreated"]');
   assert.equal(lastOverviewCall(api).sort, "issuesCreated");
   assert.ok($('[data-select-site="s1"]').checked);
+});
+
+test("a header's first click shows the worst Sites first; a second click flips it", async () => {
+  const { api } = await mountAdmin("/insights?period=2026-10&show=all", {
+    insights: true,
+  });
+  const th = (/** @type {string} */ key) =>
+    $(`[data-sort-key="${key}"]`).closest("th");
+  assert.equal(th("name").getAttribute("aria-sort"), "ascending");
+  await click('[data-sort-key="completedPerimeterChecks"]');
+  // Fewest Checks first, the server's own first direction for this column.
+  assert.equal(lastOverviewCall(api).sort, "completedPerimeterChecks");
+  assert.equal(lastOverviewCall(api).dir, undefined);
+  assert.equal(
+    th("completedPerimeterChecks").getAttribute("aria-sort"),
+    "ascending",
+  );
+  assert.equal(th("name").getAttribute("aria-sort"), "none");
+  // The redrawn header keeps focus, so its new order is read out.
+  assert.ok(focused('[data-sort-key="completedPerimeterChecks"]'));
+  await click('[data-sort-key="completedPerimeterChecks"]');
+  assert.equal(lastOverviewCall(api).dir, "desc");
+  assert.equal(
+    url(),
+    "/insights?period=2026-10&show=all&sort=completedPerimeterChecks&dir=desc",
+  );
+  assert.equal(
+    th("completedPerimeterChecks").getAttribute("aria-sort"),
+    "descending",
+  );
+  await click('[data-sort-key="overdueLate"]');
+  assert.equal(lastOverviewCall(api).dir, undefined);
+  assert.equal(th("overdueLate").getAttribute("aria-sort"), "descending");
 });
 
 test("the controls read Search, Period, Site status, then Filter", async () => {
@@ -348,7 +381,7 @@ test("the controls read Search, Period, Site status, then Filter", async () => {
   // Responses and contacts show on each row, so they have no filter.
   assert.deepEqual(
     $$("wa-select[data-filter]").map((el) => el.dataset.filter),
-    ["managerId", "providerId", "department", "sort"],
+    ["managerId", "providerId", "department"],
   );
   assert.ok(missing("[data-period-range]"));
 });
@@ -542,13 +575,13 @@ test("select all sits in the table header and picks every Site, with no cap", as
   assert.equal(ticked(), 0);
 });
 
-test("the bar above the table has Sort, then the count, then Generate report", async () => {
+test("the bar above the table has the count, then Generate report", async () => {
   await mountAdmin("/insights", { insights: true });
-  const sort = $('wa-select[data-filter="sort"]');
   const count = $("#insights-count");
   const report = $("#insights-report");
   const after = window.Node.DOCUMENT_POSITION_FOLLOWING;
-  assert.ok(sort.compareDocumentPosition(count) & after);
+  // The column headers sort the table, so there's no Sort menu.
+  assert.ok(missing('wa-select[data-filter="sort"]'));
   assert.ok(count.compareDocumentPosition(report) & after);
   assert.ok(report.compareDocumentPosition($("[data-insights-table]")) & after);
   assert.equal(text("#insights-report"), t("admin.insights.report.button"));
@@ -1152,7 +1185,7 @@ test("a Site opened in a new tab doesn't pull focus on a later load", async () =
   await mountAdmin("/insights?period=2026-10&show=all", { insights: true });
   await modifiedClick('[data-site-link="s1"]', { metaKey: true });
   assert.equal(url(), "/insights?period=2026-10&show=all");
-  await fill('wa-select[data-filter="sort"]', "issuesCreated");
+  await click('[data-show="top"]');
   assert.ok(!focused('[data-site-link="s1"]'));
 });
 
@@ -1192,7 +1225,7 @@ test("opening a column's ? doesn't send focus to the count on a later load", asy
   const tip = '[popovertarget="insights-tip-col-response"]';
   $(tip).focus();
   await click(tip);
-  await fill('wa-select[data-filter="sort"]', "issuesCreated");
+  await click('[data-show="all"]');
   assert.ok(!focused("#insights-count"));
 });
 
@@ -1209,10 +1242,10 @@ test("a row click with a modifier key, or after selecting text, stays on Overvie
   assert.equal(text("h1"), "Pier Example Site");
 });
 
-test("Sort options name the table's columns, in the table's order", async () => {
+test("every column but the open arrow sorts the table", async () => {
   await mountAdmin("/insights", { insights: true });
-  const options = $$('wa-select[data-filter="sort"] wa-option').map((o) =>
-    o.textContent.trim(),
+  const options = $$("[data-sort-key]").map((b) =>
+    b.textContent.replace(/[↑↓↕]/g, "").trim(),
   );
   const heads = ["site", "checks", "response", "severity", "issuesPer30d"].map(
     (col) => t(`admin.insights.col.${col}`),

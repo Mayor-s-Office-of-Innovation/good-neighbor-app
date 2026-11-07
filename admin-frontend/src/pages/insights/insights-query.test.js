@@ -13,6 +13,7 @@ import {
   samePeriod,
   readOverview,
   readPeriod,
+  sortDir,
   stepPeriod,
 } from "./insights-query.js";
 
@@ -234,8 +235,27 @@ test("Overview opens on Top concerns, sorted by Site name", () => {
     providerId: "",
     department: "",
     sort: "name",
+    dir: "",
     selected: [],
   });
+});
+
+test("a shared link keeps a flipped sort, and drops a direction it doesn't offer", () => {
+  const flipped = readOverview("?sort=completedPerimeterChecks&dir=desc");
+  assert.equal(sortDir(flipped), "desc");
+  assert.equal(
+    overviewSearch(flipped, null),
+    "?sort=completedPerimeterChecks&dir=desc",
+  );
+  assert.deepEqual(overviewApiParams(flipped, null), {
+    show: "top",
+    sort: "completedPerimeterChecks",
+    dir: "desc",
+  });
+  const odd = readOverview("?sort=completedPerimeterChecks&dir=up");
+  // Fewest Checks first, as the server sorts it unless asked.
+  assert.equal(sortDir(odd), "asc");
+  assert.equal(overviewSearch(odd, null), "?sort=completedPerimeterChecks");
 });
 
 test("Overview ignores filter values it doesn't offer", () => {

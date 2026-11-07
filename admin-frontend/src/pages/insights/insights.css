@@ -381,6 +381,23 @@
   font-weight: 500;
 }
 
+/* Underlined only on hover or when sorted, so the headers still read as headers. */
+.insights__sort:hover,
+.insights__sort.is-sorted {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Faint on unsorted columns, so the sorted one stands out. */
+.insights__sort-arrow {
+  margin-inline-start: 0.25em;
+  opacity: 0.55;
+}
+
+.insights__sort.is-sorted .insights__sort-arrow {
+  opacity: 1;
+}
+
 /* Row names wrapped after one word at desktop widths. */
 .insights__table tbody th {
   min-width: 11rem;

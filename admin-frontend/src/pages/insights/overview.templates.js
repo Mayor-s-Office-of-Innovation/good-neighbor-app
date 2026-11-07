@@ -6,7 +6,7 @@ import {
   MAX_SEARCH,
   OVERVIEW_FILTERS,
   SHOW,
-  SITE_SORTS,
+  sortDir,
 } from "./insights-query.js";
 import { jobButtonView, resultBarView } from "./job-action.js";
 import {
@@ -196,14 +196,10 @@ function siteRow(row, { selected, noData, siteHref, names, most }) {
   </tr>`;
 }
 
-/** Outside the table, so a load leaves them in place. @param {OverviewState} state */
-export function overviewBarView(state) {
+/** Outside the table, so a load leaves them in place. */
+export function overviewBarView() {
   return resultBarView({
-    start: `<span class="insights__sortlabel" aria-hidden="true">${escapeHtml(t("admin.insights.sort.label"))}</span>
-      <wa-select data-filter="sort" aria-label="${escapeHtml(t("admin.insights.sort.label"))}" value="${escapeHtml(state.sort)}" size="s" pill>${SITE_SORTS.map(
-        (s) =>
-          `<wa-option value="${s}">${escapeHtml(t(`admin.insights.col.${SORT_COLUMN[s]}`))}</wa-option>`,
-      ).join("")}</wa-select>`,
+    start: "",
     end: jobButtonView("insights-report", t("admin.insights.report.button")),
   });
 }
@@ -231,7 +227,7 @@ export function selectAllState(listedIds, selected) {
   return { checked: all, indeterminate: !all && selected.length > 0 };
 }
 
-// Each Sort option is named after the column it orders.
+// The column header that orders by each sort key.
 /** @type {Record<string, string>} */
 const SORT_COLUMN = {
   name: "site",
@@ -241,8 +237,8 @@ const SORT_COLUMN = {
   issuesCreated: "issuesPer30d",
 };
 
-/** @param {string} key admin.insights.col.* @param {boolean} [num] */
-function columnHead(key, num = false) {
+/** @param {string} key admin.insights.col.* @param {boolean} num @param {OverviewState} state */
+function columnHead(key, num, state) {
   const tip = hasKey(`admin.insights.colHelp.${key}`)
     ? helpTip(
         `insights-tip-col-${key}`,
@@ -252,8 +248,20 @@ function columnHead(key, num = false) {
     : "";
   const words = t(`admin.insights.col.${key}`).split(" ");
   const last = words.pop();
-  // The "?" stays on the line with the last word instead of wrapping alone.
-  return `<th role="columnheader" scope="col" ${num ? 'class="insights__num"' : ""}>${escapeHtml(words.join(" "))} <span class="insights__nowrap">${escapeHtml(last ?? "")}${tip}</span></th>`;
+  const cls = num ? 'class="insights__num"' : "";
+  const sortKey = Object.keys(SORT_COLUMN).find((s) => SORT_COLUMN[s] === key);
+  if (!sortKey)
+    // The "?" stays on the line with the last word instead of wrapping alone.
+    return `<th role="columnheader" scope="col" ${cls}>${escapeHtml(words.join(" "))} <span class="insights__nowrap">${escapeHtml(last ?? "")}${tip}</span></th>`;
+  const sorted = state.sort === sortKey;
+  const dir = sortDir(state);
+  const ariaSort = sorted
+    ? dir === "asc"
+      ? "ascending"
+      : "descending"
+    : "none";
+  const arrow = sorted ? (dir === "asc" ? "↑" : "↓") : "↕";
+  return `<th role="columnheader" scope="col" ${cls} aria-sort="${ariaSort}"><button type="button" class="btn-plain insights__sort${sorted ? " is-sorted" : ""}" data-sort-key="${sortKey}">${escapeHtml(words.join(" "))} <span class="insights__nowrap">${escapeHtml(last ?? "")}<span class="insights__sort-arrow" aria-hidden="true">${arrow}</span></span></button>${tip}</th>`;
 }
 
 /**
@@ -281,7 +289,7 @@ export function resultsView({
       <caption class="visually-hidden">${escapeHtml(t("admin.insights.tableCaption", { period: periodLabel(interval) }))}</caption>
       <thead role="rowgroup"><tr role="row">
         <th role="columnheader" scope="col"><wa-checkbox id="insights-select-all" aria-label="${escapeHtml(t("admin.insights.selectAll"))}"></wa-checkbox></th>
-        ${columnHead("site")}${columnHead("checks", true)}${columnHead("response", true)}${columnHead("severity")}${columnHead("issuesPer30d", true)}
+        ${columnHead("site", false, state)}${columnHead("checks", true, state)}${columnHead("response", true, state)}${columnHead("severity", false, state)}${columnHead("issuesPer30d", true, state)}
         <th role="columnheader" scope="col"><span class="visually-hidden">${escapeHtml(t("admin.insights.col.open"))}</span></th>
       </tr></thead>
       <tbody role="rowgroup">${rows

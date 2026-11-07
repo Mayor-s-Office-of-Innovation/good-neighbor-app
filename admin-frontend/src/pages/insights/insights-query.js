@@ -25,7 +25,6 @@ export const OVERVIEW_FILTERS = /** @type {const} */ ([
   "department",
 ]);
 // Only sorts the server accepts, so a shared link never asks for one it refuses.
-// In the table's column order, so the Sort menu reads like the headers.
 export const SITE_SORTS = [
   "name",
   "completedPerimeterChecks",
@@ -33,6 +32,15 @@ export const SITE_SORTS = [
   "maxSeverity",
   "issuesCreated",
 ];
+// Matches SORTS.sites' defaults, so a column's first click sends no dir.
+/** @type {Record<string, "asc" | "desc">} */
+export const SITE_SORT_DIR = {
+  name: "asc",
+  completedPerimeterChecks: "asc",
+  overdueLate: "desc",
+  maxSeverity: "desc",
+  issuesCreated: "desc",
+};
 
 // Years 2000–2999, the only years the server accepts.
 const DAY = /^2\d{3}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -245,6 +253,8 @@ export function readOverview(search) {
     providerId: pick(params, "providerId", null),
     department: pick(params, "department", null),
     sort: pick(params, "sort", SITE_SORTS, "name"),
+    // Empty means the column's own first direction.
+    dir: pick(params, "dir", ["asc", "desc"]),
     // Kept out of the URL: every Site's ID would make each Site link too long to load.
     /** @type {string[]} */
     selected: [],
@@ -257,7 +267,13 @@ const FILTER_KEYS = /** @type {const} */ ([
   "show",
   ...OVERVIEW_FILTERS,
   "sort",
+  "dir",
 ]);
+
+/** @param {OverviewState} state @returns {"asc" | "desc"} */
+export function sortDir(state) {
+  return /** @type {"asc" | "desc"} */ (state.dir || SITE_SORT_DIR[state.sort]);
+}
 
 /** @param {OverviewState} state @param {Period | null} period @returns {string} "" or "?…" */
 export function overviewSearch(state, period) {

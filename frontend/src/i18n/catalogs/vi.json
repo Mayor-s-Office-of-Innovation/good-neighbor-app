@@ -459,7 +459,6 @@
   "admin.insights.siteIssues.onTime": "On time",
   "admin.insights.siteMeta.manager": "Program manager {name}",
   "admin.insights.siteNotFound": "This Site isn't in the reporting data. It may have been added since the last update.",
-  "admin.insights.sort.label": "Sort",
   "admin.insights.tableCaption": "Sites for {period}",
   "admin.insights.trends": "Trend analysis",
   "admin.insights.unavailable": "Unavailable",
