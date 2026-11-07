@@ -8,7 +8,7 @@ import { activeCatalog } from "../analysis/guidance/catalog-registry.js";
 import { resolveCategory } from "../analysis/guidance/category-resolver.js";
 import { sqlString } from "../analytics/convert.js";
 import { PACIFIC_TIME_ZONE } from "../lib/pacific-dates.js";
-import { SITE_DAY_METRICS, buildCheckFacts } from "./activity.js";
+import { SITE_DAY_METRICS } from "./activity.js";
 import {
   CONTRACT_VERSION,
   RULE_VERSION,
@@ -312,7 +312,6 @@ const TEMP_TABLES = [
   "rule_hours",
   "p_sites",
   "p_site_contacts",
-  "p_checks",
   ...Array.from(RULES_SQL.matchAll(/TEMP TABLE (\w+)/g), (m) => m[1]),
 ];
 const TEMP_MACROS = Array.from(
@@ -387,18 +386,6 @@ async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
   );
   await conn.run(snapshotMacrosSql(evaluatedAt));
   await conn.run(RULES_SQL);
-  const { checks } = buildCheckFacts(
-    {
-      checks: /** @type {any[]} */ (
-        await rows(conn, "SELECT * FROM in_checks")
-      ),
-      issues: /** @type {any[]} */ (
-        await rows(conn, "SELECT siteId, checkId FROM p_issues")
-      ),
-    },
-    evaluatedAt,
-  );
-  await loadRows(conn, "p_checks", TABLE_SCHEMAS.checks, checks);
 
   /** @type {Record<string, number>} */
   const rowCounts = {};

@@ -234,7 +234,7 @@ FROM deadlines;
 -- synthesis happens at completion.
 CREATE OR REPLACE TEMP TABLE check_days AS
 WITH times AS (
-  SELECT siteId, flowType, status,
+  SELECT siteId, checkId, flowType, status,
     coalesce(parse_time(completedAt), parse_time(synthesizedAt)) AS finishedTs,
     parse_time(startedAt) AS startedTs
   FROM in_checks),
@@ -242,10 +242,27 @@ judged AS (
   SELECT *, coalesce(status = 'completed', false)
     AND NOT coalesce(finishedTs > snapshot_at(), false) AS done
   FROM times)
-SELECT siteId, flowType, done,
+SELECT siteId, checkId, flowType, done, startedTs,
+  CASE WHEN done THEN finishedTs END AS completedTs,
   -- With no finish time at all, the start day is the best day left.
   CASE WHEN done THEN coalesce(finishedTs, startedTs) ELSE startedTs END AS countedTs
 FROM judged;
+
+-- One row per Check the day totals count, so the list and totals agree.
+CREATE OR REPLACE TEMP TABLE p_checks AS
+WITH raised AS (
+  SELECT siteId, checkId, count(*) AS issues
+  FROM p_issues WHERE checkId <> '' GROUP BY ALL)
+SELECT c.checkId, c.siteId,
+  CASE WHEN c.flowType = 'single-problem' THEN 'single-problem'
+    ELSE 'perimeter' END AS source,
+  CASE WHEN c.done THEN 'completed' ELSE 'unfinished' END AS state,
+  iso_time(c.startedTs) AS startedAt, iso_time(c.completedTs) AS completedAt,
+  iso_time(c.countedTs) AS activityAt, pacific_day(c.countedTs) AS day,
+  coalesce(r.issues, 0) AS issues
+FROM check_days c
+LEFT JOIN raised r ON r.siteId = c.siteId AND r.checkId = c.checkId
+WHERE c.countedTs <= snapshot_at();
 
 -- Checks count as activity only; nothing here knows how many were expected.
 CREATE OR REPLACE TEMP TABLE p_site_days AS
@@ -287,4 +304,5 @@ export const TABLE_ORDER = {
   issues: "siteId, createdTs, issueId",
   site_contacts: "siteId",
   sites: "siteId",
+  checks: "siteId, activityAt, checkId",
 };
