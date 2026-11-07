@@ -1,0 +1,96 @@
+name: Plan dev
+
+# Shows what a deploy of the chosen branch would change in dev, without changing
+# it: deploy.yml plans and applies in one job, so nobody can read its plan first.
+# Needs a `dev-plan` GitHub Environment holding AWS_ACCOUNT_ID, AWS_PLAN_ROLE_ARN
+# (the read-only role from infra/modules/app/plan-role.tf) and AWS_REGION. The
+# deploy role is deliberately not in it.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  terraform-plan:
+    name: Terraform plan (dev)
+    runs-on: ubuntu-latest
+    environment: dev-plan
+    concurrency:
+      # By branch, so a plan for one branch can't cancel another's.
+      group: plan-dev-${{ github.ref }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        working-directory: infra/environments/dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate plan configuration
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          if [ -z "$EXPECTED_ACCOUNT_ID" ]; then
+            echo "AWS_ACCOUNT_ID is not configured for this GitHub Environment" >&2
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Rewrite git protocol for npm git deps
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
+      - name: Install dependencies
+        working-directory: ${{ github.workspace }}
+        run: npm ci
+
+      # data.archive_file hashes these folders, so the plan shows which Lambdas change.
+      - name: Build Lambda bundles
+        working-directory: ${{ github.workspace }}
+        run: npm run build:lambdas -w @good-neighbor/backend
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      # After the install and build, so no package script runs with AWS credentials.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
+
+      - name: Init
+        run: terraform init -input=false
+
+      # No lock: a held lock would fail a deploy that starts during this plan, and
+      # the role can't write the lock table. S3 serves the state whole either way.
+      # The log is public, and a plan's text holds env values, so stdout goes nowhere.
+      - name: Plan
+        run: terraform plan -input=false -lock=false -out=tfplan > /dev/null
+
+      # This repo is public, so anything else from the plan could be read by anyone.
+      - name: Summarize plan
+        run: |
+          set -euo pipefail
+          {
+            echo '## Terraform plan (dev)'
+            echo
+            echo "Ref: \`$GITHUB_REF_NAME\`. Only actions and addresses are shown, because this repo is public."
+            echo
+            echo '```text'
+            terraform show -json tfplan | jq -r '
+              [.resource_changes[]? | select(.change.actions != ["no-op"])]
+              | sort_by(.address)[]
+              | "\(.change.actions | join("+"))\t\(.address)"'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

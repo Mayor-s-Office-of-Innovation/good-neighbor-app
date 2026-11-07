@@ -71,6 +71,24 @@ The temporary cross-job artifact is retained for one day. GitHub environment sec
 different `AWS_DEPLOY_ROLE_ARN` in each job: the export job uses `dev`; the migration job uses
 `prod`. Never use the DEV role to create or operate the PROD backend.
 
+## Reading a dev plan before it applies
+
+**Plan dev** (`plan-dev.yml`) shows what a deploy of the chosen branch would change, without
+changing anything. Run it from the Actions tab; the summary lists the action and address of each
+changed resource. It publishes nothing else: this repo is public, and the role can read Lambda
+environment values, so the plan's text stays on the runner. It uses the read-only role in
+`infra/modules/app/plan-role.tf`, through a `dev-plan` GitHub Environment that holds
+`AWS_ACCOUNT_ID`, `AWS_PLAN_ROLE_ARN` (the `terraform_plan_role_arn` output) and `AWS_REGION`.
+
+The workflow file can't stop a branch from using `id-token: write` before the credentials step, so
+give the `dev-plan` Environment a deployment branch restriction. Only those branches can then
+assume the role.
+
+It skips the cost-tag state step in `deploy.yml`, because that writes state. The plan also shows
+the Cognito email key policy changing to name the plan role, since its
+`AllowDeployRoleCreateCognitoGrant` statement names whoever runs Terraform; a deploy from
+`deploy.yml` won't make that change.
+
 ## Production DNS bootstrap
 
 The **Provision goodneighbor.sf.gov DNS zone** and
