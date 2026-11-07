@@ -4,11 +4,12 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { sqlString } from "../../analytics/convert.js";
 import { pacificDateKey } from "../../lib/pacific-dates.js";
-import { CONTRACT_VERSION } from "../contract.js";
+import { CONTRACT_VERSION, LATEST_PROJECTION_KEY } from "../contract.js";
 import { TABLE_SCHEMAS } from "../projection.js";
 import { requestError } from "./requests.js";
 
@@ -199,7 +200,7 @@ export function s3Source({ s3, bucket }) {
     async latest() {
       try {
         const pointer = JSON.parse(
-          (await read("projections/latest.json")).toString("utf8"),
+          (await read(LATEST_PROJECTION_KEY)).toString("utf8"),
         );
         return {
           prefix: String(pointer.prefix),
@@ -238,12 +239,15 @@ export function s3Source({ s3, bucket }) {
   };
 }
 
-// Requests keep the held snapshot while a newer one loads, so only the first load waits.
-/** @param {{ source: SnapshotSource, now?: () => number, refreshMs?: number, onError?: (err: unknown) => void }} opts */
+// A stale request gets the held snapshot while a newer one loads. Lambda freezes
+// once it replies, which would stall that load, so set refreshWaitMs there.
+/** @param {{ source: SnapshotSource, now?: () => number, refreshMs?: number, refreshWaitMs?: number, wait?: (ms: number) => Promise<unknown>, onError?: (err: unknown) => void }} opts */
 export function createSnapshotStore({
   source,
   now = Date.now,
   refreshMs = 5 * 60_000,
+  refreshWaitMs = 0,
+  wait = sleep,
   onError = () => {},
 }) {
   /** @type {Snapshot | null} */
@@ -267,7 +271,11 @@ export function createSnapshotStore({
   const refresh = async () => {
     try {
       const latest = await source.latest();
-      if (!latest) throw requestError("snapshot_unavailable", 503);
+      if (!latest) {
+        // Dropped so a warm Lambda answers like a cold one, not with old numbers.
+        held = null;
+        throw requestError("snapshot_unavailable", 503);
+      }
       // A local folder keeps its path when rebuilt, so compare IDs too.
       if (
         !held ||
@@ -298,8 +306,12 @@ export function createSnapshotStore({
       pending ??= refresh().finally(() => {
         pending = null;
       });
-      // With a snapshot held, refresh never rejects, so nothing goes unhandled.
-      return held ? Promise.resolve(held) : pending;
+      if (!held) return pending;
+      const stale = held;
+      // Rejects only when latest.json is gone; a caller answering stale can't see that.
+      pending.catch(() => {});
+      if (!refreshWaitMs) return Promise.resolve(stale);
+      return Promise.race([pending, wait(refreshWaitMs).then(() => stale)]);
     },
     /**
      * @param {string} prefix

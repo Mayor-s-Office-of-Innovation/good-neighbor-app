@@ -224,6 +224,84 @@ describe("createSnapshotStore", () => {
     await vi.waitFor(() => expect(source.loads).toBe(2));
   });
 
+  it("answers 503 once latest.json is gone, so warm and cold Lambdas agree", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+      refreshWaitMs: 100,
+      wait: () => new Promise(() => {}),
+    });
+    await store.current();
+    source.latest = async () => null;
+    now = 1001;
+    await expect(store.current()).rejects.toMatchObject({
+      code: "snapshot_unavailable",
+      statusCode: 503,
+    });
+    await expect(store.current()).rejects.toMatchObject({
+      code: "snapshot_unavailable",
+    });
+  });
+
+  it("answers the stale request, then 503, where a request doesn't wait for the refresh", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+    });
+    await store.current();
+    source.latest = async () => null;
+    now = 1001;
+    expect((await store.current()).prefix).toBe("p1");
+    // Lets the refresh finish with nobody waiting on it, which must not go unhandled.
+    await new Promise((resolve) => setImmediate(resolve));
+    await expect(store.current()).rejects.toMatchObject({
+      code: "snapshot_unavailable",
+    });
+  });
+
+  it("waits for a refresh, since a frozen Lambda would never finish it after replying", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+      refreshWaitMs: 100,
+      wait: () => new Promise(() => {}),
+    });
+    await store.current();
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    now = 1001;
+    expect((await store.current()).prefix).toBe("p2");
+  });
+
+  it("answers from the held snapshot when the refresh outlasts the wait", async () => {
+    const source = fakeSource();
+    let now = 0;
+    /** @type {number[]} */
+    const waits = [];
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+      refreshWaitMs: 100,
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    await store.current();
+    source.latest = () => new Promise(() => {});
+    now = 1001;
+    expect((await store.current()).prefix).toBe("p1");
+    expect(waits).toEqual([100]);
+  });
+
   it("reports a failed refresh while it keeps serving", async () => {
     const source = fakeSource();
     const onError = vi.fn();

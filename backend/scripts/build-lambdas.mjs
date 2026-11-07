@@ -14,10 +14,10 @@
 // relevant deployment artifact so its zip is self-contained. On the deploy runner,
 // `npm ci` resolves the linux-x64 binaries via sharp's optionalDependencies.
 //
-// `@duckdb/node-api` (analytics convert + report + query lambdas) gets the
+// `@duckdb/node-api` (analytics convert + report + query + projection lambdas) gets the
 // same treatment: native `.node` binding + platform-specific `libduckdb.dylib`
 // in `@duckdb/node-bindings-<platform>`, kept external and copied into
-// dist/analytics-convert/, dist/analytics-report/ and dist/analytics-query/. On the deploy runner
+// dist/analytics-convert/, dist/analytics-report/, dist/analytics-query/ and dist/analytics-projection/. On the deploy runner
 // `npm ci` resolves the linux binaries via the platform packages'
 // optionalDependencies (same mechanism as @img/*).
 
@@ -127,6 +127,11 @@ const entries = [
     // in the app api bundle.
     name: "analytics-query",
     entry: resolve(backendRoot, "src/lambda/analytics-query.js"),
+    external: ["@duckdb/node-api", "@duckdb/node-bindings"],
+  },
+  {
+    name: "analytics-projection",
+    entry: resolve(backendRoot, "src/lambda/analytics-projection.js"),
     external: ["@duckdb/node-api", "@duckdb/node-bindings"],
   },
 ];
@@ -260,6 +265,7 @@ const duckTargets = [
   "analytics-convert",
   "analytics-report",
   "analytics-query",
+  "analytics-projection",
 ];
 // Lambda nodejs24.x runs on x86_64 glibc (AL2023) unless explicitly configured
 // for arm64 — keep this in sync with the Terraform Lambda architectures.

@@ -1,5 +1,7 @@
 // Every table, CSV and report carries both versions, so old exports stay explainable.
 
+export const LATEST_PROJECTION_KEY = "projections/latest.json";
+
 /** Bump when a projection table gains, loses or renames a column. */
 export const CONTRACT_VERSION = "insights-v4";
 

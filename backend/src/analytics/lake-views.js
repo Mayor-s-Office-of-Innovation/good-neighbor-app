@@ -53,9 +53,10 @@ const DUCKDB_HOME = process.env.DUCKDB_HOME_DIRECTORY || "/tmp";
  * container credentials and nothing is ever written into the catalog. Pass
  * `credentials` only for a laptop run whose credential source DuckDB's own
  * chain can't read (e.g. login-tool session creds): the SDK chain resolves
- * them and an explicit-key secret is created instead.
+ * them and an explicit-key secret is created instead. Pass `endpoint` to read
+ * an S3 emulator, which serves path-style URLs.
  * @param {any} conn
- * @param {{ credentials?: CredentialProvider, region?: string }} [opts]
+ * @param {{ credentials?: CredentialProvider, region?: string, endpoint?: string }} [opts]
  */
 export async function installHttpfs(conn, opts = {}) {
   // Must precede any INSTALL/LOAD: the extension directory derives from it.
@@ -64,8 +65,12 @@ export async function installHttpfs(conn, opts = {}) {
   // httpfs; load it explicitly rather than relying on autoload at CREATE time.
   await conn.run(`INSTALL httpfs; LOAD httpfs; INSTALL aws; LOAD aws;`);
   if (!opts.credentials) {
+    const url = opts.endpoint ? new URL(opts.endpoint) : null;
+    const emulator = url
+      ? `, ENDPOINT ${sqlString(url.host)}, URL_STYLE 'path', USE_SSL ${url.protocol === "https:"}`
+      : "";
     await conn.run(
-      `CREATE OR REPLACE SECRET gn_lake (TYPE S3, PROVIDER CREDENTIAL_CHAIN);`,
+      `CREATE OR REPLACE SECRET gn_lake (TYPE S3, PROVIDER CREDENTIAL_CHAIN${emulator});`,
     );
     return;
   }
@@ -187,6 +192,7 @@ export function emptyViewSql(entity) {
  *   entities?: string[],
  *   credentials?: CredentialProvider,
  *   region?: string,
+ *   endpoint?: string,
  * }} opts `install: false` when httpfs + the secret are already set up (the
  *   secret validates the credential chain at CREATE time, so tests skip it);
  *   `entities` to rebuild a subset (defaults to all).
@@ -200,6 +206,7 @@ export async function createViews(conn, bucket, opts) {
     await installHttpfs(conn, {
       credentials: opts.credentials,
       region: opts.region,
+      endpoint: opts.endpoint,
     });
   }
   const base = `s3://${bucket}/readings`;

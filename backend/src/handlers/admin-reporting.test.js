@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
@@ -616,6 +616,95 @@ describe("export and report jobs", () => {
     expect(json(res).error).toBe(
       on ? "idempotency_key_required" : "jobs_unavailable",
     );
+  });
+
+  it.each([
+    ["queues a job when a queue is set", "https://sqs.example.org/q", 1],
+    ["runs a job in-process with no queue", undefined, 0],
+  ])("%s", async (_, queueUrl, messages) => {
+    vi.resetModules();
+    const { SQSClient } = await import("@aws-sdk/client-sqs");
+    const { S3Client } = await import("@aws-sdk/client-s3");
+    const sent = vi.spyOn(SQSClient.prototype, "send");
+    sent.mockImplementation(async () => ({}));
+    const objects = new Map();
+    vi.spyOn(S3Client.prototype, "send").mockImplementation(async (command) => {
+      const { Key, Body } = /** @type {any} */ (command).input;
+      if (Body !== undefined) return objects.set(Key, Body);
+      if (objects.has(Key))
+        return { Body: { transformToString: async () => objects.get(Key) } };
+      throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+    });
+    const dir = mkdtempSync(join(tmpdir(), "insights-handler-"));
+    const conn = await (await DuckDBInstance.create(":memory:")).connect();
+    try {
+      await writeSyntheticProjection(conn, dir);
+      const fresh = await import("./admin-reporting.js");
+      const h = fresh.reportingHandlers({
+        INSIGHTS_PROJECTION_DIR: dir,
+        INSIGHTS_JOBS_BUCKET: "j",
+        INSIGHTS_JOBS_QUEUE_URL: queueUrl,
+      });
+      const res = await h.postExport(
+        event({ headers: key, body: { dataset: "issues" } }),
+      );
+      expect(res.statusCode).toBe(202);
+      expect(sent).toHaveBeenCalledTimes(messages);
+      if (messages)
+        expect(
+          JSON.parse(
+            /** @type {any} */ (sent.mock.calls[0][0]).input.MessageBody,
+          ).insightsJob.jobId,
+        ).toBe(json(res).job.jobId);
+    } finally {
+      vi.restoreAllMocks();
+      conn.closeSync();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      "waits for a newer snapshot in a Lambda, which freezes after replying",
+      "analytics-query",
+      "rebuilt",
+    ],
+    [
+      "answers at once locally, where the refresh carries on",
+      undefined,
+      "first",
+    ],
+  ])("%s", async (_, lambda, shown) => {
+    const dir = mkdtempSync(join(tmpdir(), "insights-handler-"));
+    const conn = await (await DuckDBInstance.create(":memory:")).connect();
+    let clock = NOW;
+    const realNow = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    try {
+      await writeSyntheticProjection(conn, dir);
+      const rewriteId = (/** @type {string} */ snapshotId) => {
+        const path = join(dir, "manifest.json");
+        const manifest = JSON.parse(readFileSync(path, "utf8"));
+        writeFileSync(path, JSON.stringify({ ...manifest, snapshotId }));
+      };
+      rewriteId("first");
+      vi.resetModules();
+      const fresh = await import("./admin-reporting.js");
+      const h = fresh.reportingHandlers({
+        INSIGHTS_PROJECTION_DIR: dir,
+        AWS_LAMBDA_FUNCTION_NAME: lambda,
+        // Not read here; a Lambda turns jobs off without them.
+        INSIGHTS_JOBS_BUCKET: "j",
+        INSIGHTS_JOBS_QUEUE_URL: "https://sqs.example.org/q",
+      });
+      await h.getOverview(event());
+      rewriteId("rebuilt");
+      clock += 6 * 60_000;
+      expect(json(await h.getOverview(event())).meta.snapshotId).toBe(shown);
+    } finally {
+      realNow.mockRestore();
+      conn.closeSync();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("keeps the first build, whatever env a later call passes", async () => {

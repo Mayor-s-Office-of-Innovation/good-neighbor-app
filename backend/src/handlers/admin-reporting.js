@@ -1,4 +1,5 @@
-// Served by the analytics-query Lambda from one in-memory snapshot, so every number on a page agrees.
+// Served from one in-memory snapshot, so every number on a page agrees. The
+// analytics-query Lambda answers the routes; the insights-jobs Lambda runs the jobs.
 
 import { createHash } from "node:crypto";
 import { S3Client } from "@aws-sdk/client-s3";
@@ -48,6 +49,9 @@ import {
 /** @typedef {import("../reporting/api/snapshot.js").Snapshot} Snapshot */
 
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,128}$/;
+// How long a request waits on a snapshot refresh before it answers from the old
+// one, well inside the gateway's 29 s.
+const LAMBDA_REFRESH_WAIT_MS = 3000;
 const EXPORT_DATASETS = ["issues", "checks", "sites"];
 // Params a request may carry; anything else is dropped before it's stored.
 const PERIOD_PARAMS = [
@@ -502,6 +506,7 @@ export function reportingHandlers(env = process.env) {
   handlers = createReportingHandlers({
     snapshots: createSnapshotStore({
       source,
+      refreshWaitMs: env.AWS_LAMBDA_FUNCTION_NAME ? LAMBDA_REFRESH_WAIT_MS : 0,
       onError: (err) =>
         logServerError("admin-reporting", /** @type {Error} */ (err), {
           extra: { step: "snapshot-refresh" },

@@ -18,6 +18,7 @@ const {
   ENTITIES,
   createViews,
   emptyViewSql,
+  installHttpfs,
   lakeViewSql,
   stripTrailingSemicolon,
 } = await import("./lake-views.js");
@@ -279,6 +280,39 @@ describe("createViews", () => {
     await expect(
       createViews(conn, "bucket-x", /** @type {any} */ ({ install: false })),
     ).rejects.toThrow(/s3 client/);
+  });
+});
+
+describe("installHttpfs", () => {
+  /** @returns {{ run: (sql: string) => Promise<void>, secret: () => string | undefined }} */
+  const recorder = () => {
+    /** @type {string[]} */
+    const statements = [];
+    return {
+      run: async (sql) => {
+        statements.push(sql);
+      },
+      secret: () => statements.find((sql) => sql.includes("SECRET")),
+    };
+  };
+
+  it("uses the credential chain and AWS's own hosts by default", async () => {
+    const fake = recorder();
+    await installHttpfs(fake);
+    expect(fake.secret()).toBe(
+      "CREATE OR REPLACE SECRET gn_lake (TYPE S3, PROVIDER CREDENTIAL_CHAIN);",
+    );
+  });
+
+  it.each([
+    ["http://localhost:9020", "'localhost:9020'", "false"],
+    ["https://s3.example.org", "'s3.example.org'", "true"],
+  ])("points the secret at an emulator on %s", async (endpoint, host, ssl) => {
+    const fake = recorder();
+    await installHttpfs(fake, { endpoint });
+    expect(fake.secret()).toContain(
+      `PROVIDER CREDENTIAL_CHAIN, ENDPOINT ${host}, URL_STYLE 'path', USE_SSL ${ssl});`,
+    );
   });
 });
 
