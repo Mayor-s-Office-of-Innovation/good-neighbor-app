@@ -6,7 +6,8 @@ import { DuckDBInstance } from "@duckdb/node-api";
 import { classifyItem } from "../../analytics/entity-keys.js";
 import { pacificDateKey } from "../../lib/pacific-dates.js";
 import { createLocalViews, writeLocalLake } from "../local-lake.js";
-import { buildProjection, readLakeInputs } from "../projection.js";
+import { buildProjection } from "../projection.js";
+import { readProjection } from "../test-build.js";
 import { RESPONSE_STATES } from "../contract.js";
 import {
   CALM,
@@ -236,14 +237,30 @@ describe("projection over generated records", () => {
   let dir;
   const generated = generateYear(SMALL);
 
-  beforeAll(async () => {
-    conn = await (await DuckDBInstance.create(":memory:")).connect();
-    dir = mkdtempSync(join(tmpdir(), "insights-generated-"));
-    await writeLocalLake(conn, dir, generated.items, {
+  /**
+   * @param {Record<string, any>[]} items
+   * @param {string} name
+   * @returns {Promise<Record<string, Record<string, any>[]>>}
+   */
+  const project = async (items, name) => {
+    const lake = join(dir, name, "lake");
+    const out = join(dir, name, "projection");
+    await writeLocalLake(conn, lake, items, {
       exportedAt: generated.evaluatedAt,
       exportId: "gen",
     });
-    await createLocalViews(conn, dir);
+    await createLocalViews(conn, lake);
+    await buildProjection(conn, out, {
+      evaluatedAt: generated.evaluatedAt,
+      snapshotId: "gen",
+    });
+    return readProjection(conn, out);
+  };
+
+  beforeAll(async () => {
+    conn = await (await DuckDBInstance.create(":memory:")).connect();
+    await conn.run("SET memory_limit = '1GB'");
+    dir = mkdtempSync(join(tmpdir(), "insights-generated-"));
   });
 
   afterAll(() => {
@@ -252,10 +269,7 @@ describe("projection over generated records", () => {
   });
 
   it("matches the answers for every Site, month and count", async () => {
-    const { tables } = buildProjection(await readLakeInputs(conn), {
-      evaluatedAt: generated.evaluatedAt,
-      snapshotId: "gen",
-    });
+    const tables = await project(generated.items, "as-generated");
     const result = compareWithAnswers(
       /** @type {any} */ (tables),
       generated.answers,
@@ -278,22 +292,17 @@ describe("projection over generated records", () => {
   });
 
   it("would catch a counting rule that also counted update rows", async () => {
-    const lake = await readLakeInputs(conn);
-    // Each update read as one more task, the way a loose classifier would.
+    // Each update stored as one more task, the way a loose classifier would read it.
     const phantom = generated.items
       .filter((i) => classifyItem(i) === "task_updates")
       .map((i) => ({
-        ...i,
+        pk: i.pk,
+        sk: `TASK#${i.taskId}-${i.updateId}`,
         taskId: `${i.taskId}-${i.updateId}`,
-        siteId: i.pk.slice(5),
         status: "open",
         createdAt: i.occurredAt,
       }));
-    lake.inputs.tasks.push(.../** @type {any[]} */ (phantom));
-    const { tables } = buildProjection(lake, {
-      evaluatedAt: generated.evaluatedAt,
-      snapshotId: "gen",
-    });
+    const tables = await project([...generated.items, ...phantom], "phantom");
     expect(
       compareWithAnswers(
         /** @type {any} */ (tables),

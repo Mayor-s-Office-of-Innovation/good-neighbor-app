@@ -1,15 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { sqlString, toRow, writeEntityParquet } from "../analytics/convert.js";
 import { createLocalViews, writeLocalLake } from "./local-lake.js";
-import {
-  buildProjection,
-  readLakeInputs,
-  writeProjection,
-} from "./projection.js";
+import { buildProjection } from "./projection.js";
+import { readProjection } from "./test-build.js";
 
 const EVALUATED = "2026-10-20T00:00:00.000Z";
 const SITE = "SITE#s1";
@@ -24,6 +27,7 @@ let dir;
 beforeEach(async () => {
   instance = await DuckDBInstance.create(":memory:");
   conn = await instance.connect();
+  await conn.run("SET memory_limit = '1GB'");
   dir = mkdtempSync(join(tmpdir(), "insights-projection-"));
 });
 
@@ -104,6 +108,19 @@ const items = [
   },
 ];
 
+/**
+ * @param {string} [evaluatedAt]
+ * @returns {Promise<{ tables: Record<string, Record<string, any>[]>, manifest: Record<string, any> }>}
+ */
+async function build(evaluatedAt = EVALUATED) {
+  const out = join(dir, "projection");
+  const { manifest } = await buildProjection(conn, out, {
+    evaluatedAt,
+    snapshotId: "snap1",
+  });
+  return { tables: await readProjection(conn, out), manifest };
+}
+
 describe("buildProjection over a lake written like an export", () => {
   it("counts one Check and one Issue despite update, media and pointer rows", async () => {
     await writeLocalLake(conn, dir, items, {
@@ -129,14 +146,7 @@ describe("buildProjection over a lake written like an export", () => {
       );
     }
     await createLocalViews(conn, dir);
-    const lake = await readLakeInputs(conn);
-    expect([lake.inputs.tasks.length, lake.inputs.checks.length]).toEqual([
-      1, 1,
-    ]);
-    const { tables } = buildProjection(lake, {
-      evaluatedAt: EVALUATED,
-      snapshotId: "snap1",
-    });
+    const { tables } = await build();
     expect(tables.site_days).toEqual([
       {
         siteId: "s1",
@@ -171,10 +181,7 @@ describe("buildProjection over a lake written like an export", () => {
       exportId: "e1",
     });
     await createLocalViews(conn, dir);
-    const { tables } = buildProjection(await readLakeInputs(conn), {
-      evaluatedAt: EVALUATED,
-      snapshotId: "snap1",
-    });
+    const { tables } = await build();
     expect(tables.issues[0]).toMatchObject({
       deadlineAt: "2026-10-01T20:10:00.000Z",
       responseState: "late",
@@ -187,10 +194,7 @@ describe("buildProjection over a lake written like an export", () => {
       exportId: "e1",
     });
     await createLocalViews(conn, dir);
-    const { tables, manifest } = buildProjection(await readLakeInputs(conn), {
-      evaluatedAt: EVALUATED,
-      snapshotId: "snap1",
-    });
+    const { tables, manifest } = await build();
     expect(tables.sites[0]).toMatchObject({ siteId: "s1", hasLocation: true });
     expect(tables.site_contacts[0]).toMatchObject({
       publicContact: "available",
@@ -235,10 +239,7 @@ describe("buildProjection over a lake written like an export", () => {
       { exportedAt: "2026-10-19T18:00:00.000Z", exportId: "e2" },
     );
     await createLocalViews(conn, dir);
-    const { tables, manifest } = buildProjection(await readLakeInputs(conn), {
-      evaluatedAt: EVALUATED,
-      snapshotId: "snap1",
-    });
+    const { tables, manifest } = await build();
     expect(tables.issues.map((i) => i.issueId)).toEqual(["t2"]);
     expect(manifest.dataQuality.superseded).toBe(1);
   });
@@ -261,20 +262,55 @@ describe("buildProjection over a lake written like an export", () => {
       { exportedAt: "2026-10-19T18:00:00.000Z", exportId: "e1" },
     );
     await createLocalViews(conn, dir);
-    const { tables } = buildProjection(await readLakeInputs(conn), {
-      evaluatedAt: EVALUATED,
-      snapshotId: "snap1",
-    });
+    const { tables } = await build();
     // The app keeps tasks of unchanged conditions and ones staff acted on.
     expect(tables.issues.map((i) => i.issueId)).toEqual(["t1", "t2"]);
   });
 
+  it("leads each Issue with the task its condition lists first", async () => {
+    /** @type {Record<string, any>[]} */
+    const listed = items.map((i) =>
+      i.sk === "ASSESSMENT#a1#COND#k1" ? { ...i, taskIds: ["t2", "t1"] } : i,
+    );
+    listed.push({
+      ...items[2],
+      sk: "TASK#t2",
+      taskId: "t2",
+      createdAt: "2026-10-01T17:00:00.000Z",
+    });
+    await writeLocalLake(conn, dir, listed, {
+      exportedAt: "2026-10-19T18:00:00.000Z",
+      exportId: "e1",
+    });
+    await createLocalViews(conn, dir);
+    const { tables } = await build();
+    expect(
+      tables.issues.map((i) => [i.issueId, i.createdAt, i.followUpTasks]),
+    ).toEqual([["t2", "2026-10-01T17:00:00.000Z", 1]]);
+  });
+
+  it("replaces the previous projection whole", async () => {
+    await writeLocalLake(conn, dir, items, {
+      exportedAt: "2026-10-19T18:00:00.000Z",
+      exportId: "e1",
+    });
+    await createLocalViews(conn, dir);
+    const out = join(dir, "projection");
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(out, "stale.parquet"), "");
+    await build();
+    expect(readdirSync(out).sort()).toEqual([
+      "issues.parquet",
+      "manifest.json",
+      "site_contacts.parquet",
+      "site_days.parquet",
+      "sites.parquet",
+    ]);
+  });
+
   it("refuses a snapshot time it can't read", async () => {
     await createLocalViews(conn, dir);
-    const lake = await readLakeInputs(conn);
-    expect(() =>
-      buildProjection(lake, { evaluatedAt: "soon", snapshotId: "x" }),
-    ).toThrow("valid evaluatedAt");
+    await expect(build("soon")).rejects.toThrow("valid evaluatedAt");
   });
 
   it("refuses a snapshot time before the latest export", async () => {
@@ -283,13 +319,9 @@ describe("buildProjection over a lake written like an export", () => {
       exportId: "e1",
     });
     await createLocalViews(conn, dir);
-    const lake = await readLakeInputs(conn);
-    expect(() =>
-      buildProjection(lake, {
-        evaluatedAt: "2026-10-19T17:59:59.999Z",
-        snapshotId: "x",
-      }),
-    ).toThrow("latest export");
+    await expect(build("2026-10-19T17:59:59.999Z")).rejects.toThrow(
+      "latest export",
+    );
   });
 
   it("builds an empty view for a folder with no Parquet files", async () => {
@@ -305,12 +337,11 @@ describe("buildProjection over a lake written like an export", () => {
 
   it("writes each empty table as a typed file with no rows", async () => {
     await createLocalViews(conn, dir);
-    const projection = buildProjection(await readLakeInputs(conn), {
+    const out = join(dir, "o'neil", "projection");
+    await buildProjection(conn, out, {
       evaluatedAt: EVALUATED,
       snapshotId: "empty",
     });
-    const out = join(dir, "o'neil", "projection");
-    await writeProjection(conn, projection, out);
     /** @type {[string, string][]} */
     const probes = [
       ["site_days", "typeof(any_value(day)), typeof(any_value(awaiting))"],
@@ -341,12 +372,12 @@ describe("buildProjection over a lake written like an export", () => {
       exportId: "e1",
     });
     await createLocalViews(conn, lake);
-    const projection = buildProjection(await readLakeInputs(conn), {
+    const out = join(lake, "projection");
+    const { written } = await buildProjection(conn, out, {
       evaluatedAt: EVALUATED,
       snapshotId: "snap1",
     });
-    const out = join(lake, "projection");
-    expect(await writeProjection(conn, projection, out)).toEqual([
+    expect(written).toEqual([
       "site_days.parquet",
       "issues.parquet",
       "site_contacts.parquet",

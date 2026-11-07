@@ -115,9 +115,7 @@ const { compareWithAnswers } = await import(
   "../src/reporting/synthetic/verify.js"
 );
 const { createLocalViews } = await import("../src/reporting/local-lake.js");
-const { buildProjection, readLakeInputs, writeProjection } = await import(
-  "../src/reporting/projection.js"
-);
+const { buildProjection } = await import("../src/reporting/projection.js");
 
 /** @type {import("node:child_process").ChildProcess[]} */
 const children = [];
@@ -484,21 +482,16 @@ try {
   await createLocalViews(conn, lakeDir);
   const snapshotId = generated.evaluatedAt.replace(/[:.]/g, "-");
   const projectionDir = join(outDir, "projection");
-  const { projection, written } = await step(
+  const { manifest, written } = await step(
     "built the Insights projection",
-    async () => {
-      const built = buildProjection(await readLakeInputs(conn), {
+    () =>
+      buildProjection(conn, projectionDir, {
         evaluatedAt: generated.evaluatedAt,
         snapshotId,
-      });
-      return {
-        projection: built,
-        written: await writeProjection(conn, built, projectionDir),
-      };
-    },
+      }),
   );
   // Same layout the build job will use in the lake bucket; latest.json goes last.
-  const prefix = `projections/${projection.manifest.contractVersion}/${snapshotId}`;
+  const prefix = `projections/${manifest.contractVersion}/${snapshotId}`;
   for (const name of written)
     await s3.send(
       new PutObjectCommand({
@@ -544,11 +537,11 @@ try {
   }
   await writeFile(
     join(outDir, "check.json"),
-    JSON.stringify({ ...result, manifest: projection.manifest }, null, 2),
+    JSON.stringify({ ...result, manifest }, null, 2),
   );
   console.log(`[insights-data] totals: ${JSON.stringify(result.totals)}`);
   console.log(
-    `[insights-data] data quality: ${JSON.stringify(projection.manifest.dataQuality)}`,
+    `[insights-data] data quality: ${JSON.stringify(manifest.dataQuality)}`,
   );
   if (result.mismatches.length) {
     console.error(

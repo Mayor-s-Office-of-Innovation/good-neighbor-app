@@ -4,25 +4,24 @@
 
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { activeCatalog } from "../analysis/guidance/catalog-registry.js";
+import { resolveCategory } from "../analysis/guidance/category-resolver.js";
 import { sqlString } from "../analytics/convert.js";
 import { PACIFIC_TIME_ZONE } from "../lib/pacific-dates.js";
-import { SITE_DAY_METRICS, buildSiteDays } from "./activity.js";
+import { SITE_DAY_METRICS } from "./activity.js";
 import {
   CONTRACT_VERSION,
   RULE_VERSION,
   assertNoJudgementFields,
 } from "./contract.js";
-import {
-  RULE_HOURS,
-  publicContactState,
-  siteContactState,
-} from "./indicators.js";
-import { buildIssueFacts, reportCategory } from "./issue-facts.js";
+import { publicContactState, siteContactState } from "./indicators.js";
 import { RULES_SQL, TABLE_ORDER, snapshotMacrosSql } from "./projection-sql.js";
 
-// Promoted columns where the converter has them, raw JSON otherwise.
-export const LAKE_INPUT_SQL = {
-  tasks: `SELECT siteId, taskId, taskStatus AS status, createdAt, category,
+// Promoted columns where the converter has them, raw JSON otherwise. Copied
+// once into temp tables, since the rules read some inputs more than once.
+/** @type {Record<string, string>} */
+const LAKE_INPUT_SQL = {
+  in_tasks: `SELECT siteId, taskId, taskStatus AS status, createdAt, category,
     TRY_CAST(CASE WHEN severity = floor(severity) THEN severity END AS INTEGER)
       AS severity, kind, type,
     raw->>'$.checkId' AS checkId, raw->>'$.assessmentId' AS assessmentId,
@@ -31,22 +30,24 @@ export const LAKE_INPUT_SQL = {
     raw->>'$.ruleId' AS ruleId,
     TRY_CAST(raw->>'$.maxAcceptableResponseHours' AS DOUBLE) AS maxAcceptableResponseHours
     FROM tasks`,
-  conditions: `SELECT siteId, assessmentId, conditionId,
-    CAST(raw->'$.taskIds' AS VARCHAR) AS taskIds FROM conditions`,
-  updates: `SELECT siteId, taskId, updateType AS type, occurredAt FROM task_updates`,
-  links: `SELECT siteId, taskId, originalTaskId FROM duplicate_links`,
-  overrides: `SELECT siteId, taskId FROM duplicate_overrides`,
-  checks: `SELECT siteId, checkId, status, raw->>'$.flowType' AS flowType,
+  in_conditions: `SELECT siteId, assessmentId, conditionId,
+    CASE WHEN json_type(raw->'$.taskIds') = 'ARRAY'
+      THEN from_json(raw->'$.taskIds', '["VARCHAR"]') END AS taskIds
+    FROM conditions`,
+  in_updates: `SELECT siteId, taskId, updateType AS type, occurredAt FROM task_updates`,
+  in_links: `SELECT siteId, taskId, originalTaskId FROM duplicate_links`,
+  in_overrides: `SELECT siteId, taskId FROM duplicate_overrides`,
+  in_checks: `SELECT siteId, checkId, status, raw->>'$.flowType' AS flowType,
     startedAt, completedAt, synthesizedAt FROM checks`,
-  sites: `SELECT siteId, raw FROM sites`,
-  asOf: `SELECT max(exportedAt) AS asOf FROM (
+};
+const SITES_SQL = `SELECT siteId, raw FROM sites`;
+const AS_OF_SQL = `SELECT max(exportedAt) AS asOf FROM (
     SELECT exportedAt FROM checks UNION ALL SELECT exportedAt FROM tasks
     UNION ALL SELECT exportedAt FROM conditions
     UNION ALL SELECT exportedAt FROM task_updates
     UNION ALL SELECT exportedAt FROM duplicate_links
     UNION ALL SELECT exportedAt FROM duplicate_overrides
-    UNION ALL SELECT exportedAt FROM sites)`,
-};
+    UNION ALL SELECT exportedAt FROM sites)`;
 
 /**
  * @param {any} conn
@@ -60,19 +61,6 @@ async function rows(conn, sql) {
 
 /**
  * @param {unknown} value
- * @returns {string[]}
- */
-function idList(value) {
-  try {
-    const list = JSON.parse(String(value ?? "[]"));
-    return Array.isArray(list) ? list.map(String) : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * @param {unknown} value
  * @returns {string | null}
  */
 function isoOrNull(value) {
@@ -80,45 +68,14 @@ function isoOrNull(value) {
   return typeof value === "string" && value ? value : null;
 }
 
+// Older rulebooks used other names for some categories; one name each keeps their counts together.
 /**
- * Read everything the projection needs from the lake views.
- * @param {any} conn
- * @returns {Promise<{ inputs: import("./issue-facts.js").IssueInputs, sites: Record<string, any>[], asOf: string | null }>}
+ * @param {string} category
+ * @returns {string}
  */
-export async function readLakeInputs(conn) {
-  /** @type {Record<string, Record<string, any>[]>} */
-  const read = {};
-  // One connection runs one query at a time.
-  for (const [name, sql] of Object.entries(LAKE_INPUT_SQL))
-    read[name] = await rows(conn, sql);
-  const {
-    tasks,
-    conditions,
-    updates,
-    links,
-    overrides,
-    checks,
-    sites,
-    asOf: freshness,
-  } = read;
-  return {
-    inputs: {
-      tasks: /** @type {any[]} */ (tasks),
-      conditions: /** @type {any[]} */ (
-        conditions.map((c) => ({ ...c, taskIds: idList(c.taskIds) }))
-      ),
-      updates: /** @type {any[]} */ (updates),
-      links: /** @type {any[]} */ (links),
-      overrides: /** @type {any[]} */ (overrides),
-      checks: /** @type {any[]} */ (checks),
-    },
-    // The view's siteId falls back to the key when the item has none.
-    sites: sites.map((s) => ({
-      ...JSON.parse(String(s.raw)),
-      siteId: s.siteId,
-    })),
-    asOf: isoOrNull(freshness[0]?.asOf),
-  };
+function reportCategory(category) {
+  const found = resolveCategory(category, activeCatalog());
+  return found.kind === "resolved" ? found.category : category;
 }
 
 /**
@@ -127,7 +84,7 @@ export async function readLakeInputs(conn) {
  * @param {string} evaluatedAt
  * @returns {{ sites: Record<string, any>[], siteContacts: Record<string, any>[] }}
  */
-export function buildSiteTables(sites, evaluatedAt) {
+function buildSiteTables(sites, evaluatedAt) {
   const sorted = [...sites].sort((a, b) =>
     String(a.siteId).localeCompare(String(b.siteId)),
   );
@@ -161,53 +118,6 @@ export function buildSiteTables(sites, evaluatedAt) {
         observedAt: s.updatedAt ?? evaluatedAt,
       };
     }),
-  };
-}
-
-/**
- * @param {Awaited<ReturnType<typeof readLakeInputs>>} lake
- * @param {{ evaluatedAt: string, snapshotId: string }} opts
- * @returns {{ manifest: Record<string, any>, tables: Record<string, Record<string, any>[]> }}
- */
-export function buildProjection(lake, { evaluatedAt, snapshotId }) {
-  // A bad snapshot time would quietly mark every Issue as awaiting.
-  if (!Number.isFinite(Date.parse(evaluatedAt)))
-    throw new Error("buildProjection needs a valid evaluatedAt");
-  // Task status is the latest export's, so it can't be judged earlier.
-  if (lake.asOf && Date.parse(evaluatedAt) < Date.parse(lake.asOf))
-    throw new Error("evaluatedAt is before the lake's latest export");
-  const { issues, dropped } = buildIssueFacts(lake.inputs, evaluatedAt);
-  const { siteDays, undatedChecks } = buildSiteDays(
-    { checks: lake.inputs.checks, issues },
-    evaluatedAt,
-  );
-  const { sites, siteContacts } = buildSiteTables(lake.sites, evaluatedAt);
-  const tables = {
-    site_days: siteDays,
-    issues,
-    site_contacts: siteContacts,
-    sites,
-  };
-  // Rows must match the contract exactly; a stray field is a rule bug.
-  for (const [name, table] of Object.entries(tables)) {
-    const columns = Object.keys(TABLE_SCHEMAS[name]).join();
-    const bad = table.find((r) => Object.keys(r).join() !== columns);
-    if (bad) throw new Error(`${name} row does not match its contract`);
-  }
-  return {
-    manifest: {
-      contractVersion: CONTRACT_VERSION,
-      ruleVersion: RULE_VERSION,
-      snapshotId,
-      asOf: lake.asOf,
-      evaluatedAt,
-      timezone: PACIFIC_TIME_ZONE,
-      rowCounts: Object.fromEntries(
-        Object.entries(tables).map(([name, t]) => [name, t.length]),
-      ),
-      dataQuality: { ...dropped, undatedChecks },
-    },
-    tables,
   };
 }
 
@@ -287,49 +197,6 @@ async function swapIn(dir, write) {
   return written;
 }
 
-/**
- * Empty tables still get a file, so readers see zero rows, not a missing file.
- * @param {any} conn
- * @param {ReturnType<typeof buildProjection>} projection
- * @param {string} final
- * @returns {Promise<string[]>} file names written
- */
-export async function writeProjection(conn, projection, final) {
-  return swapIn(final, async (dir) => {
-    const written = [];
-    for (const [name, table] of Object.entries(projection.tables)) {
-      const schema = TABLE_SCHEMAS[name];
-      const target = join(dir, `${name}.parquet`);
-      if (!table.length) {
-        const empty = Object.entries(schema)
-          .map(([column, type]) => `CAST(NULL AS ${type}) AS ${column}`)
-          .join(", ");
-        await conn.run(
-          `COPY (SELECT ${empty} WHERE false) TO ${sqlString(target)} (FORMAT PARQUET, COMPRESSION ZSTD)`,
-        );
-      } else {
-        const staged = join(dir, `${name}.ndjson`);
-        await writeFile(staged, table.map((r) => JSON.stringify(r)).join("\n"));
-        try {
-          await conn.run(
-            `COPY (SELECT * FROM read_json(${sqlString(staged)}, format = 'newline_delimited', columns = ${JSON.stringify(schema)}))
-           TO ${sqlString(target)} (FORMAT PARQUET, COMPRESSION ZSTD)`,
-          );
-        } finally {
-          await rm(staged, { force: true });
-        }
-      }
-      written.push(`${name}.parquet`);
-    }
-    await writeFile(
-      join(dir, "manifest.json"),
-      JSON.stringify(projection.manifest, null, 2),
-    );
-    written.push("manifest.json");
-    return written;
-  });
-}
-
 const D = "DOUBLE";
 // Types for rows handed in as JavaScript, matching what the lake reads give.
 /** @type {Record<string, Record<string, string>>} */
@@ -373,19 +240,6 @@ const INPUT_SCHEMAS = {
   },
 };
 
-// Copied once, since the rules read some inputs more than once.
-/** @type {Record<string, string>} */
-const LAKE_SQL_INPUTS = {
-  in_tasks: LAKE_INPUT_SQL.tasks,
-  in_conditions: `SELECT siteId, assessmentId, conditionId,
-    CASE WHEN json_type(taskIds) = 'ARRAY' THEN from_json(taskIds, '["VARCHAR"]') END AS taskIds
-    FROM (${LAKE_INPUT_SQL.conditions})`,
-  in_updates: LAKE_INPUT_SQL.updates,
-  in_links: LAKE_INPUT_SQL.links,
-  in_overrides: LAKE_INPUT_SQL.overrides,
-  in_checks: LAKE_INPUT_SQL.checks,
-};
-
 /** @type {Record<string, string>} projection table → rules table */
 const SQL_TABLES = {
   site_days: "p_site_days",
@@ -401,7 +255,7 @@ const SQL_TABLES = {
  * @param {Record<string, any>[]} list
  * @returns {Promise<void>}
  */
-export async function loadRows(conn, name, schema, list) {
+async function loadRows(conn, name, schema, list) {
   await conn.run(
     `CREATE OR REPLACE TEMP TABLE ${name} AS
      SELECT unnest(from_json($1::JSON, ${sqlString(`[${JSON.stringify(schema)}]`)}), recursive := true)`,
@@ -410,17 +264,21 @@ export async function loadRows(conn, name, schema, list) {
 }
 
 /**
- * @typedef {import("./issue-facts.js").IssueInputs & { sites?: Record<string, any>[], asOf?: string | null }} ProjectionInputs
+ * Rows handed in instead of the lake, shaped like its reads (INPUT_SCHEMAS).
+ * @typedef {{ tasks?: Record<string, any>[], conditions?: Record<string, any>[], updates?: Record<string, any>[],
+ *   links?: Record<string, any>[], overrides?: Record<string, any>[], checks?: Record<string, any>[],
+ *   sites?: Record<string, any>[], asOf?: string | null }} ProjectionInputs
  */
 
 /**
  * Counts in DuckDB, straight to Parquet. Without `inputs` it reads the lake views.
+ * An empty table still gets a file, so readers see zero rows, not a missing file.
  * @param {any} conn
  * @param {string} dir
- * @param {{ evaluatedAt: string, snapshotId: string, inputs?: Partial<ProjectionInputs> }} opts
+ * @param {{ evaluatedAt: string, snapshotId: string, inputs?: ProjectionInputs }} opts
  * @returns {Promise<{ manifest: Record<string, any>, written: string[] }>}
  */
-export async function buildSqlProjection(
+export async function buildProjection(
   conn,
   dir,
   { evaluatedAt, snapshotId, inputs },
@@ -443,14 +301,14 @@ export async function buildSqlProjection(
     siteRecords = inputs.sites ?? [];
     asOf = inputs.asOf ?? null;
   } else {
-    for (const [name, sql] of Object.entries(LAKE_SQL_INPUTS))
+    for (const [name, sql] of Object.entries(LAKE_INPUT_SQL))
       await conn.run(`CREATE OR REPLACE TEMP TABLE ${name} AS ${sql}`);
     // The view's siteId falls back to the key when the item has none.
-    siteRecords = (await rows(conn, LAKE_INPUT_SQL.sites)).map((s) => ({
+    siteRecords = (await rows(conn, SITES_SQL)).map((s) => ({
       ...JSON.parse(String(s.raw)),
       siteId: s.siteId,
     }));
-    asOf = isoOrNull((await rows(conn, LAKE_INPUT_SQL.asOf))[0]?.asOf);
+    asOf = isoOrNull((await rows(conn, AS_OF_SQL))[0]?.asOf);
   }
   // Task status is the latest export's, so it can't be judged earlier.
   if (asOf && Date.parse(evaluatedAt) < Date.parse(asOf))
@@ -469,11 +327,16 @@ export async function buildSqlProjection(
       reportCategory: reportCategory(category),
     })),
   );
+  // Tasks from before rules carried a window get the current rule's, as
+  // handlers/tasks.js does.
+  const ruleHours = new Map(
+    activeCatalog().rules.map((r) => [r.ruleId, r.maxAcceptableResponseHours]),
+  );
   await loadRows(
     conn,
     "rule_hours",
     { ruleId: V, hours: D },
-    [...RULE_HOURS].map(([ruleId, hours]) => ({ ruleId, hours })),
+    [...ruleHours].map(([ruleId, hours]) => ({ ruleId, hours })),
   );
   const { sites, siteContacts } = buildSiteTables(siteRecords, evaluatedAt);
   await loadRows(conn, "p_sites", TABLE_SCHEMAS.sites, sites);
