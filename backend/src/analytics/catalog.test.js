@@ -14,19 +14,15 @@ vi.mock("@aws-sdk/client-s3", () => ({
   },
 }));
 
-const { CATALOG, ParamError, bindParams, getQuery, renderWithDefaults } =
-  await import("./catalog.js");
+const { CATALOG, renderWithDefaults } = await import("./catalog.js");
 const { createViews } = await import("./lake-views.js");
 
 describe("CATALOG", () => {
   it("has unique ids and a description on every entry", () => {
     const ids = CATALOG.map((q) => q.id);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const q of CATALOG) {
-      expect(q.title.length, q.id).toBeGreaterThan(0);
+    for (const q of CATALOG)
       expect(q.description.length, q.id).toBeGreaterThan(20);
-      expect(q.group.length, q.id).toBeGreaterThan(0);
-    }
   });
 
   it("only references declared parameters in its SQL", () => {
@@ -38,34 +34,19 @@ describe("CATALOG", () => {
       expect([...used].sort(), q.id).toEqual([...declared].sort());
     }
   });
-
-  it("gives every scheduled entry defaults for all parameters", () => {
-    const scheduled = CATALOG.filter((q) => q.scheduled);
-    // Compliance by site is off the schedule, so the old 3-a-day score stops publishing.
-    expect(scheduled.map((q) => q.id)).toEqual([
-      "worst-locations",
-      "open-tasks-by-site",
-    ]);
-    for (const q of scheduled) {
-      expect(() => renderWithDefaults(q), q.id).not.toThrow();
-      expect(renderWithDefaults(q), q.id).not.toMatch(/\$[a-zA-Z_]+/);
-    }
-  });
 });
 
-describe("every catalog query runs against the lake views", () => {
+describe("each report runs against the lake views as scheduled", () => {
   /** @type {any} */
   let conn;
 
   /**
-   * Run a catalog query with bound parameters; counts come back as numbers.
-   * @param {string} sql
-   * @param {Record<string, number | string>} params
+   * Run a report with its defaults rendered in, as the report Lambda does.
+   * @param {string} id
    */
-  async function runQuery(sql, params) {
-    const prepared = await conn.prepare(sql);
-    prepared.bind(params);
-    const reader = await prepared.runAndReadAll();
+  async function runReport(id) {
+    const q = /** @type {any} */ (CATALOG.find((entry) => entry.id === id));
+    const reader = await conn.runAndReadAll(renderWithDefaults(q));
     return {
       columns: reader.columnNames(),
       rows: reader
@@ -89,84 +70,36 @@ describe("every catalog query runs against the lake views", () => {
     conn.closeSync();
   });
 
-  it.each(CATALOG.map((q) => [q.id, q]))(
-    "%s binds and executes with default parameters",
-    async (_id, q) => {
-      const params = bindParams(q, { siteId: "site-1" });
-      const result = await runQuery(q.sql, params);
-      expect(result.columns.length).toBeGreaterThan(0);
-      expect(Array.isArray(result.rows)).toBe(true);
-    },
-  );
-
-  it("returns real rows for a query with seeded data", async () => {
+  it("ranks the Site with the lowest average grade first", async () => {
     await conn.run(`CREATE OR REPLACE VIEW checks AS
       SELECT * FROM (VALUES
-        ('s1', 'c1', 'completed', 'Good', CAST(4 AS BIGINT), current_date - 1, '{"evidenceKind":"photos"}'),
-        ('s1', 'c2', 'completed', 'Poor', CAST(2 AS BIGINT), current_date - 1, '{"evidenceKind":"description"}'),
-        ('s2', 'c3', 'in_progress', NULL, NULL, current_date, '{}')
-      ) t(siteId, checkId, status, grade, gradeScore, date, raw)`);
-    const q = /** @type {any} */ (getQuery("grade-distribution"));
-    const result = await runQuery(q.sql, bindParams(q, {}));
-    expect(result.columns).toEqual(["grade", "checks", "pct"]);
-    expect(result.rows).toEqual([
-      ["Good", 1, 50],
-      ["Poor", 1, 50],
+        ('s1', 'c1', 'completed', CAST(4 AS BIGINT), current_date - 1),
+        ('s2', 'c2', 'completed', CAST(2 AS BIGINT), current_date - 1),
+        ('s2', 'c3', 'completed', NULL, current_date - 1),
+        ('s3', 'c4', 'completed', CAST(1 AS BIGINT), current_date - 30)
+      ) t(siteId, checkId, status, gradeScore, date)`);
+    const result = await runReport("worst-locations");
+    // s3's check is outside the 7-day window; the ungraded check is left out.
+    expect(
+      result.rows.map((/** @type {unknown[]} */ row) => [
+        row[result.columns.indexOf("siteId")],
+        row[result.columns.indexOf("graded_checks")],
+      ]),
+    ).toEqual([
+      ["s2", 1],
+      ["s1", 1],
     ]);
   });
-  it("excludes simulated filings from City escalation counts and lists", async () => {
+
+  it("leaves simulated filings out of open City escalations", async () => {
     await conn.run(`CREATE OR REPLACE VIEW tasks AS
       SELECT *, taskId AS shortId FROM (VALUES
         ('site', 'real', 'open', 'city_escalation', 'litter', 1, 'escalation', '2026-10-30', current_date, '{}'),
         ('site', 'sim', 'open', 'city_escalation', 'litter', 1, 'escalation', '2026-10-30', current_date, '{"deliberate311DeliveryMode":"simulated"}')
       ) t(siteId, taskId, taskStatus, type, category, severity, kind, createdAt, date, raw)`);
-    const list = /** @type {any} */ (getQuery("open-escalations"));
-    expect((await runQuery(list.sql, bindParams(list, {}))).rows).toHaveLength(
-      1,
-    );
-    const counts = /** @type {any} */ (getQuery("open-tasks-by-site"));
-    const result = await runQuery(counts.sql, bindParams(counts, {}));
+    const result = await runReport("open-tasks-by-site");
     expect(result.rows[0][result.columns.indexOf("open_escalations")]).toBe(1);
     expect(result.rows[0][result.columns.indexOf("open_tasks")]).toBe(2);
-  });
-});
-
-describe("bindParams", () => {
-  const q = /** @type {any} */ (getQuery("site-recent-checks"));
-
-  it("applies defaults and coerces numeric strings", () => {
-    expect(bindParams(q, { siteId: " s-1 ", days: "30" })).toEqual({
-      siteId: "s-1",
-      days: 30,
-    });
-    expect(bindParams(q, { siteId: "s-1" })).toEqual({
-      siteId: "s-1",
-      days: 14,
-    });
-  });
-
-  it("ignores undeclared keys and non-object input", () => {
-    const withExtra = bindParams(q, { siteId: "s-1", evil: "x" });
-    expect(Object.keys(withExtra)).toEqual(["siteId", "days"]);
-    expect(() => bindParams(q, "nope")).toThrow(ParamError);
-  });
-
-  it("rejects missing required, non-integer, and out-of-range values", () => {
-    expect(() => bindParams(q, {})).toThrow(/siteId is required/);
-    expect(() => bindParams(q, { siteId: "s", days: 1.5 })).toThrow(
-      /whole number/,
-    );
-    expect(() => bindParams(q, { siteId: "s", days: "abc" })).toThrow(
-      /whole number/,
-    );
-    expect(() => bindParams(q, { siteId: "s", days: 0 })).toThrow(/at least 1/);
-    expect(() => bindParams(q, { siteId: "s", days: 400 })).toThrow(
-      /at most 365/,
-    );
-    expect(() => bindParams(q, { siteId: 5 })).toThrow(/must be text/);
-    expect(() => bindParams(q, { siteId: "x".repeat(201) })).toThrow(
-      /200 characters/,
-    );
   });
 });
 
@@ -174,20 +107,13 @@ describe("renderWithDefaults", () => {
   it("substitutes defaults as literals and escapes strings", () => {
     const rendered = renderWithDefaults({
       id: "t",
-      title: "t",
       description: "t",
-      group: "t",
       params: [
-        { name: "days", label: "d", type: "integer", default: 7 },
-        { name: "who", label: "w", type: "string", default: "O'Brien" },
+        { name: "days", type: "integer", default: 7 },
+        { name: "who", type: "string", default: "O'Brien" },
       ],
       sql: "SELECT $days AS d, $who AS w WHERE $days > 0",
     });
     expect(rendered).toBe("SELECT 7 AS d, 'O''Brien' AS w WHERE 7 > 0");
-  });
-
-  it("refuses a parameter without a default", () => {
-    const q = /** @type {any} */ (getQuery("site-recent-checks"));
-    expect(() => renderWithDefaults(q)).toThrow(/no default/);
   });
 });

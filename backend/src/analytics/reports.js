@@ -1,7 +1,7 @@
 // Scheduled reports over the Parquet lake (ADR 0013 Phase 4). Opens an
 // in-memory DuckDB, builds the shared lake views (lake-views.js), runs every
-// catalog query flagged `scheduled` (catalog.js) with its default
-// parameters, and writes each result to reports/<query-id>/<date>.csv.
+// catalog query (catalog.js) with its default parameters, and writes each
+// result to reports/<query-id>/<date>.csv.
 
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { DuckDBInstance } from "@duckdb/node-api";
@@ -30,12 +30,11 @@ export function createViews(conn, bucket, opts = {}) {
 }
 
 /**
- * The catalog entries materialized on the schedule, rendered with their
- * default parameters.
+ * The catalog entries, rendered with their default parameters.
  * @returns {{ id: string, sql: string }[]}
  */
 export function scheduledReports() {
-  return CATALOG.filter((q) => q.scheduled).map((q) => ({
+  return CATALOG.map((q) => ({
     id: q.id,
     sql: renderWithDefaults(q),
   }));

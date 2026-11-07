@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { reporting } = vi.hoisted(() => {
@@ -39,6 +40,30 @@ vi.mock("../handlers/admin-reporting.js", () => ({
   },
 }));
 
+// Remove each entry when the gateway catches up, so a new mismatch fails CI.
+const NOT_ROUTED_YET =
+  "Insights route; its gateway route comes with a later infrastructure change";
+const ANALYTICS_REMOVED =
+  "Analytics page removed; its gateway route goes with a later infrastructure change";
+/** @type {Record<string, string>} */
+const KNOWN_ROUTE_GAPS = {
+  "GET /admin/v1/reporting/overview": NOT_ROUTED_YET,
+  "GET /admin/v1/reporting/sites/{siteId}": NOT_ROUTED_YET,
+  "GET /admin/v1/reporting/issues": NOT_ROUTED_YET,
+  "GET /admin/v1/reporting/issues/{issueId}": NOT_ROUTED_YET,
+  "GET /admin/v1/reporting/checks": NOT_ROUTED_YET,
+  "GET /admin/v1/reporting/checks/{checkId}": NOT_ROUTED_YET,
+  "GET /admin/v1/reporting/scope-options": NOT_ROUTED_YET,
+  "POST /admin/v1/reporting/trends": NOT_ROUTED_YET,
+  "POST /admin/v1/reporting/exports": NOT_ROUTED_YET,
+  "POST /admin/v1/reports/insights": NOT_ROUTED_YET,
+  "GET /admin/v1/reports/{jobId}": NOT_ROUTED_YET,
+  "DELETE /admin/v1/reports/{jobId}": NOT_ROUTED_YET,
+  "GET /admin/v1/analytics/queries": ANALYTICS_REMOVED,
+  "POST /admin/v1/analytics/queries/{queryId}": ANALYTICS_REMOVED,
+  "POST /admin/v1/analytics/query": ANALYTICS_REMOVED,
+};
+
 const { handler } = await import("./analytics-query.js");
 const mocked = await import("../handlers/admin-reporting.js");
 
@@ -57,19 +82,6 @@ const event = (routeKey) => ({
 });
 
 describe("analytics-query lambda", () => {
-  // Insights replaced the Analytics page, so its catalog and SQL routes are gone.
-  it.each([
-    "GET /admin/v1/analytics/queries",
-    "POST /admin/v1/analytics/queries/{queryId}",
-    "POST /admin/v1/analytics/query",
-  ])("404s on the old Analytics route %s", async (routeKey) => {
-    const res = /** @type {any} */ (
-      await handler(event(routeKey), /** @type {any} */ ({}), () => {})
-    );
-    expect(res.statusCode).toBe(404);
-    expect(JSON.parse(String(res.body)).error).toBe("not_found");
-  });
-
   it.each([
     ["GET /admin/v1/reporting/overview", "getReportingOverview"],
     ["GET /admin/v1/reporting/sites/{siteId}", "getReportingSite"],
@@ -95,6 +107,26 @@ describe("analytics-query lambda", () => {
     const real = await vi.importActual("../handlers/admin-reporting.js");
     expect(Object.keys(mocked.reportingRoutes).sort()).toEqual(
       Object.keys(real.reportingRoutes).sort(),
+    );
+  });
+
+  it("serves exactly the routes API Gateway sends it, apart from the known gaps", () => {
+    const terraform = readFileSync(
+      new URL("../../../infra/modules/app/api.tf", import.meta.url),
+      "utf8",
+    );
+    const block = /analytics_routes\s*=\s*\[([^\]]*)\]/.exec(terraform);
+    const deployed = [...String(block?.[1]).matchAll(/"([^"]+)"/g)].map(
+      (match) => match[1],
+    );
+    expect(deployed.length).toBeGreaterThan(0);
+    const served = Object.keys(mocked.reportingRoutes);
+    const gaps = Object.keys(KNOWN_ROUTE_GAPS);
+    expect(served.filter((key) => !deployed.includes(key)).sort()).toEqual(
+      gaps.filter((key) => served.includes(key)).sort(),
+    );
+    expect(deployed.filter((key) => !served.includes(key)).sort()).toEqual(
+      gaps.filter((key) => deployed.includes(key)).sort(),
     );
   });
 

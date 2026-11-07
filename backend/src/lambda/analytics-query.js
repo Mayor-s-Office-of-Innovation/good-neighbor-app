@@ -2,17 +2,12 @@
 // dedicated Lambda, separate from the app api function: it carries the DuckDB
 // native binding, needs ~2 GB and a long timeout, and its load must never
 // compete with the operational API's concurrency. The admin JWT authorizer
-// gates every route and the handlers re-check access. The gateway routes,
-// queue and bucket come in the infra PR.
+// gates every route and the handlers re-check access. The gateway routes, job
+// queue and jobs bucket come with a later infrastructure change.
 
 import { reportingRoutes, runReportJob } from "../handlers/admin-reporting.js";
 import { jsonResponse } from "../http.js";
 import { withServerErrorsLogged } from "../lib/log-server-error.js";
-
-// Route key → handler, typed to the call shape (event only), as in api.js.
-const routes = /** @type {Record<string, (...args: any[]) => any>} */ (
-  reportingRoutes
-);
 
 // Batch size 1 gives a large file the whole timeout; a bad message goes back
 // to SQS, then the DLQ.
@@ -53,7 +48,9 @@ export const handler = async (event) => {
   if (Array.isArray(records) && records[0]?.eventSource === "aws:sqs")
     return /** @type {any} */ (runJobs(/** @type {any} */ (event)));
   const routeKey = /** @type {any} */ (event).routeKey;
-  const fn = routes[routeKey];
+  const fn = Object.hasOwn(reportingRoutes, routeKey)
+    ? reportingRoutes[/** @type {keyof typeof reportingRoutes} */ (routeKey)]
+    : undefined;
   if (!fn) {
     return jsonResponse(404, { error: "not_found", routeKey });
   }
