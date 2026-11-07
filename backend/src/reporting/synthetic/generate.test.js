@@ -303,6 +303,32 @@ describe("projection over generated records", () => {
   });
 });
 
+describe("unfinished Checks in the answer key", () => {
+  // Seed 14 starts an unfinished Check at Pacific midnight on Oct 1, where
+  // the generator's loop day (Sep 30) and the Pacific day disagree.
+  const { items, answers } = generateYear({
+    seed: 14,
+    sites: 30,
+    startDay: "2026-09-01",
+  });
+
+  it("counts each one in the Pacific month it started", () => {
+    const counted = {};
+    for (const i of items)
+      if (i.flowType === "perimeter" && i.status === "in_progress") {
+        const site = i.checkId.replace(/-c\d+$/, "");
+        const key = `${site}|${pacificDateKey(i.startedAt).slice(0, 7)}`;
+        counted[key] = (counted[key] ?? 0) + 1;
+      }
+    const expected = Object.fromEntries(
+      Object.entries(answers.bySiteMonth)
+        .filter(([, m]) => m.unfinishedChecks > 0)
+        .map(([key, m]) => [key, m.unfinishedChecks]),
+    );
+    expect(counted).toEqual(expected);
+  });
+});
+
 describe("profileOf", () => {
   it("cycles every profile in a small year", () => {
     const keys = Array.from({ length: 24 }, (_, s) => profileOf(s, 24).key);

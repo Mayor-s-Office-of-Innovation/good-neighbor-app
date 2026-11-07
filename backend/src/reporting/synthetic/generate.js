@@ -1436,7 +1436,7 @@ export function generateYear(opts = {}) {
             doneDay,
             single ? "singleIssueReports" : "completedPerimeterChecks",
           );
-        } else tally(siteId, day, "unfinishedChecks");
+        } else tally(siteId, pacificDateKey(startMs), "unfinishedChecks");
         items.push(header);
       }
       while (
