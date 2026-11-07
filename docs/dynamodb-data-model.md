@@ -640,7 +640,7 @@ over them for any set of sites or time grain. The pipeline lives in
 |---|---|---|
 | `analytics-export` | EventBridge `rate(6 hours)` | incremental export, starting from the `ANALYTICS#EXPORT` / `#WATERMARK` cursor, into the analytics lake bucket |
 | `analytics-convert` | export completion | rewrites the export as Parquet, split by entity |
-| `analytics-query` | Insights admin routes, behind the admin JWT authorizer, and the Insights job queue | runs DuckDB over the Parquet lake for Insights reads, CSV exports and PDF reports |
+| `analytics-query` | Insights admin routes, behind the admin JWT authorizer, and the Insights job queue (both wired by a later infrastructure change) | runs DuckDB over the Parquet lake for Insights reads, CSV exports and PDF reports |
 | `analytics-report` | EventBridge `cron(0 14 * * ? *)`, 14:00 UTC (06:00 Pacific standard time, 07:00 Pacific daylight time) | builds the daily citywide report |
 
 ADR 0013 replaced the Glue and Athena tooling we first sketched. Athena could still be
@@ -655,7 +655,8 @@ All of it is Terraform. Nothing is set up by hand.
 - **Built:** DynamoDB Streams on the table (shared outbox/System Status mapping and a feature-gated duplicate mapping), the S3 analytics lake bucket
   (KMS, lifecycle rules), the four Lambdas, and the two EventBridge schedules above.
 - **Not built:** the Tier-1 Streams aggregator and the `#STATS#` counter items. No
-  Firehose (see T2b above). Insights reads the lake through `analytics-query`; System Status uses its
+  Firehose (see T2b above). The gateway routes, job queue and jobs bucket that let Insights read the lake
+  through `analytics-query` come with a later infrastructure change. System Status uses its
   separate operational projections, not the lake or the proposed Tier-1 counters.
 
 Tier-1 buildout is post-MVP and tracked on the issue tracker.
@@ -663,9 +664,10 @@ Tier-1 buildout is post-MVP and tracked on the issue tracker.
 ## Metric definitions
 
 Settled 2026-08-12 as a product decision. "Best cleanliness record" and "regularity" are
-defined below. Both are computed **when read**, never stored. Today that happens in the
-Tier-2 DuckDB SQL (`backend/src/analytics/catalog.js`; the compliance rule is the
-`COALESCE(c.checks, 0) >= 3` filter). The shared `scoring` module planned for Tier 1 does
+defined below. Both are computed **when read**, never stored. Today the Tier-2 daily
+reports compute cleanliness (`backend/src/analytics/catalog.js`), and Insights computes
+regularity from the Checks each Site owed under its own terms (`checks_owed` in
+`backend/src/reporting/projection.js`). The shared `scoring` module planned for Tier 1 does
 not exist yet. When Tier 1 lands, the module and the SQL must agree. Neither tier stores
 a score, so there is nothing to migrate.
 
@@ -683,11 +685,10 @@ a score, so there is nothing to migrate.
 - **Evidence mix is not a score input.** The header's `evidenceKind` (`photos`,
   `description`, `mixed`, or `none`) and its `photoCount` / `textCount` are stamped once at
   `complete`. They let us report how often staff use text instead of photos.
-- **Lake regularity uses a fixed three-check threshold.** It lives as the literal
-  `>= 3` in the analytics SQL. This is not the Site-specific compliance calculation:
-  manager reports use effective-dated terms and Pacific days (AP27), with a default
-  of three only when cadence is unconfigured. The lake query uses UTC dates. There is **no grace period** for device outages. The duty is per day, so
-  compliance is per day and yes-or-no: a day is **compliant if it had 3 or more checks**.
+- **Regularity uses each Site's own terms.** Insights and the manager reports use
+  effective-dated terms and Pacific days (AP27), with a default of three Checks a day only
+  when cadence is unconfigured. The lake reports no longer compute it. There is **no grace period** for device outages. The duty is per day, so
+  compliance is per day and yes-or-no: a day is **compliant if it had the Checks it owed** (3 by default).
   Compliance over a window is `compliant_days / total_days`. A flat ratio of
   `completed ÷ (3 × days)` was rejected. It would let extra checks on one day hide a
   missed day.
@@ -702,8 +703,8 @@ migration cost.
 | # | Limitation | Status | Mitigation |
 |---|---|---|---|
 | **R1** | The city needs a **cross-site** view, which breaks per-site partitioning | Deferred post-MVP | A sparse `ESCALATION#<status>` partition on GSI3 (the index already built for the expiry sweep) would collect `city_escalation` tasks across sites. Toxic escalations are rare, so the `ESCALATION#open` partition stays small. Shard the key later only if volume demands it. |
-| **R2** | **Cross-site analytics** for city-wide reports. See [City-wide reporting](#city-wide-reporting-and-analytics). | Tier 2 built; Tier 1 deferred post-MVP | The Tier 2 lake (S3 export → Parquet → DuckDB, [ADR 0013](./adr/0013-analytics-read-plane.md)) serves the admin analytics routes today. Tier 1 live counters (Streams → counter items) are design only. Cheap at this volume. |
-| **R3** | Detecting a **missing** check (a site did fewer than N today). You cannot query for something that was never written. | Per site: built (AP27). Cross-site: not built | Per site, the manager reports derive the gap at read time: one GSI1 range query per period, counted per Pacific day against the site's own `requiredChecksPerDay`. A cross-site sweep (EventBridge over the site registry) is still the design for city-wide alerting; the daily Tier 2 lake report answers it after the fact today, in UTC days. |
+| **R2** | **Cross-site analytics** for city-wide reports. See [City-wide reporting](#city-wide-reporting-and-analytics). | Tier 2 built; Tier 1 deferred post-MVP | The Tier 2 lake (S3 export → Parquet → DuckDB, [ADR 0013](./adr/0013-analytics-read-plane.md)) feeds the daily reports and Insights today. Tier 1 live counters (Streams → counter items) are design only. Cheap at this volume. |
+| **R3** | Detecting a **missing** check (a site did fewer than N today). You cannot query for something that was never written. | Per site: built (AP27). Cross-site: not built | Per site, the manager reports derive the gap at read time: one GSI1 range query per period, counted per Pacific day against the site's own `requiredChecksPerDay`. A cross-site sweep (EventBridge over the site registry) is still the design for city-wide alerting; Insights answers it after the fact today. |
 | **R4** | Photos/audio exceed the **400 KB item limit** | Handled by design | Check/task blobs go to the S3 uploads bucket and complaint evidence goes to its dedicated S3 bucket. Items store the S3 key and use presigned URLs. Never store media in the item. |
 | **R5** | Tenant isolation must be **airtight** across 400 tenants | **Runtime authorization and negative tests enforced; shared-role IAM cannot express caller-dynamic scoping.** | Every protected route authenticates, derives `siteId` from the verified principal, and builds partition keys server-side. Media also uses exact server-owned keys and refuses to sign a stored pointer outside that Site/check. A `LeadingKeys = SITE#${custom:siteId}` condition cannot be applied to the shared API Lambda execution role: DynamoDB sees the Lambda role, not the JWT/device principal, and central-admin operations intentionally access global partitions. A future platform backstop requires a separate tenant-only data-plane function/role or per-request tagged-role assumption; do not add a misleading `SITE#*` condition. |
 | **R6** | Anonymous staff, so **no per-person attribution** | By design | Attribution is site + device. If per-person is ever needed, add a device-local PIN or roster. Not required now. |
