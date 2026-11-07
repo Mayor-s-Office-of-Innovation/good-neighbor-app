@@ -47,9 +47,13 @@ const LAKE_INPUT_SQL = {
   in_overrides: `SELECT siteId, taskId FROM duplicate_overrides`,
   in_checks: `SELECT siteId, checkId, status, raw->>'$.flowType' AS flowType,
     startedAt, completedAt, synthesizedAt FROM checks`,
+  in_sites: `SELECT siteId, raw->>'$.status' AS status,
+    raw->>'$.updatedAt' AS updatedAt FROM sites`,
+  in_terms: `SELECT siteId, raw->>'$.effectiveStart' AS effectiveStart,
+    raw->>'$.expiresOnExclusive' AS expiresOnExclusive, raw->>'$.status' AS status,
+    raw->>'$.requiredChecksPerDay' AS requiredChecksPerDay FROM compliance_terms`,
 };
 const SITES_SQL = `SELECT siteId, raw FROM sites`;
-const TERMS_SQL = `SELECT siteId, raw FROM compliance_terms`;
 const AS_OF_SQL = `SELECT max(exportedAt) AS asOf FROM (
     SELECT exportedAt FROM checks UNION ALL SELECT exportedAt FROM tasks
     UNION ALL SELECT exportedAt FROM conditions
@@ -195,7 +199,7 @@ const earlierOf = (a, b) => (b < a ? b : a);
  * @param {Record<string, any>[]} terms
  * @returns {number}
  */
-function openSitesWithoutTerms(sites, terms) {
+export function openSitesWithoutTerms(sites, terms) {
   const termed = new Set(terms.map((t) => String(t.siteId)));
   return sites.filter(
     (s) => s.status !== "inactive" && !termed.has(String(s.siteId)),
@@ -338,6 +342,15 @@ const INPUT_SCHEMAS = {
     completedAt: V,
     synthesizedAt: V,
   },
+  in_sites: { siteId: V, status: V, updatedAt: V },
+  // Text, as the lake's JSON gives it, so both paths judge the same values.
+  in_terms: {
+    siteId: V,
+    effectiveStart: V,
+    expiresOnExclusive: V,
+    status: V,
+    requiredChecksPerDay: V,
+  },
 };
 
 /** @type {Record<string, string>} projection table → rules table */
@@ -405,7 +418,6 @@ const TEMP_TABLES = [
   "rule_hours",
   "p_sites",
   "p_site_contacts",
-  "p_checks_owed",
   ...Array.from(RULES_SQL.matchAll(/TEMP TABLE (\w+)/g), (m) => m[1]),
 ];
 const TEMP_MACROS = Array.from(
@@ -422,8 +434,6 @@ const TEMP_MACROS = Array.from(
 async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
   /** @type {Record<string, any>[]} */
   let siteRecords;
-  /** @type {Record<string, any>[]} */
-  let termRecords;
   /** @type {string | null} */
   let asOf;
   if (inputs) {
@@ -435,7 +445,6 @@ async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
         /** @type {any} */ (inputs)[name.slice(3)] ?? [],
       );
     siteRecords = inputs.sites ?? [];
-    termRecords = inputs.terms ?? [];
     asOf = inputs.asOf ?? null;
   } else {
     for (const [name, sql] of Object.entries(LAKE_INPUT_SQL))
@@ -444,10 +453,6 @@ async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
     siteRecords = (await rows(conn, SITES_SQL)).map((s) => ({
       ...JSON.parse(String(s.raw)),
       siteId: s.siteId,
-    }));
-    termRecords = (await rows(conn, TERMS_SQL)).map((t) => ({
-      ...JSON.parse(String(t.raw)),
-      siteId: t.siteId,
     }));
     asOf = isoOrNull((await rows(conn, AS_OF_SQL))[0]?.asOf);
   }
@@ -485,12 +490,6 @@ async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
     TABLE_SCHEMAS.site_contacts,
     siteContacts,
   );
-  await loadRows(
-    conn,
-    "p_checks_owed",
-    TABLE_SCHEMAS.checks_owed,
-    buildChecksOwed(siteRecords, termRecords, evaluatedAt),
-  );
   await conn.run(snapshotMacrosSql(evaluatedAt));
   await conn.run(RULES_SQL);
 
@@ -509,12 +508,9 @@ async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
     evaluatedAt,
     timezone: PACIFIC_TIME_ZONE,
     rowCounts,
-    dataQuality: {
-      ...Object.fromEntries(
-        Object.entries(quality).map(([k, v]) => [k, Number(v)]),
-      ),
-      openSitesWithoutTerms: openSitesWithoutTerms(siteRecords, termRecords),
-    },
+    dataQuality: Object.fromEntries(
+      Object.entries(quality).map(([k, v]) => [k, Number(v)]),
+    ),
   };
   const written = await swapIn(dir, async (partial) => {
     const names = [];
