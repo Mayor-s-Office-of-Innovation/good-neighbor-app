@@ -182,9 +182,10 @@ class InsightsSite extends HTMLElement {
       // Settings reads the Site's own record only, not its letters or staff.
       const { items } = await adminApi.getSite(this.siteId, false, "settings");
       if (!this.isConnected) return;
+      // With no record row, the report's own states stand.
       this.details =
         (items ?? []).find((/** @type {any} */ item) => item.sk === "#META") ??
-        {};
+        null;
       this.drawContacts();
     } catch {
       // Without the record, each contact shows its state alone.

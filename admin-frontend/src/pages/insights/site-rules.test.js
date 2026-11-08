@@ -183,6 +183,15 @@ test("a Site contact needs a working email and phone, as the server's report doe
   });
 });
 
+test("a Site contact the record names but holds no copy of is unknown, as the report says", () => {
+  const site = { state: "unknown", reasonCodes: ["contact_copy_missing"] };
+  assert.deepEqual(contactShown("site", site, undefined, true, "u1"), {
+    person: undefined,
+    state: "unknown",
+    reasonCodes: ["contact_copy_missing"],
+  });
+});
+
 test("a blank or unusable public contact reads as the server's report reads it", () => {
   /** @param {Record<string, string>} person */
   const shown = (person) => {

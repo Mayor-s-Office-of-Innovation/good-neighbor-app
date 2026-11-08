@@ -84,9 +84,10 @@ export const showsTotal = (key, days) =>
  * @param {ContactState & Record<string, any>} reported
  * @param {Record<string, string> | undefined} person
  * @param {boolean} read
+ * @param {string} [assignedUserId] the record's primaryContactUserId
  * @returns {ContactState & { person: Record<string, string> | undefined }}
  */
-export function contactShown(kind, reported, person, read) {
+export function contactShown(kind, reported, person, read, assignedUserId) {
   if (!read)
     return {
       person: reported,
@@ -96,8 +97,10 @@ export function contactShown(kind, reported, person, read) {
   if (kind === "site" && !person)
     return {
       person: undefined,
-      state: "missing",
-      reasonCodes: ["no_site_contact"],
+      // A named contact whose copy failed to write isn't proof there's none.
+      ...(assignedUserId
+        ? { state: "unknown", reasonCodes: ["contact_copy_missing"] }
+        : { state: "missing", reasonCodes: ["no_site_contact"] }),
     };
   return { person, ...contactState(person ?? {}) };
 }

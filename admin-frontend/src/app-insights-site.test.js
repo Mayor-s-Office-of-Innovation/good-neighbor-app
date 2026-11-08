@@ -389,6 +389,7 @@ test("contacts show the details on the Site's record, and a missing one says why
   await mountAdmin("/insights/sites/s1?period=2026-10", {
     insights: true,
     setup: (api) => {
+      delete api.data.sites[0].primaryContactUserId;
       api.data.sites[0].publicContact = {
         email: "front@example.org",
         phone: "4155550100",
@@ -409,6 +410,42 @@ test("contacts show the details on the Site's record, and a missing one says why
     text('[data-contact="site"]').includes(
       t("admin.insights.reason.noSiteContact"),
     ),
+  );
+});
+
+test("a Site contact the record names but holds no copy of reads Unknown, not Missing", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", {
+    insights: true,
+    setup: (api) => {
+      // The fake's Site names u1 as its contact but holds no copy of u1's details.
+      delete api.data.sites[0].primaryContact;
+    },
+  });
+  await settle();
+  assert.equal(
+    text('[data-contact="site"]'),
+    `${t("admin.insights.contacts.site")}${t("admin.insights.contact.unknown")}${t("admin.insights.reason.contactCopyMissing")}`,
+  );
+});
+
+test("a Site with no record row keeps the report's contact states", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", {
+    insights: true,
+    setup: (api) => {
+      api.on("GET", /^sites\/s1(\?|$)/, () => ({ json: { items: [] } }));
+      siteReply((json) => {
+        json.siteContact = {
+          ...json.siteContact,
+          state: "unknown",
+          reasonCodes: ["no_site_record"],
+        };
+      })(api);
+    },
+  });
+  await settle();
+  assert.equal(
+    text('[data-contact="site"]'),
+    `${t("admin.insights.contacts.site")}${t("admin.insights.contact.unknown")}${t("admin.insights.reason.noSiteRecord")}`,
   );
 });
 

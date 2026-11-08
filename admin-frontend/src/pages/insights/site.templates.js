@@ -26,7 +26,7 @@ import { bandView } from "./overview.templates.js";
 import { contactShown, showsTotal } from "./site-rules.js";
 
 /** @typedef {Record<string, any>} Reply */
-/** @typedef {{ publicContact?: Record<string, string>, primaryContact?: Record<string, string> } | null} ContactDetails the Site's Manage record; null until read */
+/** @typedef {{ publicContact?: Record<string, string>, primaryContact?: Record<string, string>, primaryContactUserId?: string } | null} ContactDetails the Site's Manage record; null until read */
 
 const ACTIVITY = [
   "completedPerimeterChecks",
@@ -220,7 +220,13 @@ function contactLines(person, named) {
 export function contactsView({ reply, details }) {
   /** @param {"public" | "site"} kind @param {{ state: string, reasonCodes: string[] } & Record<string, any>} reported @param {Record<string, string> | undefined} person */
   const cell = (kind, reported, person) => {
-    const shown = contactShown(kind, reported, person, details !== null);
+    const shown = contactShown(
+      kind,
+      reported,
+      person,
+      details !== null,
+      details?.primaryContactUserId,
+    );
     const lines = contactLines(shown.person, kind === "site");
     const state =
       shown.state === "available" && lines ? "" : contactState(shown);
