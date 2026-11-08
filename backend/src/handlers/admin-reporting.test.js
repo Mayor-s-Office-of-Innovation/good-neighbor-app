@@ -337,6 +337,25 @@ describe("reads", () => {
     expect(res.statusCode).toBe(413);
   });
 
+  it.each([
+    [MAX_TRENDS_BODY_BYTES - 1, 200],
+    [MAX_TRENDS_BODY_BYTES, 200],
+    [MAX_TRENDS_BODY_BYTES + 1, 413],
+  ])(
+    "counts a base64 body of %i bytes exactly, whatever its padding",
+    async (bytes, status) => {
+      const { h } = setup();
+      const res = await h.postTrends({
+        ...event(),
+        isBase64Encoded: true,
+        body: Buffer.from(
+          '{"period":"month","month":"2026-10"}'.padEnd(bytes, " "),
+        ).toString("base64"),
+      });
+      expect(res.statusCode).toBe(status);
+    },
+  );
+
   it("takes the largest Trends body LIMITS allow, in six-byte JSON escapes", async () => {
     const { h } = setup();
     const value = (/** @type {number} */ i) =>

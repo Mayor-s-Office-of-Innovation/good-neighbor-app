@@ -50,12 +50,12 @@ import { S3_TIMEOUTS } from "../reporting/contract.js";
 
 // Counted from the base64 length, so a large body isn't decoded just to be refused.
 /**
- * @param {Event} event
+ * @param {string} body
+ * @param {boolean | undefined} base64
  * @returns {number}
  */
-function bodyBytes(event) {
-  const body = event.body ?? "";
-  if (!event.isBase64Encoded) return Buffer.byteLength(body, "utf8");
+function bodyBytes(body, base64) {
+  if (!base64) return Buffer.byteLength(body, "utf8");
   const padding = body.endsWith("==") ? 2 : body.endsWith("=") ? 1 : 0;
   return Math.floor((body.length * 3) / 4) - padding;
 }
@@ -244,7 +244,10 @@ export function createReportingHandlers({
       let params = { ...(event.queryStringParameters ?? {}) };
       if (event.body) {
         // Decoded bytes, checked before JSON.parse, like the assessment route.
-        if (Number.isFinite(maxBodyBytes) && bodyBytes(event) > maxBodyBytes)
+        if (
+          Number.isFinite(maxBodyBytes) &&
+          bodyBytes(event.body, event.isBase64Encoded) > maxBodyBytes
+        )
           throw requestError("request_too_large", 413);
         let body;
         try {
