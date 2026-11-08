@@ -327,7 +327,6 @@ export function createSnapshotStore({
       const stale = held;
       // Rejects only when latest.json is gone; a caller answering stale can't see that.
       pending.catch(() => {});
-      if (refreshWaitMs === Infinity) return pending;
       if (!refreshWaitMs) return Promise.resolve(stale);
       // Stops the timer once the refresh settles, so it doesn't outlive the request.
       const timer = new AbortController();

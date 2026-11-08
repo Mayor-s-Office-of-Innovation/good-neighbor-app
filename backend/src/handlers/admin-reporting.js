@@ -52,6 +52,7 @@ const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,128}$/;
 // How long a request waits on a snapshot refresh before it answers from the old
 // one, well inside the gateway's 29 s.
 const LAMBDA_REFRESH_WAIT_MS = 3000;
+const FRESH_ONLY_REFRESH_WAIT_MS = 20_000;
 // A request a frozen Lambda left hanging then fails, so the next refresh can retry.
 export const S3_TIMEOUTS = Object.freeze({
   connectionTimeout: 5_000,
@@ -514,10 +515,10 @@ export function reportingHandlers(env = process.env) {
     ? Number(env.INSIGHTS_REFRESH_MS)
     : NaN;
   const freshOnly = Number.isFinite(refreshMs);
-  // At 0 a request waits out the whole reload, since a slow CI runner can take over 3 s.
+  // 20 s outlasts a slow CI runner's reload but stops a hung one holding every request.
   const waitMs =
     refreshMs === 0
-      ? Infinity
+      ? FRESH_ONLY_REFRESH_WAIT_MS
       : env.AWS_LAMBDA_FUNCTION_NAME || freshOnly
         ? LAMBDA_REFRESH_WAIT_MS
         : 0;
