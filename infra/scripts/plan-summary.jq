@@ -8,7 +8,7 @@ def changed:
   (.before // {}) as $b | (.after // {}) as $a | (.after_unknown // {}) as $u
   | [(($b | keys) + ($a | keys) + ($u | keys) | unique)[] | select($b[.] != $a[.] or unknown($u[.]))];
 
-# Sorted and merged on the cut address, so the order and spread of for_each keys can't be followed.
+# Sorting on the cut address hides which for_each key changed what.
 [.resource_changes[]? | select(.change.actions != ["no-op"])
  | (.address | public_address) as $addr
  | {addr: $addr,
@@ -19,7 +19,5 @@ def changed:
            then "\treplaced for: \(.change.replace_paths | map(.[0] | tostring) | unique | join(","))"
            else "" end)
       else "" end))}]
-| group_by(.line)
-| map({addr: .[0].addr, line: .[0].line, n: length})
-| sort_by(.addr, .line)[]
-| .line + (if .n > 1 then "\t×\(.n)" else "" end)
+| group_by([.addr, .line])[]
+| .[0].line + (if length > 1 then "\t×\(length)" else "" end)
