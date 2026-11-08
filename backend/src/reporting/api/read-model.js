@@ -691,15 +691,20 @@ export function overview(snap, { interval, filter, list, now }) {
   };
 }
 
-// Days with no rows are real zeros.
+// Days with no rows are real zeros; days before the Site was added aren't.
 /**
  * @param {Snapshot} snap
  * @param {Interval} interval
+ * @param {Record<string, any>} site
  * @returns {string[]}
  */
-function coveredDays(snap, interval) {
+function coveredDays(snap, interval, site) {
   if (snap.coverageStart === null) return [];
-  const start = laterDay(interval.startDay, snap.coverageStart);
+  const added = site.createdAt ? pacificDateKey(site.createdAt) : "";
+  const start = laterDay(
+    interval.startDay,
+    laterDay(snap.coverageStart, added),
+  );
   const today = addDays(pacificDateKey(snap.manifest.evaluatedAt), 1);
   const end = earlierDay(interval.endDay, today);
   return start < end ? dayKeysBetween(start, end) : [];
@@ -761,7 +766,7 @@ export function siteDetail(snap, siteId, { interval, now }) {
   const zero = Object.fromEntries(SITE_DAY_METRICS.map((m) => [m, 0]));
   return {
     ...summary,
-    days: coveredDays(snap, interval).map((day) => {
+    days: coveredDays(snap, interval, siteOr404(snap, siteId)).map((day) => {
       const row = byDay.get(day) ?? zero;
       return {
         day,

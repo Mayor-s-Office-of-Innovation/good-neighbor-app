@@ -923,6 +923,18 @@ describe("siteDetail", () => {
     expect(res.days[3]).toMatchObject({ unfinishedChecks: 1 });
   });
 
+  it("starts the day rows on the day the Site was added, so earlier days read as no data, not zero", () => {
+    const added = edited((t) => {
+      t.sites[0].createdAt = "2026-11-02T20:00:00.000Z";
+    });
+    const res = siteDetail(added, "s1", { interval: november, now: NOW });
+    expect(res.days.map((d) => d.day)).toEqual([
+      "2026-11-02",
+      "2026-11-03",
+      "2026-11-04",
+    ]);
+  });
+
   it("flags the Site for the same reasons as its Overview row", () => {
     const row = overview(snap, {
       interval: october,
