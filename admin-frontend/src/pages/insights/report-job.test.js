@@ -529,3 +529,14 @@ test("a dismissed job is gone, so its dialog isn't shown again", async () => {
   assert.equal(jobs.current, null);
   assert.equal(told, before + 1);
 });
+
+test("a kept report stays ready to download, and a fresh link keeps it kept", async () => {
+  const { api } = fakeApi(["succeeded", "succeeded"]);
+  const jobs = createReportJobs({ api, wait: noWait });
+  await jobs.start(["s1"], {});
+  jobs.keep();
+  assert.equal(jobs.current?.phase, "succeeded");
+  assert.equal(jobs.current?.kept, true);
+  await jobs.refresh();
+  assert.equal(jobs.current?.kept, true);
+});

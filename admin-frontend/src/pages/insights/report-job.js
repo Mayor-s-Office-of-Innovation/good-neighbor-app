@@ -2,7 +2,7 @@
 // report is going.
 
 /** @typedef {{ jobId: string, state: string, error: string | null, expiresAt: string, downloadUrl: string | null, downloadSeconds?: number | null, result: { filename: string, rows?: number } | null }} Job */
-/** @typedef {{ phase: "starting" | "queued" | "running" | "succeeded" | "failed" | "cancelled", count: number, job: Job | null, error: string, linkUntil?: number }} ReportState count is how many items the job covers */
+/** @typedef {{ phase: "starting" | "queued" | "running" | "succeeded" | "failed" | "cancelled", count: number, job: Job | null, error: string, linkUntil?: number, kept?: boolean }} ReportState count is how many items the job covers; kept once its ready dialog is closed */
 /**
  * @typedef {{
  *   createInsightsReport: (body: Record<string, unknown>, key: string) => Promise<{ job: Job }>,
@@ -74,7 +74,8 @@ const same = (a, b) =>
   a.job?.jobId === b.job?.jobId &&
   a.job?.state === b.job?.state &&
   a.job?.downloadUrl === b.job?.downloadUrl &&
-  a.linkUntil === b.linkUntil;
+  a.linkUntil === b.linkUntil &&
+  a.kept === b.kept;
 
 /**
  * @param {{ api: ReportApi, create?: ReportApi["createInsightsReport"], wait?: (ms: number) => Promise<void>, visible?: () => Promise<unknown>, pollMs?: number, now?: () => number }} deps
@@ -223,6 +224,10 @@ export function createReportJobs({
       current = null;
       tell();
     },
+    /** Closing a ready report's dialog keeps the file, so it can still be downloaded. */
+    keep() {
+      if (current?.phase === "succeeded") set({ ...current, kept: true }, run);
+    },
     /** Whether the ready report's link can still be used. */
     linkFresh() {
       return !!current?.job?.downloadUrl && linkLeft(current, now()) > 0;
@@ -242,6 +247,7 @@ export function createReportJobs({
         // Without a link the Download button would do nothing, so say so.
         if (next.phase === "succeeded" && !fresh.downloadUrl)
           next.error = "link_missing";
+        if (next.phase === "succeeded" && before.kept) next.kept = true;
         set(next, mine);
       } catch (err) {
         // Another refresh already got a fresh link; this failure is old news.

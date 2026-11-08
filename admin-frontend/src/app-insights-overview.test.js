@@ -703,6 +703,30 @@ test("Close shuts the ready dialog, and a return to Overview doesn't show it aga
   assert.ok(missing("#insights-report-done"));
 });
 
+test("Close keeps a finished report, so its download stays beside the button", async () => {
+  await mountAdmin("/insights?period=2026-10", { insights: true });
+  await fill('[data-select-site="s1"]', true);
+  await click("#insights-report");
+  await click("#insights-report-confirm");
+  await tick(2000);
+  await click('#insights-report-done button[value="close"]');
+  assert.ok(missing("#insights-report-done"));
+  assert.equal(
+    $("#insights-report-download").getAttribute("href"),
+    "/mock-downloads/insights-issues.csv",
+  );
+  const page = $("insights-overview");
+  const parent = page.parentNode;
+  parent.removeChild(page);
+  parent.appendChild(page);
+  await settle();
+  assert.ok(missing("#insights-report-done"));
+  assert.equal(
+    text("#insights-report-download"),
+    t("admin.insights.job.download"),
+  );
+});
+
 test("a report that can't start says why in the dialog, and Try again asks again", async () => {
   const { api } = await mountAdmin("/insights?period=2026-10", {
     insights: true,

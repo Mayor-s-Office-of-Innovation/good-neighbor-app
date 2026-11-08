@@ -150,12 +150,28 @@ export class JobAction {
     const said = stuck ? busyWords : "";
     if (status && status.textContent !== said) status.textContent = said;
     this.drawDialog(job);
+    this.drawKept(job);
+  }
+
+  /** @param {ReportState | null} job */
+  drawKept(job) {
+    let link = this.host.querySelector(`[data-job-kept]`);
+    if (!job?.kept) return link?.remove();
+    const href = job.job?.downloadUrl ?? "";
+    if (!link) {
+      const template = document.createElement("template");
+      template.innerHTML = `<a class="btn-outline" id="${this.id}-download" data-job-kept>${escapeHtml(t("admin.insights.job.download"))}</a>`;
+      link = /** @type {Element} */ (template.content.firstElementChild);
+      this.button()?.closest(".insights__why-wrap")?.after(link);
+    }
+    // In place, so a click that is fetching a fresh link still finds it.
+    if (link.getAttribute("href") !== href) link.setAttribute("href", href);
   }
 
   /** @param {ReportState | null} job */
   drawDialog(job) {
     let dialog = this.dialog();
-    if (!job || busyOf(job)) {
+    if (!job || busyOf(job) || job.kept) {
       // A dialog for an earlier run would retry or dismiss the new one.
       if (dialog) this.dropDialog(dialog);
       return;
@@ -200,6 +216,7 @@ export class JobAction {
     dialog.remove();
     this.dialogMarkup = "";
     if (retry) void this.jobs.retry();
+    else if (this.jobs.current?.phase === "succeeded") this.jobs.keep();
     else this.jobs.dismiss();
     this.button()?.focus();
   };
