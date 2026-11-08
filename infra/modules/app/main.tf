@@ -1650,7 +1650,7 @@ resource "aws_wafv2_web_acl" "web" {
             key   = "awswaf:managed:aws:core-rule-set:SizeRestrictions_QueryString"
           }
         }
-        # Exempts only a raw, plain reporting GET path, as decoding could map another route into it; negated to fit provider nesting.
+        # Plain reporting paths only, since % or .. could disguise another route.
         statement {
           or_statement {
             statement {

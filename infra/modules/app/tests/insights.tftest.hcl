@@ -356,13 +356,14 @@ run "insights_waf" {
       for route in ["/admin/v1/reports/insights", "/admin/v1/reporting/trends"] : anytrue([
         for rule in aws_wafv2_web_acl.web.rule : (
           length(rule.action[0].block) == 1
+          && length(rule.statement[0].and_statement[0].statement) == 5
           && rule.statement[0].and_statement[0].statement[0].label_match_statement[0].key == "awswaf:managed:aws:core-rule-set:SizeRestrictions_Body"
           && anytrue([
             for s in rule.statement[0].and_statement[0].statement : try(jsonencode([
               for m in s.not_statement[0].statement[0].and_statement[0].statement : {
                 search     = m.byte_match_statement[0].search_string
                 position   = m.byte_match_statement[0].positional_constraint
-                field      = length(m.byte_match_statement[0].field_to_match[0].uri_path) == 1 ? "path" : "method"
+                field      = length(m.byte_match_statement[0].field_to_match[0].uri_path) == 1 ? "path" : length(m.byte_match_statement[0].field_to_match[0].method) == 1 ? "method" : "other"
                 transforms = sort([for t in m.byte_match_statement[0].text_transformation : "${t.priority}:${t.type}"])
               }
               ]) == jsonencode([
@@ -387,7 +388,7 @@ run "insights_waf" {
     error_message = "The Common Rule Set's 2 KB query-string rule must only count, so the label rule below decides which routes it blocks."
   }
 
-  # Blocks unless every exemption condition holds: raw reporting path, GET, and no % or .. in the path.
+  # Long reporting filters pass, but % or .. could disguise another route.
   assert {
     condition = anytrue([
       for rule in aws_wafv2_web_acl.web.rule : (
@@ -401,7 +402,7 @@ run "insights_waf" {
               negated    = length(s.not_statement) == 1
               search     = m.search_string
               position   = m.positional_constraint
-              field      = length(m.field_to_match[0].uri_path) == 1 ? "path" : "method"
+              field      = length(m.field_to_match[0].uri_path) == 1 ? "path" : length(m.field_to_match[0].method) == 1 ? "method" : "other"
               transforms = sort([for t in m.text_transformation : "${t.priority}:${t.type}"])
             }
           ][0]
