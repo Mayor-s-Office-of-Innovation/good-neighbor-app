@@ -87,6 +87,8 @@ for (const [name, address, expected] of [
   ["a for_each key", `aws_sns_topic_subscription.emails["${SECRET}@example.com"]`, "aws_sns_topic_subscription.emails[…]"],
   ["a count key", "aws_iam_role.r[2]", "aws_iam_role.r[…]"],
   ["text outside the brackets", `aws_iam_role.r["a"] ${SECRET}`, "-"],
+  ["text after a key", `a.b["x"]${SECRET}.c`, "-"],
+  ["a bare word", "SECRETVALUE", "-"],
   ["an object", { name: SECRET }, "-"],
 ]) {
   test(`cuts ${name} from an address, since keys can hold a value`, () => {
@@ -97,3 +99,25 @@ for (const [name, address, expected] of [
     assert.ok(!out.join("\n").includes(SECRET));
   });
 }
+
+test("merges identical cut lines with a count and sorts on the cut address", () => {
+  /** @param {string} key @param {object} after */
+  const instance = (key, after) => ({
+    address: `aws_sqs_queue.q["${key}"]`,
+    change: { actions: ["update"], before: { name: "n", tags: {} }, after },
+  });
+  const out = summarize({
+    resource_changes: [
+      instance(`${SECRET}-c`, { name: "n", tags: { a: "1" } }),
+      { address: "aws_iam_role.z", change: { actions: ["create"], before: null, after: {} } },
+      instance(`${SECRET}-a`, { name: "m", tags: {} }),
+      instance(`${SECRET}-b`, { name: "n", tags: { a: "2" } }),
+    ],
+  });
+  assert.deepEqual(out, [
+    "create\taws_iam_role.z",
+    "update\taws_sqs_queue.q[…]\tname",
+    "update\taws_sqs_queue.q[…]\ttags\t×2",
+  ]);
+  assert.ok(!out.join("\n").includes(SECRET));
+});

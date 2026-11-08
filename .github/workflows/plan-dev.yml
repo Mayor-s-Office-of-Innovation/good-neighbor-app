@@ -101,8 +101,13 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
 
+      # Init errors can quote backend or provider config too, so they get the plan's filter.
       - name: Init
-        run: terraform init -input=false
+        run: |
+          status=0
+          terraform init -input=false > "$RUNNER_TEMP/init.log" 2>&1 || status=$?
+          jq -n -R -r --arg status "$status" -f "$GITHUB_WORKSPACE/infra/scripts/plan-diagnostics.jq" "$RUNNER_TEMP/init.log"
+          exit "$status"
 
       # No lock: it would fail a deploy that starts meanwhile, and the role can't write it.
       # The log is public and error text can quote state, so it shows only level, address, line and error class.

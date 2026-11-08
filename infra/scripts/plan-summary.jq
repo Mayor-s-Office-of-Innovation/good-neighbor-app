@@ -8,13 +8,18 @@ def changed:
   (.before // {}) as $b | (.after // {}) as $a | (.after_unknown // {}) as $u
   | [(($b | keys) + ($a | keys) + ($u | keys) | unique)[] | select($b[.] != $a[.] or unknown($u[.]))];
 
-[.resource_changes[]? | select(.change.actions != ["no-op"])]
-| sort_by(.address)[]
-| "\(.change.actions | join("+"))\t\(.address | public_address)" + (
-    if (.change.before | type) == "object" and (.change.after | type) == "object" then
-      "\t\(.change | changed | join(","))"
-      + (if (.change.replace_paths // []) | length > 0
-         then "\treplaced for: \(.change.replace_paths | map(.[0] | tostring) | unique | join(","))"
-         else "" end)
-    else "" end
-  )
+# Sorted and merged on the cut address, so the order and spread of for_each keys can't be followed.
+[.resource_changes[]? | select(.change.actions != ["no-op"])
+ | (.address | public_address) as $addr
+ | {addr: $addr,
+    line: ("\(.change.actions | join("+"))\t\($addr)" + (
+      if (.change.before | type) == "object" and (.change.after | type) == "object" then
+        "\t\(.change | changed | join(","))"
+        + (if (.change.replace_paths // []) | length > 0
+           then "\treplaced for: \(.change.replace_paths | map(.[0] | tostring) | unique | join(","))"
+           else "" end)
+      else "" end))}]
+| group_by(.line)
+| map({addr: .[0].addr, line: .[0].line, n: length})
+| sort_by(.addr, .line)[]
+| .line + (if .n > 1 then "\t×\(.n)" else "" end)

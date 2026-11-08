@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const filter = fileURLToPath(new URL("./plan-diagnostics.jq", import.meta.url));
 
 const PRIVATE_LINE =
-  "Summaries are withheld from this public log; the last column names the error class. Full text needs a plan run with the plan role's own permissions, such as a maintainer assuming an equivalent read-only role.";
+  "Summaries are withheld from this public log; the last column names the error class. Config errors such as typos reproduce in a local plan with dev credentials; a permission failure needs the plan role's permissions, and its error class names the denial.";
 
 /**
  * @param {string[]} lines what `terraform plan -json` wrote to stdout and stderr
@@ -30,11 +30,12 @@ function diagnosticLine(diagnostic) {
   return JSON.stringify({ type: "diagnostic", diagnostic });
 }
 
-test("prints each error's level, address and line, then how to read the rest", () => {
+test("prints each error's level, address, file line and error class, then the hint line", () => {
   const out = diagnostics([
     diagnosticLine({
       severity: "error",
-      summary: "reading Lambda Function (analysis): AccessDeniedException",
+      summary:
+        "reading Lambda Function (analysis): operation error Lambda: GetFunction, https response error StatusCode: 403, RequestID: 1a2b, api error AccessDeniedException: not authorized",
       detail: `TOKEN=${SECRET}`,
       address: "module.app.aws_lambda_function.analysis",
       range: {
@@ -79,7 +80,12 @@ for (const [name, address, expected] of [
     "module.app[…].aws_iam_role.r[…]",
   ],
   ["a key with an escaped quote", `aws_iam_role.r["a\\"]${SECRET}"]`, "aws_iam_role.r[…]"],
-  ["an unclosed key", `aws_iam_role.r["${SECRET}`, "aws_iam_role.r[…]"],
+  ["an unclosed key", `aws_iam_role.r["${SECRET}`, "-"],
+  ["text after a key", `a.b["x"]${SECRET}.c`, "-"],
+  ["a bare word", "SECRETVALUE", "-"],
+  ["a nested module", "module.app.module.queue[2].aws_sqs_queue.q", "module.app.module.queue[…].aws_sqs_queue.q"],
+  ["a data source", "module.app.data.aws_iam_policy_document.p", "module.app.data.aws_iam_policy_document.p"],
+  ["an indexed data source", `data.aws_ssm_parameter.p["${SECRET}"]`, "data.aws_ssm_parameter.p[…]"],
   ["text outside the brackets", `aws_iam_role.r["a"] ${SECRET}: bad`, "-"],
   ["an object", { name: SECRET }, "-"],
 ]) {
@@ -88,6 +94,13 @@ for (const [name, address, expected] of [
     assert.deepEqual(out, [`error\t${expected}\t-\t-`, PRIVATE_LINE]);
   });
 }
+
+test("keeps a relative .tf.json filename", () => {
+  const out = diagnostics([
+    diagnosticLine({ severity: "error", summary: "x", range: { filename: "modules/app/main.tf.json", start: { line: 3 } } }),
+  ]);
+  assert.deepEqual(out, ["error\t-\tmodules/app/main.tf.json:3\t-", PRIVATE_LINE]);
+});
 
 for (const [name, filename] of [
   ["an absolute path", "/home/runner/work/main.tf"],
@@ -118,24 +131,47 @@ test("prints a fixed line for a malformed diagnostic and keeps the others", () =
   assert.deepEqual(out, ["error\t-\t-\t-", "error\taws_iam_role.r\t-\t-", PRIVATE_LINE]);
 });
 
+const op = "operation error IAM: GetRole, https response error StatusCode: 403, RequestID: 1a2b";
+
 for (const [summary, expected] of [
-  [`reading IAM Role (${SECRET}): AccessDenied: not authorized`, "AccessDenied"],
-  [`operation error Lambda: GetFunction, AccessDeniedException: ${SECRET}`, "AccessDeniedException"],
-  [`UnauthorizedOperation: ${SECRET}`, "UnauthorizedOperation"],
-  [`ResourceNotFoundException: ${SECRET}`, "ResourceNotFoundException"],
-  [`NoSuchEntity: role ${SECRET}`, "NoSuchEntity"],
-  [`ThrottlingException: Rate exceeded`, "ThrottlingException"],
-  [`ExpiredToken: ${SECRET}`, "ExpiredToken"],
-  [`InvalidClientTokenId: ${SECRET}`, "InvalidClientTokenId"],
-  [`ValidationException: ${SECRET}`, "ValidationException"],
+  [`reading IAM Role (${SECRET}): ${op}, api error AccessDenied: not authorized`, "AccessDenied"],
+  [`${op}, api error AccessDeniedException: ${SECRET}`, "AccessDeniedException"],
+  [`${op}, api error UnauthorizedOperation: ${SECRET}`, "UnauthorizedOperation"],
+  [`${op}, ResourceNotFoundException: ${SECRET}`, "ResourceNotFoundException"],
+  [`${op}, NoSuchEntity: role ${SECRET}`, "NoSuchEntity"],
+  [`${op}, api error ThrottlingException: Rate exceeded`, "ThrottlingException"],
+  [`${op}, api error ExpiredToken: ${SECRET}`, "ExpiredToken"],
+  [`${op}, api error InvalidClientTokenId: ${SECRET}`, "InvalidClientTokenId"],
+  [`${op}, api error ValidationException: ${SECRET}`, "ValidationException"],
+  [`${op}, api error Forbidden: ${SECRET}`, "Forbidden"],
+  [`${op}, api error AuthorizationError: ${SECRET}`, "AuthorizationError"],
+  [`${op}, api error UnrecognizedClientException: ${SECRET}`, "UnrecognizedClientException"],
+  [`${op}, api error InvalidAccessKeyId: ${SECRET}`, "InvalidAccessKeyId"],
+  [`${op}, api error SignatureDoesNotMatch: ${SECRET}`, "SignatureDoesNotMatch"],
+  [
+    `operation error S3: HeadBucket, https response error StatusCode: 404, RequestID: 1a2b, HostID: c3d4, NoSuchBucket: ${SECRET}`,
+    "NoSuchBucket",
+  ],
+  [`${op}, api error NotFound: x ${SECRET}: api error AccessDenied: y`, "NotFound"],
   [`Invalid value for ${SECRET}`, "-"],
   [`MyAccessDeniedThing ${SECRET}`, "-"],
+  [`AccessDenied: ${SECRET}`, "-"],
+  [`invalid value "x-NotFound-y"`, "-"],
+  [`${op}, invalid value "x-NotFound-y"`, "-"],
 ]) {
-  test(`prints ${expected === "-" ? "- for an unmatched" : `only the class ${expected} from a`} summary`, () => {
+  test(`prints ${expected === "-" ? "- for an unmatched" : `only the class ${expected} from a`} summary: ${summary.slice(0, 40)}`, () => {
     const out = diagnostics([diagnosticLine({ severity: "error", summary })]);
     assert.deepEqual(out, [`error\t-\t-\t${expected}`, PRIVATE_LINE]);
   });
 }
+
+test("reads the error class from the detail with the same position rule", () => {
+  const out = diagnostics([
+    diagnosticLine({ severity: "error", summary: "reading IAM Role (r)", detail: `${op}, api error AccessDenied: ${SECRET}` }),
+    diagnosticLine({ severity: "error", summary: "x", detail: `value "x-NotFound-y" ${SECRET}` }),
+  ]);
+  assert.deepEqual(out, ["error\t-\t-\tAccessDenied", "error\t-\t-\t-", PRIVATE_LINE]);
+});
 
 test("strips colour codes before reading an Error: line", () => {
   const out = diagnostics([`\u001b[31m╷\u001b[0m`, `\u001b[31m│\u001b[0m \u001b[1m\u001b[31mError: \u001b[0m\u001b[0m${SECRET}`]);
