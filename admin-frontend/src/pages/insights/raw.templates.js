@@ -10,6 +10,8 @@ import { jobButtonView, resultBarView } from "./job-action.js";
 import { controlRow, select, severityView } from "./overview.templates.js";
 import {
   categoryWord,
+  countWords,
+  formatCount,
   formatInstant,
   helpTip,
   noDataFor,
@@ -33,27 +35,6 @@ import {
 
 /** @param {string} key a word that may not be translated yet @param {string} fallback */
 export const wordFor = (key, fallback) => t(hasKey(key) ? key : fallback);
-
-// Admin copy is English in every locale, so numbers group the English way.
-const grouped = new Intl.NumberFormat("en-US");
-const plurals = new Intl.PluralRules("en-US");
-
-/** @param {number} value e.g. "250,000" */
-export const formatCount = (value) => grouped.format(value);
-
-/**
- * t() shows a count as "12345"; this shows "12,345 Issues".
- * @param {string} key a key with .one and .other forms
- * @param {number} count
- * @param {Record<string, string | number>} [params]
- */
-export function countWords(key, count, params = {}) {
-  const form = `${key}.${plurals.select(count)}`;
-  return t(hasKey(form) ? form : `${key}.other`, {
-    ...params,
-    count: formatCount(count),
-  });
-}
 
 /** Categories are stored as the rulebook's English, so that is the filter value. @param {string[]} categories @returns {Option[]} */
 export function categoryOptions(categories) {

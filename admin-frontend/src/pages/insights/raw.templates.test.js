@@ -2,11 +2,10 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import { t as translate } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
-import { formatInstant } from "./insights.templates.js";
+import { countWords, formatInstant } from "./insights.templates.js";
 import { readRaw } from "./raw-query.js";
 import {
   checksView,
-  countWords,
   dayHeading,
   exportDialogView,
   exportWhyOff,

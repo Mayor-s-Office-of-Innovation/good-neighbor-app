@@ -357,7 +357,7 @@ function listView(list, reply, tile, issuesHref) {
       : `${tilesView(list, reply, tile)}<div data-region="issues"></div>${
           // One link to every Issue is enough; it sits under the last list.
           list === "response"
-            ? `<p><a href="${escapeHtml(issuesHref)}" data-route id="insights-site-raw">${escapeHtml(t("admin.insights.viewAllIssues", { count }))}</a></p>`
+            ? `<p><a href="${escapeHtml(issuesHref)}" data-route id="insights-site-raw">${escapeHtml(countWords("admin.insights.viewAllIssues", count))}</a></p>`
             : ""
         }`;
   return `<section class="insights__group" aria-labelledby="${id}" id="${id}-section" data-list="${list}">${heading}${body}</section>`;
