@@ -278,7 +278,14 @@ export function checkBodyView({ reply, issueHref, level }) {
       "completed",
       check.completedAt
         ? escapeHtml(formatInstant(check.completedAt))
-        : muted(t("admin.insights.record.notCompleted")),
+        : // Some finished Checks never saved a finish time; Not finished would be wrong.
+          muted(
+            t(
+              check.state === "completed"
+                ? "admin.insights.raw.notRecorded"
+                : "admin.insights.record.notCompleted",
+            ),
+          ),
     ],
   ])}
   <${h} data-check-issues-head>${escapeHtml(t("admin.insights.record.issuesFrom", { count: issues.length }))}</${h}>

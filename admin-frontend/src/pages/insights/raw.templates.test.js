@@ -378,3 +378,26 @@ test("a Check record's head and facts, and its Issues", () => {
   );
   assert.match(body, /data-issue-row="t1"/);
 });
+
+test("a completed Check with no recorded finish time says Not recorded, not Not finished", () => {
+  const completed = (/** @type {Record<string, unknown>} */ change) => {
+    const box = document.createElement("div");
+    box.innerHTML = checkBodyView({
+      reply: {
+        check: { ...check, state: "completed", ...change },
+        issues: [],
+      },
+      issueHref: href,
+      level: 2,
+    });
+    return box.querySelector('[data-fact="completed"] dd')?.textContent;
+  };
+  assert.equal(
+    completed({ completedAt: null }),
+    t("admin.insights.raw.notRecorded"),
+  );
+  assert.equal(
+    completed({ state: "unfinished", completedAt: null }),
+    t("admin.insights.record.notCompleted"),
+  );
+});
