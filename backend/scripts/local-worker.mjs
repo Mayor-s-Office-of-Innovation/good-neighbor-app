@@ -72,8 +72,8 @@ export function createJobRunner(limit) {
 
 // Two at a time, like the insights-jobs Lambda's queue trigger.
 const insightsJobs = createJobRunner(2);
-// How soon a job handed back while two run is offered again.
-const INSIGHTS_RETRY_SECONDS = 5;
+// A job runs for minutes, so a sooner retry would just be handed back again many times.
+const INSIGHTS_RETRY_SECONDS = 30;
 
 /**
  * Reduce a thrown error to compact, non-sensitive fields for logging. The worker
@@ -302,12 +302,8 @@ async function poll(queueUrl) {
 }
 
 /**
- * Process the whole received batch CONCURRENTLY, mirroring the deployed
- * Lambda (src/lambda/worker.js). Each artifact's latency is almost entirely
- * its independent remote analyzer call, so a serial `for … await` here made
- * an N-photo check pay ~N× one call (visible as analyses landing one at a
- * time). Each message is still its own single-record event, so delete /
- * redelivery semantics per message are unchanged.
+ * Runs the batch at once, like the deployed worker Lambda, so a check with N
+ * photos waits about one analyzer call, not N.
  * @param {string} queueUrl
  * @param {import("@aws-sdk/client-sqs").Message[]} messages
  * @param {ReturnType<typeof createJobRunner>} [insights]

@@ -160,8 +160,9 @@ describe("handleBatch", () => {
         send.mock.calls.map(([cmd]) => [
           cmd.constructor.name,
           /** @type {any} */ (cmd).input.ReceiptHandle,
+          /** @type {any} */ (cmd).input.VisibilityTimeout,
         ]),
-      ).toEqual([["ChangeMessageVisibilityCommand", "r-j2"]]);
+      ).toEqual([["ChangeMessageVisibilityCommand", "r-j2", 30]]);
     } finally {
       gate.resolve();
       await runner.drain();
