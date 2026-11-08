@@ -1,5 +1,5 @@
 # Terraform's errors for plan-dev.yml's public log, read line by line with jq -R.
-# Details, snippets and quoted text are dropped, since any can hold a value from state.
+# Details, snippets and quoted text, in addresses too, are dropped, since any can hold a value from state.
 def scrub: gsub("\"[^\"]*\""; "\"…\"") | gsub("'[^']*'"; "'…'");
 
 (try fromjson catch null) as $m
@@ -9,7 +9,7 @@ def scrub: gsub("\"[^\"]*\""; "\"…\"") | gsub("'[^']*'"; "'…'");
       | [
           .severity,
           (.summary // "" | scrub),
-          (.address // "-"),
+          (.address // "-" | scrub),
           (if .range then "\(.range.filename):\(.range.start.line)" else "-" end)
         ]
       | join("\t")

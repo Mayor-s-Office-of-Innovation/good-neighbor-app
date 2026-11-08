@@ -330,7 +330,7 @@ boots and tears down every process via `webServer`; the only prerequisite is
 | `npm run e2e -w e2e` | Same, from the `e2e/` workspace |
 | `npm run test:headed -w e2e` | Run **headed** in slow motion — the browser clicks and types at a watchable pace (200 ms/action) |
 | `npx playwright show-trace -w e2e` *(see below)* | Open the failure trace for a dead run |
-| `npm run test:insights:emulator:e2e` | Insights against the real API on MinIO and ElasticMQ. Own ports (`e2e/helpers/ports.js`) and data folder (`backend/.local/minio-data-insights-e2e`), so it can run beside the main suite |
+| `npm run test:insights:emulator:e2e` | Insights against the real API on MinIO and ElasticMQ. Own ports (`e2e/helpers/ports.js`) and data folder (`e2e/test-results/insights-emulator-minio`), so it can run beside the main suite |
 
 CI runs the main suite in two shards, each with its own emulator stack and one
 worker. The support, task-update, error-state, and offline UI suites run in a

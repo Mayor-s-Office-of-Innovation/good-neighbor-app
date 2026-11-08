@@ -94,12 +94,17 @@ async function uploadLakeFiles(dir) {
     { Bucket: BUILD_BUCKET, Prefix: "readings/" },
   )) {
     const keys = (page.Contents ?? []).map(({ Key }) => ({ Key }));
-    if (keys.length)
-      await lake.send(
-        new DeleteObjectsCommand({
-          Bucket: BUILD_BUCKET,
-          Delete: { Objects: keys },
-        }),
+    if (!keys.length) continue;
+    const { Errors } = await lake.send(
+      new DeleteObjectsCommand({
+        Bucket: BUILD_BUCKET,
+        Delete: { Objects: keys },
+      }),
+    );
+    // DeleteObjects answers 200 when a key fails, and a leftover file would add rows.
+    if (Errors?.length)
+      throw new Error(
+        `couldn't clear ${Errors.length} build lake files, first ${Errors[0].Key}: ${Errors[0].Code}`,
       );
   }
   const files = await readdir(dir, { recursive: true, withFileTypes: true });

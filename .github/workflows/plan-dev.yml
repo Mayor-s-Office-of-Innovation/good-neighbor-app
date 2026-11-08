@@ -56,8 +56,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment: dev-plan
-    # Only this job gets a token. A branch can still edit this file or its Terraform
-    # to run code here, so dev-plan's required reviewers are the real gate.
+    # Only this job gets a token. A branch can still edit this file or its Terraform to
+    # run code here, so the dev-plan Environment's protection (see infra/README.md) is the gate.
     permissions:
       contents: read
       id-token: write

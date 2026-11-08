@@ -76,3 +76,19 @@ test("keeps only the error line of anything Terraform wrote as plain text", () =
   ]);
   assert.deepEqual(out, ["│ Error: Failed to load plugin schemas"]);
 });
+
+test("cuts quoted keys from an address, since for_each keys can hold a value", () => {
+  const out = diagnostics([
+    JSON.stringify({
+      type: "diagnostic",
+      diagnostic: {
+        severity: "error",
+        summary: "reading SSM Parameter",
+        address: `module.app.aws_ssm_parameter.token["${SECRET}"]`,
+      },
+    }),
+  ]);
+  assert.deepEqual(out, [
+    'error\treading SSM Parameter\tmodule.app.aws_ssm_parameter.token["…"]\t-',
+  ]);
+});
