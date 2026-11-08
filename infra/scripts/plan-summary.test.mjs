@@ -130,3 +130,33 @@ test("merges identical cut lines with a count and sorts on the cut address", () 
   ]);
   assert.ok(!out.join("\n").includes(SECRET));
 });
+
+test("names an import or a move that changes no attribute, without the import ID", () => {
+  const out = summarize({
+    resource_changes: [
+      {
+        address: "aws_iam_role.imported",
+        change: {
+          actions: ["no-op"],
+          before: { name: "r" },
+          after: { name: "r" },
+          importing: { id: SECRET },
+        },
+      },
+      {
+        address: "aws_iam_role.moved",
+        previous_address: `aws_iam_role.old["${SECRET}"]`,
+        change: {
+          actions: ["no-op"],
+          before: { name: "r" },
+          after: { name: "r" },
+        },
+      },
+    ],
+  });
+  assert.deepEqual(out, [
+    "import\taws_iam_role.imported",
+    "move\taws_iam_role.moved\tfrom: aws_iam_role.old[…]",
+  ]);
+  assert.ok(!out.join("\n").includes(SECRET));
+});
