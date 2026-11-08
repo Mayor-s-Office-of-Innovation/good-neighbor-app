@@ -326,6 +326,42 @@ describe("createSnapshotStore", () => {
     );
   });
 
+  it("keeps the newer snapshot when a hung refresh finishes late with an older one", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+      refreshLimitMs: 5000,
+    });
+    await store.current();
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    const load = source.load.bind(source);
+    /** @type {() => void} */
+    let finishHung = () => {};
+    let hung = false;
+    source.load = (/** @type {string} */ prefix) =>
+      new Promise((resolve) => {
+        hung = true;
+        finishHung = () => resolve(load(prefix));
+      });
+    now = 1001;
+    await store.current();
+    await vi.waitFor(() => expect(hung).toBe(true));
+    source.load = load;
+    source.publish({ prefix: "p3", snapshotId: "snap3" });
+    now = 6002;
+    await store.current();
+    await vi.waitFor(async () =>
+      expect((await store.current()).prefix).toBe("p3"),
+    );
+    finishHung();
+    await setImmediate();
+    await setImmediate();
+    expect((await store.current()).prefix).toBe("p3");
+  });
+
   it("stops the wait timer once the refresh wins", async () => {
     const source = fakeSource();
     let now = 0;

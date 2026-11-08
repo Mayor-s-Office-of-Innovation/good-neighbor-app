@@ -271,31 +271,40 @@ export function createSnapshotStore({
     return indexSnapshot(loaded);
   };
 
-  const refresh = async () => {
+  // Bumped per refresh, so one abandoned past refreshLimitMs can't install its
+  // older snapshot over a newer one when it finally lands.
+  let generation = 0;
+
+  /** @param {number} gen */
+  const refresh = async (gen) => {
+    const live = () => gen === generation;
     try {
       const latest = await source.latest();
       if (!latest) {
         // Dropped so a warm Lambda answers like a cold one, not with old numbers.
-        held = null;
+        if (live()) held = null;
         throw requestError("snapshot_unavailable", 503);
       }
+      let next = held;
       // A local folder keeps its path when rebuilt, so compare IDs too.
       if (
-        !held ||
-        held.prefix !== latest.prefix ||
-        held.snapshotId !== latest.snapshotId
+        !next ||
+        next.prefix !== latest.prefix ||
+        next.snapshotId !== latest.snapshotId
       ) {
-        // Dropped: two indexed snapshots would double the Lambda's memory. A job
-        // on it reloads it once.
-        held = await load(latest.prefix);
+        // The old one isn't kept: two indexed snapshots would double the Lambda's
+        // memory. A job on it reloads it once.
+        next = await load(latest.prefix);
       }
+      if (!live()) return next;
+      held = next;
       checkedAt = now();
       return held;
     } catch (err) {
       if (held) {
         // Stale data still serves, but someone needs to hear about it.
         onError(err);
-        checkedAt = now();
+        if (live()) checkedAt = now();
         return held;
       }
       throw err;
@@ -308,7 +317,7 @@ export function createSnapshotStore({
       if (held && now() - checkedAt <= refreshMs) return Promise.resolve(held);
       if (pending && now() - pendingSince > refreshLimitMs) pending = null;
       if (!pending) {
-        const started = refresh().finally(() => {
+        const started = refresh(++generation).finally(() => {
           if (pending === started) pending = null;
         });
         pending = started;
