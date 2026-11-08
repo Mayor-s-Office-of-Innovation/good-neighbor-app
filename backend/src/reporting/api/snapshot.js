@@ -332,7 +332,10 @@ export function createSnapshotStore({
     try {
       const latest = await source.latest();
       if (!latest) {
-        const gone = requestError("snapshot_unavailable", 503);
+        // Marked, since before the first build every request would log it.
+        const gone = Object.assign(requestError("snapshot_unavailable", 503), {
+          missing: true,
+        });
         // Dropped so a warm Lambda answers like a cold one, not with old numbers.
         if (held) onError(gone);
         held = null;
@@ -399,6 +402,18 @@ export function createSnapshotStore({
     return queued;
   };
 
+  /** @type {WeakSet<Promise<Snapshot>>} */
+  const watched = new WeakSet();
+  // A waiter that gave up can't log how the load ends, and held is still null.
+  /** @param {Promise<Snapshot>} run */
+  const logLateFailure = (run) => {
+    if (watched.has(run)) return;
+    watched.add(run);
+    run.catch((err) => {
+      if (!(/** @type {any} */ (err)?.missing) && !isExpired(err)) onError(err);
+    });
+  };
+
   /**
    * @template T
    * @param {Promise<Snapshot>} run
@@ -424,6 +439,7 @@ export function createSnapshotStore({
         if (!firstLoadWaitMs) return run;
         // The load carries on, so a retry joins it rather than starting over.
         return waitFor(run, firstLoadWaitMs, () => {
+          logLateFailure(run);
           throw requestError("snapshot_unavailable", 503);
         });
       }

@@ -526,6 +526,45 @@ describe("createSnapshotStore", () => {
     expect(source.load).toHaveBeenCalledOnce();
   });
 
+  it("logs a first load that fails after its wait once, though every waiter gave up", async () => {
+    const source = fakeSource();
+    /** @type {(err: Error) => void} */
+    let fail = () => {};
+    source.load = vi.fn(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    const onError = vi.fn();
+    const store = createSnapshotStore({
+      source,
+      firstLoadWaitMs: 100,
+      wait: async () => {},
+      onError,
+    });
+    await expect(store.current()).rejects.toMatchObject({
+      code: "snapshot_unavailable",
+    });
+    await expect(store.current()).rejects.toMatchObject({
+      code: "snapshot_unavailable",
+    });
+    const late = new Error("last file failed");
+    fail(late);
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
+    expect(onError.mock.calls[0][0]).toBe(late);
+  });
+
+  it("marks a missing latest.json, the one unavailable snapshot not to log per request", async () => {
+    const source = fakeSource();
+    source.latest = async () => null;
+    const store = createSnapshotStore({ source });
+    await expect(store.current()).rejects.toMatchObject({
+      code: "snapshot_unavailable",
+      missing: true,
+    });
+  });
+
   it("reports dropping the held snapshot when latest.json is gone", async () => {
     const source = fakeSource();
     const onError = vi.fn();

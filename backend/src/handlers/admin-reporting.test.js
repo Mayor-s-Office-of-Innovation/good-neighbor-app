@@ -203,6 +203,23 @@ describe("reads", () => {
     expect(logServerError).not.toHaveBeenCalled();
   });
 
+  it("logs a snapshot that is unavailable for any reason but a missing latest.json", async () => {
+    const { h } = setup({
+      source: {
+        latest: async () => ({ prefix: "p1", snapshotId: "snap1" }),
+        load: async () => {
+          throw requestError("snapshot_unavailable", 503);
+        },
+      },
+    });
+    const res = await h.getOverview(event());
+    expect([res.statusCode, json(res).error]).toEqual([
+      503,
+      "snapshot_unavailable",
+    ]);
+    expect(logServerError).toHaveBeenCalledOnce();
+  });
+
   it("logs a 503 that is ours to fix, such as a snapshot of another contract", async () => {
     const { projection } = setup();
     const { h } = setup({
