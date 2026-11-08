@@ -5,6 +5,32 @@ import { failTimes } from "./directory-helpers.js";
 /** @param {import("@playwright/test").Page} page */
 const siteRows = (page) => page.locator("[data-site-row]");
 
+/**
+ * Activity tiles whose drawn number runs under their "?" button.
+ * @param {import("@playwright/test").Page} page
+ */
+const tipsOverNumbers = (page) =>
+  page.locator("[data-activity]").evaluateAll((tiles) =>
+    tiles
+      .filter((tile) => {
+        const words = document.createRange();
+        words.selectNodeContents(
+          /** @type {Node} */ (tile.querySelector("[data-tile-n]")),
+        );
+        const tip = /** @type {Element} */ (
+          tile.querySelector("[popovertarget]")
+        ).getBoundingClientRect();
+        return [...words.getClientRects()].some(
+          (r) =>
+            r.right > tip.left &&
+            r.left < tip.right &&
+            r.bottom > tip.top &&
+            r.top < tip.bottom,
+        );
+      })
+      .map((tile) => tile.getAttribute("data-activity")),
+  );
+
 test("a manager picks a view on Overview, opens a Site, sees its Overdue Issues and comes back to the same view", async ({
   page,
 }) => {
@@ -86,7 +112,7 @@ test("when Overview can't load, it says why and Retry brings the Sites back", as
   );
 });
 
-test("on a 320px phone, Overview fits without sideways scrolling", async ({
+test("on a 320px phone, Overview fits without sideways scrolling, and at 430px a Site's tile numbers clear their ? buttons", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 640 });
@@ -101,6 +127,10 @@ test("on a 320px phone, Overview fits without sideways scrolling", async ({
     ].map((el) => (el ? el.scrollWidth - el.clientWidth : null)),
   );
   expect(overflow).toEqual([0, 0]);
+  await page.setViewportSize({ width: 430, height: 900 });
+  await page.goto("/insights/sites/s1?period=2026-10");
+  await expect(page.locator("[data-activity]").first()).toBeVisible();
+  expect(await tipsOverNumbers(page)).toEqual([]);
 });
 
 test("a Site's financial year draws the months before its records as no data, not as its busiest months", async ({
@@ -167,6 +197,7 @@ test("at 1280px, Overview column heads keep their spaces and a Site's month labe
       return drawn.filter((d, i) => i && d.left < drawn[i - 1].right).length;
     });
   expect(overlaps).toBe(0);
+  expect(await tipsOverNumbers(page)).toEqual([]);
   // Three 7-day calendars need about 870px; narrower sections must stack them.
   for (const width of [900, 1100]) {
     await page.setViewportSize({ width, height: 900 });

@@ -843,10 +843,15 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  /* The ? sits beside the short number, so labels can use the full width. */
+  /* Only the number keeps clear of the ?, so labels can use the full width. */
   .insights__tile,
   .insights__tile > button[data-tile] {
     padding: 10px;
+  }
+
+  /* "58.1 per 30d" fills a phone tile, so it wraps before the ? instead of under it. */
+  .insights__tile > .insights__tile-n {
+    padding-right: 22px;
   }
 
   .insights__tile:has(> button[data-tile]) {
