@@ -1,4 +1,4 @@
-import { test } from "vitest";
+import { test, vi } from "vitest";
 import assert from "node:assert/strict";
 import {
   $,
@@ -971,14 +971,16 @@ test("Load more adds the next Issues under the ones shown", async () => {
 });
 
 test("a Site that can't load before the server names a period still steps from this month", async () => {
+  // 10 pm on 31 October in San Francisco is already November in UTC.
+  vi.useFakeTimers({
+    now: Date.parse("2026-11-01T05:00:00Z"),
+    toFake: ["Date"],
+  });
   await mountAdmin("/insights/sites/s1", {
     insights: true,
     setup: (a) => a.fail("GET", /^reporting\/sites\//, 502, "reporting_failed"),
   });
-  const month = new Date().toLocaleDateString("en-CA", {
-    timeZone: "America/Los_Angeles",
-  });
-  const shown = intervalOf({ kind: "month", month: month.slice(0, 7) });
+  const shown = intervalOf({ kind: "month", month: "2026-10" });
   assert.equal(text("[data-period-button]"), periodLabel(shown));
   assert.equal(
     /** @type {HTMLButtonElement} */ ($('[data-period-step="-1"]')).disabled,
