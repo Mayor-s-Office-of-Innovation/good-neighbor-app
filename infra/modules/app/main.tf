@@ -1650,13 +1650,13 @@ resource "aws_wafv2_web_acl" "web" {
             key   = "awswaf:managed:aws:core-rule-set:SizeRestrictions_QueryString"
           }
         }
+        # Exempts only a raw, plain reporting GET path, as decoding could map another route into it; negated to fit provider nesting.
         statement {
-          not_statement {
+          or_statement {
             statement {
-              and_statement {
+              not_statement {
                 statement {
                   byte_match_statement {
-                    # Decoded, then normalized, so /admin/v1/reporting/%2e%2e/ can't reach another route unchecked.
                     positional_constraint = "STARTS_WITH"
                     search_string         = "/admin/v1/reporting/"
                     field_to_match {
@@ -1664,14 +1664,14 @@ resource "aws_wafv2_web_acl" "web" {
                     }
                     text_transformation {
                       priority = 0
-                      type     = "URL_DECODE"
-                    }
-                    text_transformation {
-                      priority = 1
-                      type     = "NORMALIZE_PATH"
+                      type     = "NONE"
                     }
                   }
                 }
+              }
+            }
+            statement {
+              not_statement {
                 statement {
                   byte_match_statement {
                     positional_constraint = "EXACTLY"
@@ -1684,6 +1684,32 @@ resource "aws_wafv2_web_acl" "web" {
                       type     = "NONE"
                     }
                   }
+                }
+              }
+            }
+            statement {
+              byte_match_statement {
+                positional_constraint = "CONTAINS"
+                search_string         = "%"
+                field_to_match {
+                  uri_path {}
+                }
+                text_transformation {
+                  priority = 0
+                  type     = "NONE"
+                }
+              }
+            }
+            statement {
+              byte_match_statement {
+                positional_constraint = "CONTAINS"
+                search_string         = ".."
+                field_to_match {
+                  uri_path {}
+                }
+                text_transformation {
+                  priority = 0
+                  type     = "NONE"
                 }
               }
             }
