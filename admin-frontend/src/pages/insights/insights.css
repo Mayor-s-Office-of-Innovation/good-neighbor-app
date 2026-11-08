@@ -797,14 +797,15 @@
   align-items: center;
 }
 
-.insights__stale {
+/* Its own class: insights__stale dims a loading region's children. */
+.insights__stale-banner {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 16px;
 }
 
-.insights__stale p {
+.insights__stale-banner p {
   margin: 0;
 }
 

@@ -403,7 +403,7 @@ export function moreView({ more, rows, reply }) {
 function bannersView({ notice, stale }) {
   return `${
     stale
-      ? `<div class="insights__quality insights__stale" data-insights-stale><p>${escapeHtml(stale)}</p><button type="button" class="btn-secondary" id="insights-retry">${escapeHtml(t("common.retry"))}</button></div>`
+      ? `<div class="insights__quality insights__stale-banner" data-insights-stale><p>${escapeHtml(stale)}</p><button type="button" class="btn-secondary" id="insights-retry">${escapeHtml(t("common.retry"))}</button></div>`
       : ""
   }${notice ? `<p class="muted" data-insights-notice>${escapeHtml(notice)}</p>` : ""}`;
 }

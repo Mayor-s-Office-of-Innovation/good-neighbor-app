@@ -441,6 +441,11 @@ test("a failed reload keeps the last rows under the out-of-date banner, and Try 
   api.fail("GET", /^reporting\/issues\?.*severityBand=minor/, 503);
   await fill('wa-select[data-filter="severityBand"]', "minor");
   assert.equal(text("[data-insights-stale] p"), t("admin.insights.raw.stale"));
+  // insights__stale dims a loading region's children; the banner must stay readable.
+  assert.equal(
+    $("[data-insights-stale]").closest(".insights__stale") === null,
+    true,
+  );
   assert.deepEqual(recordLinks(), ["s1|t2", "s1|t1", "s4|t9"]);
   // Old rows can't be exported as if they answered the new filters.
   assert.equal($("#insights-export").getAttribute("aria-disabled"), "true");
