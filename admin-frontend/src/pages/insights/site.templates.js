@@ -89,6 +89,7 @@ export function sitePeriodView({ label, range }) {
     <button type="button" class="btn-secondary" id="insights-period-toggle" popovertarget="insights-period-pop" aria-haspopup="dialog" style="anchor-name:--insights-period-pop"><span data-period-button>${escapeHtml(label)}</span> <wa-icon name="chevron-down" aria-hidden="true"></wa-icon></button>
     <div id="insights-period-pop" popover class="insights__ppop" role="dialog" aria-label="${escapeHtml(t("admin.insights.period.choose"))}" style="position-anchor:--insights-period-pop"><div data-period-body></div></div>
     <span class="muted" data-period-range>${escapeHtml(range)}</span>
+    <span data-period-status></span>
   </div>`;
 }
 

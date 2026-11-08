@@ -1080,3 +1080,24 @@ test("a Site contact with only a name on the record shows the name", async () =>
   assert.equal(text('[data-contact="site"] strong'), "Sam Lee");
   assert.ok(missing('[data-contact="site"] [data-tone]'));
 });
+
+test("a running period is marked incomplete beside the Site's period range, as on Overview", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-11", {
+    insights: true,
+    setup: siteReply((json) => {
+      json.meta.interval.observedTo = json.meta.asOf;
+    }),
+  });
+  // Beside the range, not only inside the closed period popover.
+  assert.equal(
+    text("[data-period-status] [data-period-incomplete]"),
+    t("admin.insights.period.incomplete", {
+      time: formatInstant("2026-11-04T18:00:00.000Z"),
+    }),
+  );
+});
+
+test("a finished period has no incomplete mark on the Site page", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
+  assert.ok(missing("[data-period-status] [data-period-incomplete]"));
+});

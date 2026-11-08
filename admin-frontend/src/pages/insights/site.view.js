@@ -8,6 +8,7 @@ import { reportSignInError, sessionOf } from "./insights-session.js";
 import { LatestLoad, superseded } from "./latest-load.js";
 import {
   drawPeriodControl,
+  incompletePill,
   failedView,
   failureText,
   freshnessView,
@@ -434,6 +435,14 @@ class InsightsSite extends HTMLElement {
     if (label) label.textContent = periodName(interval);
     const range = this.querySelector("[data-period-range]");
     if (range) range.textContent = interval ? rangeLabel(interval) : "";
+    const status = this.querySelector("[data-period-status]");
+    // Only a reply's own interval knows how far its data runs.
+    const replied = !!interval && interval === this.reply?.meta.interval;
+    if (status)
+      status.innerHTML = incompletePill(
+        interval,
+        replied ? (interval.observedTo ?? null) : null,
+      );
     drawPeriodControl(this, this.periodBody());
   }
 

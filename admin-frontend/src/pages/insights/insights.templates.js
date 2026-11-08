@@ -213,6 +213,21 @@ const atEdge = (interval, step) => {
 };
 
 /**
+ * Overview's period control and the Site page's range both mark a running period.
+ * @param {Interval | null} interval
+ * @param {string | null} dataTime the reply's data time; the browser clock would claim data no snapshot holds
+ */
+export function incompletePill(interval, dataTime) {
+  return interval?.incomplete && dataTime
+    ? `<span class="insights__pill" data-period-incomplete>${escapeHtml(
+        t("admin.insights.period.incomplete", {
+          time: formatInstant(dataTime),
+        }),
+      )}</span>`
+    : "";
+}
+
+/**
  * Custom waits for "Show period", so half-typed dates don't load. With no
  * interval yet, only Custom works: the server hasn't said which month it chose.
  * @param {{ interval: Interval | null, kind: string, draft: { from: string, to: string }, error: string, dataTime?: string | null }} view
@@ -235,14 +250,7 @@ export function periodView({ interval, kind, draft, error, dataTime = null }) {
           <span class="insights__period-label" data-period-label>${escapeHtml(periodName(interval))}</span>
           <button type="button" class="btn-icon" data-period-step="1" aria-label="${escapeHtml(t("admin.insights.period.next"))}" ${!interval || interval.incomplete || atEdge(interval, 1) ? "disabled" : ""}><wa-icon name="chevron-right" aria-hidden="true"></wa-icon></button>
         </div>`;
-  const pill =
-    interval?.incomplete && dataTime
-      ? `<span class="insights__pill" data-period-incomplete>${escapeHtml(
-          t("admin.insights.period.incomplete", {
-            time: formatInstant(dataTime),
-          }),
-        )}</span>`
-      : "";
+  const pill = incompletePill(interval, dataTime);
   return `<div class="insights__period" role="group" aria-label="${escapeHtml(t("admin.insights.period.label"))}">
     ${kinds}${body}${pill}
   </div>${error ? `<p class="error" role="alert" data-period-error>${escapeHtml(t(error))}</p>` : ""}`;
