@@ -85,6 +85,7 @@ const comparison = {
   priorDays: 30,
   current: OCTOBER,
   prior: SEPTEMBER,
+  sameDaysAsTotals: true,
   priorCoverage: "full",
   change: Object.fromEntries(
     Object.entries(metrics).map(([k, v]) => [
@@ -187,6 +188,7 @@ const bucket = (values) => ({
   end: "2026-10-08",
   partial: false,
   noData: false,
+  partialCoverage: false,
   ...values,
 });
 

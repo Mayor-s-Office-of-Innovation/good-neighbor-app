@@ -150,9 +150,13 @@ function sumDays(snap, range, siteIds) {
  */
 function comparison(snap, interval, siteIds) {
   const cmp = comparisonFor(interval, snap.manifest.evaluatedAt);
-  if (!cmp.prior) return { ...cmp, priorCoverage: null, change: null };
+  // A running period's totals count today, which the comparison can't split, so say so.
+  const sameDaysAsTotals = cmp.basis === "complete_period";
+  if (!cmp.prior)
+    return { ...cmp, sameDaysAsTotals, priorCoverage: null, change: null };
   return {
     ...cmp,
+    sameDaysAsTotals,
     priorCoverage: priorCoverage(snap, cmp.prior),
     change: compareTotals(
       sumDays(snap, cmp.current, siteIds).total,
@@ -686,6 +690,10 @@ function buckets(snap, interval, granularity, ids) {
       partial: end > today,
       // Before the first record, zero would claim a quiet time, not no data.
       noData: snap.coverageStart === null || end <= snap.coverageStart,
+      partialCoverage:
+        snap.coverageStart !== null &&
+        start < snap.coverageStart &&
+        end > snap.coverageStart,
       ...sumDays(snap, { startDay: start, endDay: end }, ids).total,
     });
     start = end;

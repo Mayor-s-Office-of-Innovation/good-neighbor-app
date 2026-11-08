@@ -198,7 +198,10 @@ describe("overview", () => {
       list: list("sites"),
       now: NOW,
     });
-    expect(res.comparison.basis).toBe("complete_period");
+    expect(res.comparison).toMatchObject({
+      basis: "complete_period",
+      sameDaysAsTotals: true,
+    });
     expect(res.comparison.change?.completedPerimeterChecks).toEqual({
       current: 4,
       prior: 1,
@@ -213,9 +216,11 @@ describe("overview", () => {
       list: list("sites"),
       now: NOW,
     });
+    // Totals count today; the comparison leaves it out on both sides.
     expect(res.comparison).toMatchObject({
       basis: "elapsed_complete_days",
       days: 3,
+      sameDaysAsTotals: false,
     });
     expect(res.comparison.change?.issuesCreated).toEqual({
       current: 1,
@@ -460,6 +465,25 @@ describe("trends", () => {
     ]);
     expect(res.series.current[0].completedPerimeterChecks).toBe(1);
     expect(res.series.prior[0].start).toBe("2026-09-01");
+  });
+
+  it("flags a week that starts before the first record", () => {
+    const res = trends(snap, {
+      interval: parsePeriodParams(
+        { period: "custom", from: "2026-09-10", to: "2026-10-10" },
+        TEST_EVALUATED_AT,
+      ),
+      scope: {},
+      now: NOW,
+    });
+    expect(
+      res.series.current
+        .slice(0, 2)
+        .map((b) => [b.start, b.noData, b.partialCoverage]),
+    ).toEqual([
+      ["2026-09-10", false, true],
+      ["2026-09-17", false, false],
+    ]);
   });
 
   it("uses months for a year and marks the month still running as partial", () => {
