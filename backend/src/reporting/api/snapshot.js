@@ -241,13 +241,15 @@ export function s3Source({ s3, bucket }) {
 
 // A stale request gets the held snapshot while a newer one loads. Lambda freezes
 // once it replies, which would stall that load, so set refreshWaitMs there.
-/** @param {{ source: SnapshotSource, now?: () => number, refreshMs?: number, refreshWaitMs?: number, wait?: (ms: number) => Promise<unknown>, onError?: (err: unknown) => void }} opts */
+/** @param {{ source: SnapshotSource, now?: () => number, refreshMs?: number, refreshWaitMs?: number, refreshLimitMs?: number, wait?: (ms: number, signal: AbortSignal) => Promise<unknown>, onError?: (err: unknown) => void }} opts */
 export function createSnapshotStore({
   source,
   now = Date.now,
   refreshMs = 5 * 60_000,
   refreshWaitMs = 0,
-  wait = sleep,
+  // A load frozen mid-request may never settle; past this a request starts another.
+  refreshLimitMs = 60_000,
+  wait = (ms, signal) => sleep(ms, undefined, { signal }),
   onError = () => {},
 }) {
   /** @type {Snapshot | null} */
@@ -255,6 +257,7 @@ export function createSnapshotStore({
   let checkedAt = -Infinity;
   /** @type {Promise<Snapshot> | null} */
   let pending = null;
+  let pendingSince = 0;
   // Jobs queued before a swap read the snapshot they were asked against.
   /** @type {Promise<Snapshot> | null} */
   let older = null;
@@ -303,15 +306,27 @@ export function createSnapshotStore({
     /** @returns {Promise<Snapshot>} */
     current() {
       if (held && now() - checkedAt <= refreshMs) return Promise.resolve(held);
-      pending ??= refresh().finally(() => {
-        pending = null;
-      });
+      if (pending && now() - pendingSince > refreshLimitMs) pending = null;
+      if (!pending) {
+        const started = refresh().finally(() => {
+          if (pending === started) pending = null;
+        });
+        pending = started;
+        pendingSince = now();
+      }
       if (!held) return pending;
       const stale = held;
       // Rejects only when latest.json is gone; a caller answering stale can't see that.
       pending.catch(() => {});
       if (!refreshWaitMs) return Promise.resolve(stale);
-      return Promise.race([pending, wait(refreshWaitMs).then(() => stale)]);
+      // Stops the timer once the refresh settles, so it doesn't outlive the request.
+      const timer = new AbortController();
+      const stop = () => timer.abort();
+      pending.then(stop, stop);
+      return Promise.race([
+        pending,
+        wait(refreshWaitMs, timer.signal).then(() => stale),
+      ]);
     },
     /**
      * @param {string} prefix

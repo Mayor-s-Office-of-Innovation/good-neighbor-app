@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { setImmediate } from "node:timers/promises";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { CONTRACT_VERSION } from "../contract.js";
@@ -259,7 +260,7 @@ describe("createSnapshotStore", () => {
     now = 1001;
     expect((await store.current()).prefix).toBe("p1");
     // Lets the refresh finish with nobody waiting on it, which must not go unhandled.
-    await new Promise((resolve) => setImmediate(resolve));
+    await setImmediate();
     await expect(store.current()).rejects.toMatchObject({
       code: "snapshot_unavailable",
     });
@@ -300,6 +301,51 @@ describe("createSnapshotStore", () => {
     now = 1001;
     expect((await store.current()).prefix).toBe("p1");
     expect(waits).toEqual([100]);
+  });
+
+  it("starts a new refresh once one has hung past the limit", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+      refreshLimitMs: 5000,
+    });
+    await store.current();
+    const latest = source.latest;
+    source.latest = () => new Promise(() => {});
+    now = 1001;
+    await store.current();
+    source.latest = latest;
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    now = 6002;
+    await store.current();
+    await vi.waitFor(async () =>
+      expect((await store.current()).prefix).toBe("p2"),
+    );
+  });
+
+  it("stops the wait timer once the refresh wins", async () => {
+    const source = fakeSource();
+    let now = 0;
+    /** @type {AbortSignal[]} */
+    const signals = [];
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+      refreshWaitMs: 100,
+      wait: (_ms, signal) => {
+        signals.push(signal);
+        return new Promise(() => {});
+      },
+    });
+    await store.current();
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    now = 1001;
+    expect((await store.current()).prefix).toBe("p2");
+    expect(signals.map((s) => s.aborted)).toEqual([true]);
   });
 
   it("reports a failed refresh while it keeps serving", async () => {

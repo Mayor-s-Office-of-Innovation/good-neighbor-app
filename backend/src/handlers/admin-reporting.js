@@ -52,6 +52,11 @@ const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,128}$/;
 // How long a request waits on a snapshot refresh before it answers from the old
 // one, well inside the gateway's 29 s.
 const LAMBDA_REFRESH_WAIT_MS = 3000;
+// A request a frozen Lambda left hanging then fails, so the next refresh can retry.
+export const S3_TIMEOUTS = Object.freeze({
+  connectionTimeout: 5_000,
+  socketTimeout: 30_000,
+});
 const EXPORT_DATASETS = ["issues", "checks", "sites"];
 // Params a request may carry; anything else is dropped before it's stored.
 const PERIOD_PARAMS = [
@@ -483,9 +488,10 @@ export function reportingHandlers(env = process.env) {
   const jobsReady =
     Boolean(env.INSIGHTS_JOBS_BUCKET) &&
     Boolean(env.INSIGHTS_JOBS_QUEUE_URL || !env.AWS_LAMBDA_FUNCTION_NAME);
-  const s3 = new S3Client(
-    env.AWS_ENDPOINT_URL_S3 ? { forcePathStyle: true } : {},
-  );
+  const s3 = new S3Client({
+    ...(env.AWS_ENDPOINT_URL_S3 ? { forcePathStyle: true } : {}),
+    requestHandler: S3_TIMEOUTS,
+  });
   const presignClient = env.S3_PUBLIC_PRESIGN_ENDPOINT
     ? new S3Client({
         endpoint: env.S3_PUBLIC_PRESIGN_ENDPOINT,
@@ -503,10 +509,17 @@ export function reportingHandlers(env = process.env) {
         queueUrl: env.INSIGHTS_JOBS_QUEUE_URL,
       })
     : inProcessStarter(() => handlers.runJob);
+  // The emulator E2E sets 0, so each spec sees the lake it has just set up.
+  const refreshMs = env.INSIGHTS_REFRESH_MS
+    ? Number(env.INSIGHTS_REFRESH_MS)
+    : NaN;
+  const freshOnly = Number.isFinite(refreshMs);
   handlers = createReportingHandlers({
     snapshots: createSnapshotStore({
       source,
-      refreshWaitMs: env.AWS_LAMBDA_FUNCTION_NAME ? LAMBDA_REFRESH_WAIT_MS : 0,
+      refreshMs: freshOnly ? refreshMs : undefined,
+      refreshWaitMs:
+        env.AWS_LAMBDA_FUNCTION_NAME || freshOnly ? LAMBDA_REFRESH_WAIT_MS : 0,
       onError: (err) =>
         logServerError("admin-reporting", /** @type {Error} */ (err), {
           extra: { step: "snapshot-refresh" },

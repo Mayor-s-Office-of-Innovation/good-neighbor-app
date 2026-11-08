@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
@@ -338,6 +338,33 @@ describe("reads", () => {
   });
 });
 
+/**
+ * The options reportingHandlers gives its snapshot store, for checking env wiring.
+ * @param {NodeJS.ProcessEnv} env
+ */
+async function snapshotOptions(env) {
+  vi.resetModules();
+  /** @type {any} */
+  let options;
+  vi.doMock("../reporting/api/snapshot.js", async (importOriginal) => {
+    const actual = /** @type {any} */ (await importOriginal());
+    return {
+      ...actual,
+      createSnapshotStore: (/** @type {any} */ opts) => {
+        options = opts;
+        return actual.createSnapshotStore(opts);
+      },
+    };
+  });
+  try {
+    const fresh = await import("./admin-reporting.js");
+    fresh.reportingHandlers({ INSIGHTS_PROJECTION_DIR: "/nowhere", ...env });
+    return options;
+  } finally {
+    vi.doUnmock("../reporting/api/snapshot.js");
+  }
+}
+
 describe("export and report jobs", () => {
   const key = { "idempotency-key": "click-0001" };
 
@@ -665,45 +692,48 @@ describe("export and report jobs", () => {
 
   it.each([
     [
-      "waits for a newer snapshot in a Lambda, which freezes after replying",
+      "waits on a snapshot refresh in a Lambda, which freezes after replying",
       "analytics-query",
-      "rebuilt",
+      3000,
     ],
-    [
-      "answers at once locally, where the refresh carries on",
-      undefined,
-      "first",
-    ],
-  ])("%s", async (_, lambda, shown) => {
-    const dir = mkdtempSync(join(tmpdir(), "insights-handler-"));
-    const conn = await (await DuckDBInstance.create(":memory:")).connect();
-    let clock = NOW;
-    const realNow = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    ["answers at once locally, where the refresh carries on", undefined, 0],
+  ])("%s", async (_, lambda, waitMs) => {
+    const options = await snapshotOptions({ AWS_LAMBDA_FUNCTION_NAME: lambda });
+    expect(options.refreshWaitMs).toBe(waitMs);
+  });
+
+  it.each([
+    ["rechecks latest.json as often as INSIGHTS_REFRESH_MS says", "0", 0],
+    ["keeps the store's own interval without it", undefined, undefined],
+    ["ignores a value that isn't a number", "soon", undefined],
+  ])("%s", async (_, setting, refreshMs) => {
+    const options = await snapshotOptions({ INSIGHTS_REFRESH_MS: setting });
+    expect(options.refreshMs).toBe(refreshMs);
+    // A request that asked for fresh data waits for it, rather than answering stale once.
+    expect(options.refreshWaitMs).toBe(refreshMs === undefined ? 0 : 3000);
+  });
+
+  it("gives up on a hung S3 request, so a frozen refresh can't stall the snapshot", async () => {
+    vi.resetModules();
+    const { S3Client } = await import("@aws-sdk/client-s3");
+    /** @type {any[]} */
+    const clients = [];
+    vi.spyOn(S3Client.prototype, "send").mockImplementation(
+      /** @this {any} */
+      async function () {
+        clients.push(this);
+        throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+      },
+    );
     try {
-      await writeSyntheticProjection(conn, dir);
-      const rewriteId = (/** @type {string} */ snapshotId) => {
-        const path = join(dir, "manifest.json");
-        const manifest = JSON.parse(readFileSync(path, "utf8"));
-        writeFileSync(path, JSON.stringify({ ...manifest, snapshotId }));
-      };
-      rewriteId("first");
-      vi.resetModules();
       const fresh = await import("./admin-reporting.js");
-      const h = fresh.reportingHandlers({
-        INSIGHTS_PROJECTION_DIR: dir,
-        AWS_LAMBDA_FUNCTION_NAME: lambda,
-        // Not read here; a Lambda turns jobs off without them.
-        INSIGHTS_JOBS_BUCKET: "j",
-        INSIGHTS_JOBS_QUEUE_URL: "https://sqs.example.org/q",
-      });
+      const h = fresh.reportingHandlers({ LAKE_BUCKET: "lake" });
       await h.getOverview(event());
-      rewriteId("rebuilt");
-      clock += 6 * 60_000;
-      expect(json(await h.getOverview(event())).meta.snapshotId).toBe(shown);
+      const config = await clients[0].config.requestHandler.configProvider;
+      expect(config).toMatchObject(fresh.S3_TIMEOUTS);
+      expect(fresh.S3_TIMEOUTS.socketTimeout).toBeGreaterThan(0);
     } finally {
-      realNow.mockRestore();
-      conn.closeSync();
-      rmSync(dir, { recursive: true, force: true });
+      vi.restoreAllMocks();
     }
   });
 
