@@ -387,7 +387,8 @@ function responseTimeCell(issue) {
 }
 
 /**
- * Late names the Issue's own allowed time, since severities differ.
+ * Overdue and late name the Issue's own allowed time, since severities differ,
+ * and use the tiles' words, so one state has one name.
  * @param {Reply} issue
  */
 function onTimeCell(issue) {
@@ -402,8 +403,8 @@ function onTimeCell(issue) {
   if (state === "late" || state === "overdue") {
     const expected = between(issue.createdAt, issue.deadlineAt);
     const word = expected
-      ? t("admin.insights.siteIssues.lateDueWithin", { expected })
-      : t("admin.insights.siteIssues.late");
+      ? t(`admin.insights.siteIssues.${state}DueWithin`, { expected })
+      : t(`admin.insights.response.${state}`);
     return `<span class="insights__warn" data-tone="warn">${escapeHtml(word)}</span>`;
   }
   // No response record, or a state the server adds later.

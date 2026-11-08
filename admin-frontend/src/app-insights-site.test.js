@@ -330,11 +330,16 @@ test("On Time? names the expected response time for a late Issue", async () => {
   );
 });
 
-test("On Time? says Late for an Issue still unanswered past its deadline", async () => {
+test("On Time? says Overdue, as its tile does, for an Issue still unanswered past its deadline", async () => {
   await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
   assert.equal(
     cell("response", "t2", "on-time"),
-    t("admin.insights.siteIssues.lateDueWithin", { expected: days(3) }),
+    t("admin.insights.siteIssues.overdueDueWithin", { expected: days(3) }),
+  );
+  assert.ok(
+    cell("response", "t2", "on-time").startsWith(
+      t("admin.insights.response.overdue"),
+    ),
   );
 });
 
