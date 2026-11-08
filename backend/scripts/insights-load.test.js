@@ -118,12 +118,21 @@ describe("quantile", () => {
 });
 
 describe("runLoad", () => {
-  /** @param {number} copies */
-  const run = async (copies) => {
+  /**
+   * @param {number} copies
+   * @param {{ maxExportRows?: number, table?: (data: any) => void }} [opts]
+   */
+  const run = async (copies, opts = {}) => {
     vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.spyOn(console, "table").mockImplementation(() => {});
+    vi.spyOn(console, "table").mockImplementation(opts.table ?? (() => {}));
     try {
-      return await runLoad({ dataDir, copies, rounds: 1, parallel: 2 });
+      return await runLoad({
+        dataDir,
+        copies,
+        rounds: 1,
+        parallel: 2,
+        maxExportRows: opts.maxExportRows,
+      });
     } finally {
       vi.restoreAllMocks();
     }
@@ -136,6 +145,23 @@ describe("runLoad", () => {
     expect(sites).toBe(3);
     expect(Object.keys(timings)).toHaveLength(11);
     for (const t of Object.values(timings)) expect(t.bytes).toBeGreaterThan(0);
+  });
+
+  it("still times the other endpoints when one fails, and names it", async () => {
+    writeAnswers();
+    /** @type {any} */
+    let printed;
+    const { timings, problems } = await run(1, {
+      maxExportRows: 0,
+      table: (data) => {
+        printed = data;
+      },
+    });
+    const label = "export request, 12 months of Issues";
+    expect(timings[label].error).toMatch(/^413 /);
+    expect(Object.keys(printed)).toHaveLength(11);
+    expect(timings["overview, month"].bytes).toBeGreaterThan(0);
+    expect(problems).toContainEqual(expect.stringContaining(label));
   });
 
   it("names a total that differs from the generator's answer", async () => {

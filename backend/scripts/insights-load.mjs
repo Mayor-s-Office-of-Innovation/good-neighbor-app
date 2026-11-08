@@ -118,11 +118,19 @@ function ok(res, label) {
   return res;
 }
 
+/** @typedef {{ p50: number, max: number, bytes: number, error?: string }} Timing */
+
 /**
- * @param {{ dataDir: string, copies: number, rounds: number, parallel: number }} opts
- * @returns {Promise<{ sites: number, timings: Record<string, { p50: number, max: number, bytes: number }>, problems: string[] }>}
+ * @param {{ dataDir: string, copies: number, rounds: number, parallel: number, maxExportRows?: number }} opts
+ * @returns {Promise<{ sites: number, timings: Record<string, Timing>, problems: string[] }>}
  */
-export async function runLoad({ dataDir, copies, rounds, parallel }) {
+export async function runLoad({
+  dataDir,
+  copies,
+  rounds,
+  parallel,
+  maxExportRows,
+}) {
   const source = dirSource(join(dataDir, "projection"));
   const loadStarted = performance.now();
   const latest = await source.latest();
@@ -149,6 +157,7 @@ export async function runLoad({ dataDir, copies, rounds, parallel }) {
     starter: async (ref) => {
       queued.push(ref);
     },
+    maxExportRows,
   });
 
   let requestCount = 0;
@@ -237,32 +246,45 @@ export async function runLoad({ dataDir, copies, rounds, parallel }) {
   console.log(
     `[insights-load] heap after load: ${(process.memoryUsage().heapUsed / 1e6).toFixed(0)} MB`,
   );
-  /** @type {Record<string, { p50: number, max: number, bytes: number }>} */
+  /** @type {Record<string, Timing>} */
   const timings = {};
+  /** @type {string[]} */
+  const problems = [];
   for (const [label, call] of calls) {
-    const first = ok(await call(), label);
-    /** @type {number[]} */
-    const times = [];
-    for (let round = 0; round < rounds; round += 1) {
-      const started = performance.now();
-      await Promise.all(Array.from({ length: parallel }, call));
-      times.push((performance.now() - started) / parallel);
+    // One failing endpoint, such as a 413 at many copies, mustn't lose the other timings.
+    try {
+      const first = await call();
+      if (first.statusCode >= 300)
+        throw new Error(`${first.statusCode} ${first.body}`);
+      /** @type {number[]} */
+      const times = [];
+      for (let round = 0; round < rounds; round += 1) {
+        const started = performance.now();
+        await Promise.all(Array.from({ length: parallel }, call));
+        times.push((performance.now() - started) / parallel);
+      }
+      timings[label] = {
+        p50: quantile(times, 0.5),
+        max: Math.max(...times),
+        bytes: Buffer.byteLength(first.body),
+      };
+    } catch (e) {
+      const error = /** @type {Error} */ (e).message;
+      timings[label] = { p50: NaN, max: NaN, bytes: 0, error };
+      problems.push(`${label}: ${error}`);
     }
-    timings[label] = {
-      p50: quantile(times, 0.5),
-      max: Math.max(...times),
-      bytes: Buffer.byteLength(first.body),
-    };
   }
   console.table(
     Object.fromEntries(
       Object.entries(timings).map(([k, t]) => [
         k,
-        {
-          "median ms/call": t.p50.toFixed(1),
-          "slowest ms/call": t.max.toFixed(1),
-          "reply kB": (t.bytes / 1024).toFixed(1),
-        },
+        t.error
+          ? { "median ms/call": "failed", error: t.error.slice(0, 60) }
+          : {
+              "median ms/call": t.p50.toFixed(1),
+              "slowest ms/call": t.max.toFixed(1),
+              "reply kB": (t.bytes / 1024).toFixed(1),
+            },
       ]),
     ),
   );
@@ -278,28 +300,34 @@ export async function runLoad({ dataDir, copies, rounds, parallel }) {
     await h.listIssues(event({ queryStringParameters: year })),
     "year issues",
   );
-  const exportJob = body(
-    await h.postExport(
-      event({ body: JSON.stringify({ dataset: "issues", ...year }) }),
-    ),
-    "year export",
-  ).job;
-  const exportStarted = performance.now();
-  await h.runJob(queued.at(-1) ?? { ownerKey: "", jobId: "" });
-  const exportMs = performance.now() - exportStarted;
-  const done = body(
-    await h.getJob(event({ pathParameters: { jobId: exportJob.jobId } })),
-    "export job",
-  ).job;
-  const problems = [];
   if (yearOverview.totals.activity.issuesCreated !== yearIssues.total)
     problems.push(
       `Overview counts ${yearOverview.totals.activity.issuesCreated} Issues, the list ${yearIssues.total}`,
     );
-  if (done.state !== "succeeded" || done.result.rows !== yearIssues.total)
-    problems.push(
-      `export holds ${done.result?.rows} rows, the list ${yearIssues.total}`,
-    );
+  /** @type {any} */
+  let done = null;
+  let exportMs = 0;
+  try {
+    const exportJob = body(
+      await h.postExport(
+        event({ body: JSON.stringify({ dataset: "issues", ...year }) }),
+      ),
+      "year export",
+    ).job;
+    const exportStarted = performance.now();
+    await h.runJob(queued.at(-1) ?? { ownerKey: "", jobId: "" });
+    exportMs = performance.now() - exportStarted;
+    done = body(
+      await h.getJob(event({ pathParameters: { jobId: exportJob.jobId } })),
+      "export job",
+    ).job;
+    if (done.state !== "succeeded" || done.result.rows !== yearIssues.total)
+      problems.push(
+        `export holds ${done.result?.rows} rows, the list ${yearIssues.total}`,
+      );
+  } catch (e) {
+    problems.push(/** @type {Error} */ (e).message);
+  }
   if (copies === 1) {
     // The generator's own answers, not the projection's sums of them.
     const want = answerTotals(
@@ -333,9 +361,10 @@ export async function runLoad({ dataDir, copies, rounds, parallel }) {
       `[insights-load] whole year through Overview: ${matched} of ${metrics.length} totals match the generator's answers`,
     );
   }
-  console.log(
-    `[insights-load] export job: ${done.result?.rows} rows, ${((done.result?.bytes ?? 0) / 1e6).toFixed(1)} MB, built in ${exportMs.toFixed(0)} ms`,
-  );
+  if (done)
+    console.log(
+      `[insights-load] export job: ${done.result?.rows} rows, ${((done.result?.bytes ?? 0) / 1e6).toFixed(1)} MB, built in ${exportMs.toFixed(0)} ms`,
+    );
   return { sites: tables.sites.length, timings, problems };
 }
 
