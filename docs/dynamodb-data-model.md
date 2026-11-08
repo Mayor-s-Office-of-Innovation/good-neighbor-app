@@ -687,11 +687,11 @@ a score, so there is nothing to migrate.
   `complete`. They let us report how often staff use text instead of photos.
 - **Regularity uses each Site's own terms.** Insights and the manager reports use
   effective-dated terms and Pacific days (AP27), with a default of three Checks a day only
-  when cadence is unconfigured. The lake reports no longer compute it. There is **no grace period** for device outages. The duty is per day, so
-  compliance is per day and yes-or-no: a day is **compliant if it had the Checks it owed** (3 by default).
-  Compliance over a window is `compliant_days / total_days`. A flat ratio of
-  `completed ÷ (3 × days)` was rejected. It would let extra checks on one day hide a
-  missed day.
+  when cadence is unconfigured. The lake reports no longer compute it. There is **no grace period** for device outages.
+  Insights flags **Few Checks** when a Site's average Checks per owed day, rounded to one
+  decimal, is under the average it owed on those days. Days it owed nothing don't count.
+  It does not judge each day met or missed, so extra Checks on one day can cover a
+  short day in the same window.
 
 **Easy to change later.** These defaults are simple on purpose. Counters hold raw
 components, never a baked score. The formula lives in one place per tier. Test data is
