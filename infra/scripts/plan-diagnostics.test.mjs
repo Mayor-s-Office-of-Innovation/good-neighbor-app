@@ -10,9 +10,9 @@ const PRIVATE_LINE =
 
 /**
  * @param {string[]} lines what `terraform init -json` or `terraform plan -json` wrote to stdout and stderr
- * @param {string} [status] the command's exit status, as run-filtered.sh passes it
+ * @param {string} [status] the command's exit status, as run-filtered.sh passes it; most cases here fail
  */
-function diagnostics(lines, status = "0") {
+function diagnostics(lines, status = "1") {
   const result = spawnSync("jq", ["-n", "-R", "-r", "--arg", "status", status, "-f", filter], {
     input: lines.join("\n"),
     encoding: "utf8",
@@ -190,6 +190,65 @@ test("reads the error class from a plain-text Error: line, such as an init backe
   assert.deepEqual(out, ["error\t-\t-\tAccessDenied", "warning\t-\t-\t-", PRIVATE_LINE]);
 });
 
+test("reads the error class from the detail lines of a plain-text error, joined across wrapped lines", () => {
+  const out = diagnostics([
+    "╷",
+    "│ Error: Failed to get existing workspaces",
+    "│ ",
+    "│   with terraform.backend \"s3\",",
+    "│   on main.tf line 2, in terraform:",
+    `│    2:   backend "s3" { bucket = "${SECRET}" }`,
+    "│ ",
+    `│ Unable to list objects in S3 bucket "${SECRET}" with prefix "env:/":`,
+    "│ operation error S3: ListObjectsV2, https response error StatusCode: 403,",
+    "│ RequestID: 1A2B3C, HostID: c3d4e5, api error AccessDenied: Access Denied",
+    "│ ",
+    `│ Error: ${SECRET}`,
+    "│ ",
+    "│ operation error STS: GetCallerIdentity, https response error StatusCode:",
+    `│ 403, RequestID: 9f8e, api error ExpiredToken: ${SECRET}`,
+    "╵",
+    `│ ${SECRET} api error Forbidden: x`,
+    "Error: Unreadable",
+    "",
+    "operation error STS: GetCallerIdentity, https response error StatusCode: 403, RequestID: 9f8e, api error ExpiredToken: x",
+  ]);
+  assert.deepEqual(out, ["error\t-\t-\tAccessDenied", "error\t-\t-\tExpiredToken", "error\t-\t-\t-", PRIVATE_LINE]);
+  assert.ok(!out.join("\n").includes(SECRET));
+});
+
+test("shows the hint only when the step fails, so a green init after a retry has none", () => {
+  const out = diagnostics(
+    [
+      `│ Error: Failed to query available provider packages: ${SECRET}`,
+      "Terraform initialization failed; retrying in 10 seconds (attempt 1/3).",
+      JSON.stringify({ type: "log", "@message": "Installed provider version: hashicorp/aws v6.71.0 (signed by HashiCorp)" }),
+      diagnosticLine({ severity: "warning", summary: SECRET }),
+    ],
+    "0",
+  );
+  assert.deepEqual(out, [
+    "error\t-\t-\t-",
+    "Terraform initialization failed; retrying in 10 seconds (attempt 1/3).",
+    "Provider: hashicorp/aws v6.71.0",
+    "warning\t-\t-\t-",
+  ]);
+});
+
+test("prints a pre-release provider version", () => {
+  /** @param {string} message */
+  const log = (message) => JSON.stringify({ type: "log", "@message": message });
+  const out = diagnostics(
+    [
+      log("Installed provider version: hashicorp/aws v6.0.0-beta1 (signed by HashiCorp)"),
+      log("hashicorp/random v3.7.0-rc.2: Using previously-installed provider version"),
+      log(`Installed provider version: hashicorp/null v3.2.3-${SECRET}!`),
+    ],
+    "0",
+  );
+  assert.deepEqual(out, ["Provider: hashicorp/aws v6.0.0-beta1", "Provider: hashicorp/random v3.7.0-rc.2"]);
+});
+
 test("reads the error class from an init -json backend diagnostic", () => {
   const out = diagnostics(
     [
@@ -224,7 +283,7 @@ test("prints installed provider versions and lock file changes from a successful
     ui("init_output", `${SECRET}`, "output_init_success_cli_message"),
     JSON.stringify({ type: "log", "@message": { text: SECRET } }),
     JSON.stringify({ type: "init_output", "@message": SECRET, message_code: { code: "lock_info" } }),
-  ]);
+  ], "0");
   assert.deepEqual(out, [
     "Provider: hashicorp/aws v6.71.0",
     "Provider: hashicorp/archive v2.7.1",
@@ -269,6 +328,6 @@ test("drops planned changes and other messages, which carry attribute values", (
     `│ Value was "${SECRET}" here`,
     "not json {",
     "42",
-  ]);
+  ], "0");
   assert.deepEqual(out, []);
 });

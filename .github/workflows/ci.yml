@@ -420,7 +420,7 @@ jobs:
 
       - name: Initialize app module tests without backend
         working-directory: infra/modules/app
-        run: bash "$GITHUB_WORKSPACE/infra/scripts/tf-init-retry.sh" -backend=false
+        run: bash "$GITHUB_WORKSPACE/infra/scripts/tf-init-retry.sh"
 
       - name: Test Insights infrastructure
         working-directory: infra/modules/app
@@ -428,7 +428,7 @@ jobs:
 
       - name: Initialize production backend bootstrap without backend
         working-directory: infra/bootstrap/prod-state
-        run: bash "$GITHUB_WORKSPACE/infra/scripts/tf-init-retry.sh" -backend=false
+        run: bash "$GITHUB_WORKSPACE/infra/scripts/tf-init-retry.sh"
 
       - name: Validate production backend bootstrap
         working-directory: infra/bootstrap/prod-state

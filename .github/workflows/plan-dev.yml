@@ -102,9 +102,11 @@ jobs:
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
 
       # run-filtered.sh keeps Terraform's text off this public log, since errors can quote state.
-      # Init prints only provider versions and lock file changes; the retry covers registry resets.
+      # Init and plan print only each error or warning's level, address (plan only), relative .tf
+      # file and line, and AWS error class; init adds provider versions, lock file lines and retry lines.
+      # Init retries registry resets but not credential, permission or config errors, which no retry fixes.
       - name: Init
-        run: bash "$GITHUB_WORKSPACE/infra/scripts/run-filtered.sh" "$RUNNER_TEMP/init.log" bash "$GITHUB_WORKSPACE/infra/scripts/tf-init-retry.sh" -input=false -json
+        run: bash "$GITHUB_WORKSPACE/infra/scripts/run-filtered.sh" "$RUNNER_TEMP/init.log" bash "$GITHUB_WORKSPACE/infra/scripts/tf-init-retry.sh" --backend -input=false -json
 
       # No lock: it would fail a deploy that starts meanwhile, and the role can't write it.
       - name: Plan
@@ -114,6 +116,7 @@ jobs:
       - name: Summarize plan
         run: |
           set -euo pipefail
+          failed_line='Could not summarize the plan; its errors are kept off this public log.'
           {
             echo '## Terraform plan (dev)'
             echo
@@ -123,12 +126,12 @@ jobs:
             # terraform show and jq errors can quote plan values, so they go to files.
             if ! terraform show -json tfplan 2> "$RUNNER_TEMP/show.err" \
               | jq -r -f "$GITHUB_WORKSPACE/infra/scripts/plan-summary.jq" 2> "$RUNNER_TEMP/summary.err"; then
-              echo 'Could not summarize the plan; its errors are kept off this public log.'
+              echo "$failed_line"
               summary_failed=1
             fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           if [ -n "${summary_failed:-}" ]; then
-            echo 'Could not summarize the plan; its errors are kept off this public log.' >&2
+            echo "$failed_line" >&2
             exit 1
           fi

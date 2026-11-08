@@ -27,45 +27,57 @@ def public_range:
 def provider_version:
   strings
   | first(
-      capture("^Installed provider version: (?<p>[a-z0-9-]+/[a-z0-9-]+) (?<v>v[0-9]+\\.[0-9]+\\.[0-9]+)(?: |$)"),
-      capture("^(?<p>[a-z0-9-]+/[a-z0-9-]+) (?<v>v[0-9]+\\.[0-9]+\\.[0-9]+): Using previously-installed provider version$")
+      capture("^Installed provider version: (?<p>[a-z0-9-]+/[a-z0-9-]+) (?<v>v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)(?: |$)"),
+      capture("^(?<p>[a-z0-9-]+/[a-z0-9-]+) (?<v>v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?): Using previously-installed provider version$")
     )
   | "Provider: \(.p) \(.v)";
 
-# Each row is {t: text, d: whether it's a diagnostic}; only diagnostics call for the hint.
-[
-  inputs
-  | (try fromjson catch null) as $m
-  | if ($m | type) == "object" then
-      if $m.type == "diagnostic" then
-        # One bad diagnostic must not drop the rest.
-        {d: true, t: (try (
-          $m.diagnostic
-          | [
-              (.severity // "" | tostring | level),
-              (.address | public_address),
-              (.range | public_range),
-              error_class
-            ]
-          | join("\t")
-        ) catch "error\t-\t-\t-")}
-      elif $m.type == "log" then
-        {d: false, t: ($m["@message"] | provider_version)}
-      elif $m.type == "init_output" then
-        {d: false, t: ({
-          lock_info: "Lock file: created .terraform.lock.hcl",
-          dependencies_lock_changes_info: "Lock file: provider selections changed in .terraform.lock.hcl"
-        }[$m.message_code | strings] // empty)}
-      else empty end
-    else
-      gsub("\u001b\\[[0-9;]*[A-Za-z]"; "")
-      | if test("^(│ )?Error: ") then {d: true, t: "error\t-\t-\t\({summary: .} | error_class)"}
-        elif test("^(│ )?Warning: ") then {d: true, t: "warning\t-\t-\t\({summary: .} | error_class)"}
-        elif test("^Terraform initialization failed; retrying in [0-9]+ seconds \\(attempt [0-9]/3\\)\\.$") then {d: false, t: .}
-        else empty end
-    end
-]
-| (.[] | .t),
-  (if any(.[]; .d) or (($ARGS.named.status // "0") != "0") then
-    "Summaries are withheld from this public log. Each error shows its level and error class; a plan error also shows its resource address and file line where Terraform gives them. Config errors reproduce in a local plan with dev credentials. A permission failure shows its denial class but not the action: find the action from the class and the resource address."
-  else empty end)
+def json_row:
+  if .type == "diagnostic" then
+    # One bad diagnostic must not drop the rest.
+    try (
+      .diagnostic
+      | [
+          (.severity // "" | tostring | level),
+          (.address | public_address),
+          (.range | public_range),
+          error_class
+        ]
+      | join("\t")
+    ) catch "error\t-\t-\t-"
+  elif .type == "log" then
+    .["@message"] | provider_version
+  elif .type == "init_output" then
+    {
+      lock_info: "Lock file: created .terraform.lock.hcl",
+      dependencies_lock_changes_info: "Lock file: provider selections changed in .terraform.lock.hcl"
+    }[.message_code | strings] // empty
+  else empty end;
+# A plain-text error's AWS chain often sits in its wrapped detail lines, so they're joined first.
+def text_row: "\(.level)\t-\t-\t\({summary: (.lines | join(" "))} | error_class)";
+def close: if .chain then [.chain | text_row] else [] end;
+
+foreach ((inputs | {line: .}), {eof: true}) as $in (
+  {chain: null, out: []};
+  if $in.eof then {chain: null, out: close}
+  else
+    ($in.line | try fromjson catch null) as $m
+    | ($in.line | gsub("\u001b\\[[0-9;]*[A-Za-z]"; "")) as $l
+    | if ($m | type) == "object" then {chain: null, out: (close + [$m | json_row])}
+      elif ($l | test("^(│ )?(Error|Warning): ")) then
+        {chain: {
+          level: ($l | capture("^(│ )?(?<l>Error|Warning): ").l | level),
+          lines: [$l | sub("^(│ )?(Error|Warning): "; "")]
+        }, out: close}
+      elif .chain and ($l | startswith("│")) then
+        .chain.lines += [$l | sub("^│\\s*"; "") | sub("\\s+$"; "") | select(. != "")]
+        | .out = []
+      elif ($l | test("^Terraform initialization failed; retrying in [0-9]+ seconds \\(attempt [0-9]/3\\)\\.$")) then
+        {chain: null, out: (close + [$l])}
+      else {chain: null, out: close} end
+  end;
+  .out[]
+),
+(if ($ARGS.named.status // "0") != "0" then
+  "Summaries are withheld from this public log. Each error shows its level and error class; a plan error also shows its resource address and file line where Terraform gives them. Config errors reproduce in a local plan with dev credentials. A permission failure shows its denial class but not the action: find the action from the class and the resource address."
+else empty end)

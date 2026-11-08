@@ -1,16 +1,42 @@
 #!/usr/bin/env bash
-# Registry discovery can fail with a transient connection reset, so CI's inits
-# retry here, in one place, instead of in a loop pasted into each step.
+# Usage: tf-init-retry.sh [--backend] <init args...>  Registry discovery can fail with a transient
+# connection reset, so CI's inits retry here, in one place, instead of in a loop pasted into each step.
+# Inits skip the backend unless the first argument is --backend, so CI's credential-free calls stay safe.
 set -uo pipefail
 
 delay="${TF_INIT_RETRY_DELAY:-10}"
+backend=false
+if [ "${1:-}" = "--backend" ]; then
+  backend=true
+  shift
+else
+  set -- -backend=false "$@"
+fi
+
+# An AWS error class or a .tf file line means bad credentials or config, which no retry fixes.
+# Throttling clears with time, so it still retries.
+permanent() {
+  jq -n -R -r --arg status 1 -f "$(dirname "$0")/plan-diagnostics.jq" "$1" 2> /dev/null \
+    | awk -F'\t' 'NF == 4 && ($3 != "-" || ($4 != "-" && $4 !~ /^Throttling/)) { found = 1 } END { exit !found }'
+}
+
+if [ "$backend" = true ]; then
+  log="$(mktemp)"
+  trap 'rm -f "$log"' EXIT
+fi
 for attempt in 1 2 3; do
-  if terraform init "$@"; then
-    exit 0
+  if [ "$backend" = true ]; then
+    terraform init "$@" 2>&1 | tee "$log"
+    status="${PIPESTATUS[0]}"
+  elif terraform init "$@"; then
+    status=0
   else
     status=$?
   fi
-  if [ "$attempt" -eq 3 ]; then
+  if [ "$status" -eq 0 ]; then
+    exit 0
+  fi
+  if [ "$attempt" -eq 3 ] || { [ "$backend" = true ] && permanent "$log"; }; then
     exit "$status"
   fi
   echo "Terraform initialization failed; retrying in ${delay} seconds (attempt $attempt/3)."

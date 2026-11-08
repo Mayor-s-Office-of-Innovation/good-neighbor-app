@@ -77,16 +77,21 @@ different `AWS_DEPLOY_ROLE_ARN` in each job: the export job uses `dev`; the migr
 changing anything. Run it from the Actions tab; the summary lists the action and address of each
 changed resource, and the names of the attributes an update changes. It publishes no values: this
 repo is public, and the role can read Lambda environment values, so the plan's text stays on the
-runner. Error text can quote state, so for each init or plan error the log shows only its level
-and AWS error class, such as `AccessDenied`. A plan error also shows its resource address (with any
-`[...]` key cut) and file line, where Terraform gives them. A successful init shows only the
-provider versions it chose and any lock file change. Config errors, such as a typo or an invalid
-argument, reproduce with a local plan on dev credentials. A permission failure shows the denial
-class but not the action it was denied; find the action from the class and the resource address.
-It uses the read-only role in
-`infra/modules/app/plan-role.tf`, through a `dev-plan` GitHub Environment that holds the secrets
-`AWS_ACCOUNT_ID` and `AWS_PLAN_ROLE_ARN` (the `terraform_plan_role_arn` output), and the variable
-`AWS_REGION`.
+runner. Error text can quote state, so the Init and Plan steps print only:
+
+- each error or warning's level (`error` or `warning`);
+- its resource address, with any `[...]` key cut (plan only);
+- its relative `.tf` file and line, where Terraform gives them;
+- its AWS error class, such as `AccessDenied`;
+- the provider versions init chose, and any lock file change;
+- init's retry line. Init retries registry resets, but not credential, permission or config errors.
+
+When a step fails, a fixed line on how to read these follows. Config errors, such as a typo or an
+invalid argument, reproduce with a local plan on dev credentials. A permission failure shows the
+denial class but not the action it was denied; find the action from the class and the resource
+address. It uses the read-only role in `infra/modules/app/plan-role.tf`, through a `dev-plan`
+GitHub Environment that holds the secrets `AWS_ACCOUNT_ID` and `AWS_PLAN_ROLE_ARN` (the
+`terraform_plan_role_arn` output), and the variable `AWS_REGION`.
 
 **Before creating `AWS_PLAN_ROLE_ARN`, give the `dev-plan` Environment required reviewers.** The
 role can read the dev state file, which holds secrets such as the support origin token, and Lambda
