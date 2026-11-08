@@ -5,9 +5,12 @@ import { fileURLToPath } from "node:url";
 
 const filter = fileURLToPath(new URL("./plan-diagnostics.jq", import.meta.url));
 
+const PRIVATE_LINE =
+  "Summaries are withheld from this public log; run terraform plan in infra/environments/dev with dev credentials to read them.";
+
 /** @param {string[]} lines what `terraform plan -json` wrote to stdout and stderr */
 function diagnostics(lines) {
-  const result = spawnSync("jq", ["-R", "-r", "-f", filter], {
+  const result = spawnSync("jq", ["-n", "-R", "-r", "-f", filter], {
     input: lines.join("\n"),
     encoding: "utf8",
   });
@@ -17,40 +20,69 @@ function diagnostics(lines) {
 
 const SECRET = "s3cr3t-value";
 
-test("prints each error's level, summary, address and line, so a maintainer can find it", () => {
+/**
+ * @param {Record<string, unknown>} diagnostic
+ */
+function diagnosticLine(diagnostic) {
+  return JSON.stringify({ type: "diagnostic", diagnostic });
+}
+
+test("prints each error's level, address and line, then how to read the rest", () => {
   const out = diagnostics([
-    JSON.stringify({
-      type: "diagnostic",
-      diagnostic: {
-        severity: "error",
-        summary: "reading Lambda Function (analysis): AccessDeniedException",
-        detail: `TOKEN=${SECRET}`,
-        address: "module.app.aws_lambda_function.analysis",
-        range: {
-          filename: "../../modules/app/analysis-worker.tf",
-          start: { line: 36 },
-        },
-        snippet: { code: `TOKEN = "${SECRET}"` },
+    diagnosticLine({
+      severity: "error",
+      summary: "reading Lambda Function (analysis): AccessDeniedException",
+      detail: `TOKEN=${SECRET}`,
+      address: "module.app.aws_lambda_function.analysis",
+      range: {
+        filename: "../../modules/app/analysis-worker.tf",
+        start: { line: 36 },
       },
+      snippet: { code: `TOKEN = "${SECRET}"` },
     }),
   ]);
   assert.deepEqual(out, [
-    "error\treading Lambda Function (analysis): AccessDeniedException\tmodule.app.aws_lambda_function.analysis\t../../modules/app/analysis-worker.tf:36",
+    "error\tmodule.app.aws_lambda_function.analysis\t../../modules/app/analysis-worker.tf:36",
+    PRIVATE_LINE,
   ]);
 });
 
-test("cuts quoted text from a summary, since it can hold a value from state", () => {
-  const out = diagnostics([
-    JSON.stringify({
-      type: "diagnostic",
-      diagnostic: {
-        severity: "warning",
-        summary: `invalid value "${SECRET}" for 'name ${SECRET}'`,
-      },
-    }),
-  ]);
-  assert.deepEqual(out, ["warning\tinvalid value \"…\"\t-\t-"]);
-});
+for (const [name, summary] of [
+  ["a backtick", `invalid value \`${SECRET}\``],
+  ["curly quotes", `invalid value “${SECRET}”`],
+  ["a parenthesised name", `creating IAM Role (${SECRET}): EntityAlreadyExists`],
+  ["an apostrophe", `role's name ${SECRET} isn't valid`],
+  ["an escaped quote", `bad value "a\\"${SECRET}" and 'b\\'${SECRET}'`],
+  ["a trailing backslash", `Value '${SECRET}\\' failed`],
+]) {
+  test(`never prints a summary with ${name}`, () => {
+    const out = diagnostics([diagnosticLine({ severity: "warning", summary, detail: summary })]);
+    assert.deepEqual(out, ["warning\t-\t-", PRIVATE_LINE]);
+    assert.ok(!out.join("\n").includes(SECRET));
+  });
+
+  test(`never prints a plain-text error line with ${name}`, () => {
+    const out = diagnostics([`│ Error: ${summary}`]);
+    assert.deepEqual(out, ["error\t-\t-", PRIVATE_LINE]);
+  });
+}
+
+for (const [name, address, expected] of [
+  ["a quoted key", `module.app.aws_ssm_parameter.token["${SECRET}"]`, "module.app.aws_ssm_parameter.token[…]"],
+  ["a count key", "module.app.aws_iam_role.r[3]", "module.app.aws_iam_role.r[…]"],
+  [
+    "module and resource keys",
+    `module.app["${SECRET}"].aws_iam_role.r["${SECRET}"]`,
+    "module.app[…].aws_iam_role.r[…]",
+  ],
+  ["a key with an escaped quote", `aws_iam_role.r["a\\"]${SECRET}"]`, "aws_iam_role.r[…]"],
+  ["an unclosed key", `aws_iam_role.r["${SECRET}`, "aws_iam_role.r[…]"],
+]) {
+  test(`cuts ${name} from an address, since for_each and count keys can hold a value`, () => {
+    const out = diagnostics([diagnosticLine({ severity: "error", summary: "x", address })]);
+    assert.deepEqual(out, [`error\t${expected}\t-`, PRIVATE_LINE]);
+  });
+}
 
 test("drops planned changes and other messages, which carry attribute values", () => {
   const out = diagnostics([
@@ -63,67 +95,9 @@ test("drops planned changes and other messages, which carry attribute values", (
       },
     }),
     JSON.stringify({ type: "change_summary", changes: { add: 1 } }),
-  ]);
-  assert.deepEqual(out, []);
-});
-
-test("keeps only the error line of anything Terraform wrote as plain text", () => {
-  const out = diagnostics([
-    "│ Error: Failed to load plugin schemas",
     `│ Value was "${SECRET}" here`,
     "not json {",
     "42",
   ]);
-  assert.deepEqual(out, ["│ Error: Failed to load plugin schemas"]);
-});
-
-test("cuts quoted keys from an address, since for_each keys can hold a value", () => {
-  const out = diagnostics([
-    JSON.stringify({
-      type: "diagnostic",
-      diagnostic: {
-        severity: "error",
-        summary: "reading SSM Parameter",
-        address: `module.app.aws_ssm_parameter.token["${SECRET}"]`,
-      },
-    }),
-  ]);
-  assert.deepEqual(out, [
-    'error\treading SSM Parameter\tmodule.app.aws_ssm_parameter.token["…"]\t-',
-  ]);
-});
-
-/** @param {string} summary */
-function summaryOut(summary) {
-  return diagnostics([
-    JSON.stringify({ type: "diagnostic", diagnostic: { severity: "error", summary } }),
-  ]);
-}
-
-test("cuts a quoted value whole when it holds an escaped quote", () => {
-  assert.deepEqual(summaryOut(`bad value "a\\"${SECRET}" and 'b\\'${SECRET}'`), [
-    'error\tbad value "…"\t-\t-',
-  ]);
-});
-
-test("cuts a single-quoted value that ends in a backslash", () => {
-  assert.deepEqual(summaryOut(`Value '${SECRET}\\' failed`), ["error\tValue '…' failed\t-\t-"]);
-});
-
-test("cuts every quoted value after one that ends in a backslash", () => {
-  assert.deepEqual(summaryOut(`x "a\\" and "${SECRET}" y`), ['error\tx "…" y\t-\t-']);
-});
-
-test("cuts to the end of the line after an unmatched quote", () => {
-  assert.deepEqual(summaryOut(`Value '${SECRET} failed`), ["error\tValue '…\t-\t-"]);
-});
-
-test("cuts quoted text that spans a newline", () => {
-  assert.deepEqual(summaryOut(`Value "a\n${SECRET}" failed`), ['error\tValue "…" failed\t-\t-']);
-});
-
-test("cuts quoted text from a plain-text error line", () => {
-  assert.deepEqual(diagnostics([`│ Error: Value '${SECRET}\\' failed`]), [
-    "│ Error: Value '…' failed",
-  ]);
+  assert.deepEqual(out, []);
 });

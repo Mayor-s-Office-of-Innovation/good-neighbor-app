@@ -105,12 +105,12 @@ jobs:
         run: terraform init -input=false
 
       # No lock: it would fail a deploy that starts meanwhile, and the role can't write it.
-      # The log is public, so it shows only each error's summary, address and line.
+      # The log is public and error text can quote state, so it shows only level, address and line.
       - name: Plan
         run: |
           status=0
           terraform plan -input=false -lock=false -out=tfplan -json > "$RUNNER_TEMP/plan.log" 2>&1 || status=$?
-          jq -R -r -f "$GITHUB_WORKSPACE/infra/scripts/plan-diagnostics.jq" "$RUNNER_TEMP/plan.log"
+          jq -n -R -r -f "$GITHUB_WORKSPACE/infra/scripts/plan-diagnostics.jq" "$RUNNER_TEMP/plan.log"
           exit "$status"
 
       # This repo is public, so the summary names changed attributes but never their values.

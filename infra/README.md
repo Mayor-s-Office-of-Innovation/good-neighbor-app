@@ -77,8 +77,9 @@ different `AWS_DEPLOY_ROLE_ARN` in each job: the export job uses `dev`; the migr
 changing anything. Run it from the Actions tab; the summary lists the action and address of each
 changed resource, and the names of the attributes an update changes. It publishes no values: this
 repo is public, and the role can read Lambda environment values, so the plan's text stays on the
-runner. If the plan fails, the log shows each error's summary, with quoted text cut, and its
-resource address and file line; run the plan locally for the detail. It uses the read-only role in
+runner. If the plan fails, the log shows only each error's level, resource address (with any
+`[...]` key cut) and file line, since error text can quote state; run `terraform plan` in
+`infra/environments/dev` with dev credentials to read the errors. It uses the read-only role in
 `infra/modules/app/plan-role.tf`, through a `dev-plan` GitHub Environment that holds the secrets
 `AWS_ACCOUNT_ID` and `AWS_PLAN_ROLE_ARN` (the `terraform_plan_role_arn` output), and the variable
 `AWS_REGION`.
