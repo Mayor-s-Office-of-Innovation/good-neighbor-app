@@ -1,3 +1,4 @@
+import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 
 const { runJobs } = vi.hoisted(() => ({
@@ -49,22 +50,24 @@ describe("settleBatch", () => {
       insightsJob: { ownerKey: "o", jobId: "j" },
     });
     let analysed = false;
-    const settled = await Promise.race([
-      settleBatch(
-        [
-          { Body: insights },
-          { Body: JSON.stringify({ artifactId: "a", s3Key: "k" }) },
-        ],
-        [
-          new Promise(() => {}),
-          Promise.resolve().then(() => {
-            analysed = true;
-          }),
-        ],
-      ).then(() => "settled"),
-      new Promise((resolve) => setTimeout(() => resolve("held"), 50)),
-    ]);
-    expect(settled).toBe("settled");
+    let settled = false;
+    settleBatch(
+      [
+        { Body: insights },
+        { Body: JSON.stringify({ artifactId: "a", s3Key: "k" }) },
+      ],
+      [
+        new Promise(() => {}),
+        Promise.resolve().then(() => {
+          analysed = true;
+        }),
+      ],
+    ).then(() => {
+      settled = true;
+    });
+    // Runs once every queued promise callback has, with no wall-clock wait.
+    await setImmediate();
+    expect(settled).toBe(true);
     expect(analysed).toBe(true);
   });
 });
