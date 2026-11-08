@@ -1010,7 +1010,7 @@ describe("overview", () => {
   });
 
   it("lists open Sites with no compliance terms with the unknown data", () => {
-    // s3 is closed, and a snapshot from before the column says nothing.
+    // s2 keeps its terms and s3 is closed, so only s1 lists.
     const gaps = edited((t) => {
       for (const s of t.sites) if (s.siteId !== "s2") s.hasTerms = false;
     });
