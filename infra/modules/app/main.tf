@@ -1656,7 +1656,7 @@ resource "aws_wafv2_web_acl" "web" {
               and_statement {
                 statement {
                   byte_match_statement {
-                    # Normalized, so /admin/v1/reporting/../ can't reach another route unchecked.
+                    # Decoded, then normalized, so /admin/v1/reporting/%2e%2e/ can't reach another route unchecked.
                     positional_constraint = "STARTS_WITH"
                     search_string         = "/admin/v1/reporting/"
                     field_to_match {
@@ -1664,6 +1664,10 @@ resource "aws_wafv2_web_acl" "web" {
                     }
                     text_transformation {
                       priority = 0
+                      type     = "URL_DECODE"
+                    }
+                    text_transformation {
+                      priority = 1
                       type     = "NORMALIZE_PATH"
                     }
                   }

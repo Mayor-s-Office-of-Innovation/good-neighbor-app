@@ -350,20 +350,22 @@ run "insights_waf" {
     target = [aws_wafv2_web_acl.web]
   }
 
+  # Each exemption is a not_statement holding exactly this path and method, in a rule that blocks.
   assert {
-    condition = strcontains(jsonencode([
-      for rule in aws_wafv2_web_acl.web.rule : rule
-      if rule.name == "BodySizeRestrictionsOutsideAssessmentEvaluation"
-    ]), "/admin/v1/reports/insights")
-    error_message = "The Insights report POST must be exempt from the 8 KiB body rule, or a report of about 200 Sites is blocked."
-  }
-
-  assert {
-    condition = strcontains(jsonencode([
-      for rule in aws_wafv2_web_acl.web.rule : rule
-      if rule.name == "BodySizeRestrictionsOutsideAssessmentEvaluation"
-    ]), "/admin/v1/reporting/trends")
-    error_message = "The Insights trends POST must be exempt from the 8 KiB body rule, or a chart of 50 Sites and their groups is blocked."
+    condition = alltrue([
+      for route in ["/admin/v1/reports/insights", "/admin/v1/reporting/trends"] : anytrue([
+        for rule in aws_wafv2_web_acl.web.rule : length(rule.action[0].block) == 1 && anytrue([
+          for s in rule.statement[0].and_statement[0].statement : try(jsonencode({
+            for m in s.not_statement[0].statement[0].and_statement[0].statement :
+            m.byte_match_statement[0].search_string => (
+              length(m.byte_match_statement[0].field_to_match[0].uri_path) == 1 ? "path" : "method"
+            )
+          }) == jsonencode({ (route) = "path", "POST" = "method" }), false)
+        ])
+        if rule.name == "BodySizeRestrictionsOutsideAssessmentEvaluation"
+      ])
+    ])
+    error_message = "The Insights report and trends POSTs must be exempt from the 8 KiB body rule, or a report of about 200 Sites or a chart of 50 Sites is blocked."
   }
 
   assert {
@@ -377,13 +379,25 @@ run "insights_waf" {
   }
 
   assert {
-    condition = alltrue([
-      for s in ["SizeRestrictions_QueryString", "/admin/v1/reporting/", "NORMALIZE_PATH", "\"GET\""] :
-      strcontains(jsonencode([
-        for rule in aws_wafv2_web_acl.web.rule : rule
-        if rule.name == "QueryStringSizeRestrictionsOutsideInsightsReads"
-      ]), s)
+    condition = anytrue([
+      for rule in aws_wafv2_web_acl.web.rule : (
+        length(rule.action[0].block) == 1
+        && rule.statement[0].and_statement[0].statement[0].label_match_statement[0].key == "awswaf:managed:aws:core-rule-set:SizeRestrictions_QueryString"
+        && try(jsonencode([
+          for m in rule.statement[0].and_statement[0].statement[1].not_statement[0].statement[0].and_statement[0].statement : {
+            search   = m.byte_match_statement[0].search_string
+            position = m.byte_match_statement[0].positional_constraint
+            field    = length(m.byte_match_statement[0].field_to_match[0].uri_path) == 1 ? "path" : "method"
+            # Decoded first, so %2e%2e can't skip NORMALIZE_PATH and reach another route unchecked.
+            transforms = sort([for t in m.byte_match_statement[0].text_transformation : "${t.priority}:${t.type}"])
+          }
+          ]) == jsonencode([
+          { search = "/admin/v1/reporting/", position = "STARTS_WITH", field = "path", transforms = ["0:URL_DECODE", "1:NORMALIZE_PATH"] },
+          { search = "GET", position = "EXACTLY", field = "method", transforms = ["0:NONE"] },
+        ]), false)
+      )
+      if rule.name == "QueryStringSizeRestrictionsOutsideInsightsReads"
     ])
-    error_message = "The Insights GET read routes must be exempt from the 2 KB query-string rule, or a filter of 100 Sites is blocked."
+    error_message = "The Insights GET read routes must be exempt from the 2 KB query-string rule, with the path URL-decoded then normalized, or a filter of 100 Sites is blocked or another route skips the check."
   }
 }
