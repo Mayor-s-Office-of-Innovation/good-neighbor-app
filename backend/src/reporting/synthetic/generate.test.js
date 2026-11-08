@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { classifyItem } from "../../analytics/entity-keys.js";
-import { pacificDateKey } from "../../lib/pacific-dates.js";
+import { pacificDateKey, pacificDayStartIso } from "../../lib/pacific-dates.js";
 import { createLocalViews, writeLocalLake } from "../local-lake.js";
 import { buildProjection } from "../projection.js";
 import { readProjection } from "../test-build.js";
@@ -319,6 +319,21 @@ describe("unfinished Checks in the answer key", () => {
     seed: 14,
     sites: 30,
     startDay: "2026-09-01",
+  });
+
+  // Without this Check, the month test below cannot catch a wrong month.
+  it("starts one in the first hour of a Pacific month", () => {
+    const HOUR_MS = 60 * 60 * 1000;
+    const atMidnight = items.some((i) => {
+      if (i.flowType !== "perimeter" || i.status !== "in_progress")
+        return false;
+      const day = pacificDateKey(i.startedAt);
+      if (!day.endsWith("-01")) return false;
+      const sinceMidnight =
+        Date.parse(i.startedAt) - Date.parse(pacificDayStartIso(day));
+      return sinceMidnight >= 0 && sinceMidnight < HOUR_MS;
+    });
+    expect(atMidnight).toBe(true);
   });
 
   it("counts each one in the Pacific month it started", () => {
