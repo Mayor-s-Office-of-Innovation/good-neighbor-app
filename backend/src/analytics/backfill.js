@@ -52,9 +52,9 @@ const STOP_WITH_MS_LEFT = 120_000;
 const GZIP_BYTES_PER_MS = 1_000;
 // An export estimated longer than a whole run would stop every run, so it is logged and passed.
 const LONGEST_EXPORT_MS = 450_000;
-// A day after an export completes, a missing manifest means the raw/ lifecycle rule deleted it.
+// Room for a just-completed export's manifest to appear, so the restart only fires once its files are gone.
 const EXPORT_FILES_GRACE_MS = 24 * 60 * 60 * 1000;
-// Each lost race means another converter wrote, and reserved concurrency caps those at 5.
+// Bounds retries while other converters keep writing; the next run redoes any unsaved work, which is safe.
 const MAX_STATE_WRITES = 6;
 
 /**
