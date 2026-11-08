@@ -764,11 +764,30 @@ describe("export and report jobs", () => {
       const h = fresh.reportingHandlers({ LAKE_BUCKET: "lake" });
       await h.getOverview(event());
       const config = await clients[0].config.requestHandler.configProvider;
-      expect(config).toMatchObject(fresh.S3_TIMEOUTS);
-      expect(fresh.S3_TIMEOUTS.socketTimeout).toBeGreaterThan(0);
+      const { S3_TIMEOUTS } = await import("../reporting/contract.js");
+      expect(config).toMatchObject(S3_TIMEOUTS);
+      expect(S3_TIMEOUTS.socketTimeout).toBeGreaterThan(0);
     } finally {
       vi.restoreAllMocks();
     }
+  });
+
+  it.each([
+    [
+      "caps a Lambda's first load inside the gateway's 29 s, so it ends as a 503",
+      { AWS_LAMBDA_FUNCTION_NAME: "analytics-query" },
+      { refreshWaitMs: 3000, firstLoadWaitMs: 20_000 },
+    ],
+    [
+      "leaves a local first load uncapped, since no gateway times it out",
+      {},
+      { refreshWaitMs: 0, firstLoadWaitMs: 0 },
+    ],
+  ])("%s", async (_, env, expected) => {
+    const { snapshotTimings } = await import("./admin-reporting.js");
+    const timings = snapshotTimings(env);
+    expect(timings).toMatchObject(expected);
+    expect(timings.firstLoadWaitMs).toBeLessThan(29_000);
   });
 
   it("keeps the first build, whatever env a later call passes", async () => {

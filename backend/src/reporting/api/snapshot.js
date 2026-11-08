@@ -196,6 +196,14 @@ export function s3Source({ s3, bucket }) {
     );
     return Buffer.from(await res.Body.transformToByteArray());
   };
+  // Expiry can delete a snapshot's files a day before latest.json; that's "no data", not a fault.
+  /** @param {string} key */
+  const readSnapshotFile = (key) =>
+    read(key).catch((err) => {
+      if (err?.name === "NoSuchKey")
+        throw requestError("snapshot_unavailable", 503);
+      throw err;
+    });
   return {
     async latest() {
       try {
@@ -213,7 +221,7 @@ export function s3Source({ s3, bucket }) {
     },
     async load(prefix) {
       const manifest = JSON.parse(
-        (await read(`${prefix}/manifest.json`)).toString("utf8"),
+        (await readSnapshotFile(`${prefix}/manifest.json`)).toString("utf8"),
       );
       checkContract(manifest);
       // DuckDB reads local files without the httpfs extension or a secret.
@@ -224,7 +232,7 @@ export function s3Source({ s3, bucket }) {
           Object.keys(TABLE_SCHEMAS).map(async (name) =>
             writeFile(
               join(dir, `${name}.parquet`),
-              await read(`${prefix}/${name}.parquet`),
+              await readSnapshotFile(`${prefix}/${name}.parquet`),
             ),
           ),
         );
@@ -241,49 +249,60 @@ export function s3Source({ s3, bucket }) {
 
 // A stale request gets the held snapshot while a newer one loads. Lambda freezes
 // once it replies, which would stall that load, so set refreshWaitMs there.
-/** @param {{ source: SnapshotSource, now?: () => number, refreshMs?: number, refreshWaitMs?: number, refreshLimitMs?: number, wait?: (ms: number, signal: AbortSignal) => Promise<unknown>, onError?: (err: unknown) => void }} opts */
+/** @param {{ source: SnapshotSource, now?: () => number, refreshMs?: number, refreshWaitMs?: number, firstLoadWaitMs?: number, wait?: (ms: number, signal: AbortSignal) => Promise<unknown>, onError?: (err: unknown) => void }} opts */
 export function createSnapshotStore({
   source,
   now = Date.now,
   refreshMs = 5 * 60_000,
   refreshWaitMs = 0,
-  // A load frozen mid-request may never settle; past this a request starts another.
-  refreshLimitMs = 60_000,
+  firstLoadWaitMs = 0,
   wait = (ms, signal) => sleep(ms, undefined, { signal }),
   onError = () => {},
 }) {
   /** @type {Snapshot | null} */
   let held = null;
+  // When the refresh that confirmed `held` read latest.json.
   let checkedAt = -Infinity;
+  // One refresh at a time. A refresh is never abandoned: S3 timeouts end a hung read.
+  /** @type {{ run: Promise<Snapshot>, startedAt: number } | null} */
+  let inflight = null;
   /** @type {Promise<Snapshot> | null} */
-  let pending = null;
-  let pendingSince = 0;
+  let queued = null;
+  /** @type {Map<string, Promise<Snapshot>>} */
+  const loading = new Map();
   // Jobs queued before a swap read the snapshot they were asked against.
   /** @type {Promise<Snapshot> | null} */
   let older = null;
   let olderPrefix = "";
 
+  // Shared per prefix, since two copies of one snapshot would double the Lambda's memory.
   /** @param {string} prefix */
-  const load = async (prefix) => {
-    const loaded = await source.load(prefix);
-    // The built-in sources check first; this covers any other source.
-    checkContract(loaded.manifest);
-    return indexSnapshot(loaded);
+  const load = (prefix) => {
+    let run = loading.get(prefix);
+    if (!run) {
+      run = (async () => {
+        const loaded = await source.load(prefix);
+        // The built-in sources check first; this covers any other source.
+        checkContract(loaded.manifest);
+        return indexSnapshot(loaded);
+      })();
+      const clear = () => loading.delete(prefix);
+      run.then(clear, clear);
+      loading.set(prefix, run);
+    }
+    return run;
   };
 
-  // Bumped per refresh, so one abandoned past refreshLimitMs can't install its
-  // older snapshot over a newer one when it finally lands.
-  let generation = 0;
-
-  /** @param {number} gen */
-  const refresh = async (gen) => {
-    const live = () => gen === generation;
+  /** @param {number} startedAt */
+  const refresh = async (startedAt) => {
     try {
       const latest = await source.latest();
       if (!latest) {
+        const gone = requestError("snapshot_unavailable", 503);
         // Dropped so a warm Lambda answers like a cold one, not with old numbers.
-        if (live()) held = null;
-        throw requestError("snapshot_unavailable", 503);
+        if (held) onError(gone);
+        held = null;
+        throw gone;
       }
       let next = held;
       // A local folder keeps its path when rebuilt, so compare IDs too.
@@ -296,46 +315,77 @@ export function createSnapshotStore({
         // memory. A job on it reloads it once.
         next = await load(latest.prefix);
       }
-      if (!live()) return next;
-      held = next;
-      checkedAt = now();
+      // IDs sort by build time; a build that finished late can point latest.json back.
+      if (!held || next.snapshotId >= held.snapshotId) held = next;
+      checkedAt = startedAt;
       return held;
     } catch (err) {
       if (held) {
         // Stale data still serves, but someone needs to hear about it.
         onError(err);
-        if (live()) checkedAt = now();
+        checkedAt = startedAt;
         return held;
       }
       throw err;
     }
   };
 
+  const start = () => {
+    const startedAt = now();
+    const run = refresh(startedAt).finally(() => {
+      inflight = null;
+    });
+    inflight = { run, startedAt };
+    return run;
+  };
+
+  // A refresh that read latest.json too long before this request runs again after it.
+  /** @param {number} asked */
+  const refreshFor = (asked) => {
+    if (!inflight) return start();
+    if (asked - inflight.startedAt < refreshMs) return inflight.run;
+    queued ??= inflight.run
+      .catch(() => {})
+      .then(() => {
+        queued = null;
+        return inflight ? inflight.run : start();
+      });
+    return queued;
+  };
+
+  /**
+   * @template T
+   * @param {Promise<Snapshot>} run
+   * @param {number} ms
+   * @param {() => T} late what the request gets if `run` takes longer
+   * @returns {Promise<Snapshot | T>}
+   */
+  const waitFor = (run, ms, late) => {
+    // Stops the timer once the refresh settles, so it doesn't outlive the request.
+    const timer = new AbortController();
+    const stop = () => timer.abort();
+    run.then(stop, stop);
+    return Promise.race([run, wait(ms, timer.signal).then(late)]);
+  };
+
   return {
     /** @returns {Promise<Snapshot>} */
     current() {
-      if (held && now() - checkedAt <= refreshMs) return Promise.resolve(held);
-      if (pending && now() - pendingSince > refreshLimitMs) pending = null;
-      if (!pending) {
-        const started = refresh(++generation).finally(() => {
-          if (pending === started) pending = null;
+      const asked = now();
+      if (held && asked - checkedAt < refreshMs) return Promise.resolve(held);
+      const run = refreshFor(asked);
+      if (!held) {
+        if (!firstLoadWaitMs) return run;
+        // The load carries on, so a retry joins it rather than starting over.
+        return waitFor(run, firstLoadWaitMs, () => {
+          throw requestError("snapshot_unavailable", 503);
         });
-        pending = started;
-        pendingSince = now();
       }
-      if (!held) return pending;
       const stale = held;
       // Rejects only when latest.json is gone; a caller answering stale can't see that.
-      pending.catch(() => {});
+      run.catch(() => {});
       if (!refreshWaitMs) return Promise.resolve(stale);
-      // Stops the timer once the refresh settles, so it doesn't outlive the request.
-      const timer = new AbortController();
-      const stop = () => timer.abort();
-      pending.then(stop, stop);
-      return Promise.race([
-        pending,
-        wait(refreshWaitMs, timer.signal).then(() => stale),
-      ]);
+      return waitFor(run, refreshWaitMs, () => stale);
     },
     /**
      * @param {string} prefix

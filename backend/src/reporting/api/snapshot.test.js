@@ -303,114 +303,167 @@ describe("createSnapshotStore", () => {
     expect(waits).toEqual([100]);
   });
 
-  it("starts a new refresh once one has hung past the limit", async () => {
+  it("lets one refresh finish across requests, however long a frozen Lambda held it", async () => {
     const source = fakeSource();
     let now = 0;
     const store = createSnapshotStore({
       source,
       now: () => now,
       refreshMs: 1000,
-      refreshLimitMs: 5000,
-    });
-    await store.current();
-    const latest = source.latest;
-    source.latest = () => new Promise(() => {});
-    now = 1001;
-    await store.current();
-    source.latest = latest;
-    source.publish({ prefix: "p2", snapshotId: "snap2" });
-    now = 6002;
-    await store.current();
-    await vi.waitFor(async () =>
-      expect((await store.current()).prefix).toBe("p2"),
-    );
-  });
-
-  it("keeps the newer snapshot when a hung refresh finishes late with an older one", async () => {
-    const source = fakeSource();
-    let now = 0;
-    const store = createSnapshotStore({
-      source,
-      now: () => now,
-      refreshMs: 1000,
-      refreshLimitMs: 5000,
+      refreshWaitMs: 100,
+      wait: async () => {},
     });
     await store.current();
     source.publish({ prefix: "p2", snapshotId: "snap2" });
     const load = source.load.bind(source);
     /** @type {() => void} */
-    let finishHung = () => {};
-    let hung = false;
+    let finish = () => {};
+    let started = 0;
     source.load = (/** @type {string} */ prefix) =>
       new Promise((resolve) => {
-        hung = true;
-        finishHung = () => resolve(load(prefix));
+        started += 1;
+        finish = () => resolve(load(prefix));
       });
     now = 1001;
-    await store.current();
-    await vi.waitFor(() => expect(hung).toBe(true));
-    source.load = load;
-    source.publish({ prefix: "p3", snapshotId: "snap3" });
-    now = 6002;
-    await store.current();
+    expect((await store.current()).prefix).toBe("p1");
+    await vi.waitFor(() => expect(started).toBe(1));
+    // Ten minutes of wall time, as a Lambda frozen between requests sees it.
+    now = 1001 + 10 * 60_000;
+    expect((await store.current()).prefix).toBe("p1");
+    await setImmediate();
+    expect(started).toBe(1);
+    finish();
     await vi.waitFor(async () =>
-      expect((await store.current()).prefix).toBe("p3"),
+      expect((await store.current()).prefix).toBe("p2"),
     );
-    finishHung();
+  });
+
+  it("shares a load with a job already loading the same prefix", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+    });
+    await store.current();
+    const load = source.load.bind(source);
+    /** @type {() => void} */
+    let finish = () => {};
+    source.load = vi.fn(
+      (/** @type {string} */ prefix) =>
+        new Promise((resolve) => {
+          finish = () => resolve(load(prefix));
+        }),
+    );
+    const job = store.byPrefix("p2");
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    now = 1001;
+    await store.current();
     await setImmediate();
-    await setImmediate();
+    finish();
+    expect((await job).prefix).toBe("p2");
+    await vi.waitFor(async () =>
+      expect((await store.current()).prefix).toBe("p2"),
+    );
+    expect(source.load).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the newer snapshot when latest.json points back to an older one", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+      refreshWaitMs: 100,
+      wait: () => new Promise(() => {}),
+    });
+    source.publish({ prefix: "p3", snapshotId: "snap3" });
+    await store.current();
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    now = 1001;
     expect((await store.current()).prefix).toBe("p3");
   });
 
-  it.each([
-    ["finds latest.json gone", null],
-    ["throws", new Error("s3 down")],
-  ])(
-    "keeps the newer snapshot and its window when an abandoned refresh %s",
-    async (_, outcome) => {
-      const source = fakeSource();
-      let now = 0;
-      const store = createSnapshotStore({
-        source,
-        now: () => now,
-        refreshMs: 1000,
-        refreshLimitMs: 5000,
+  it("with refreshMs 0, checks latest.json again rather than join a check that read it earlier", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 0,
+      refreshWaitMs: 20_000,
+      wait: () => new Promise(() => {}),
+    });
+    await store.current();
+    const latest = source.latest.bind(source);
+    /** @type {() => void} */
+    let release = () => {};
+    // Reads the pointer now, but answers only once released.
+    source.latest = () => {
+      const read = latest();
+      source.latest = latest;
+      return new Promise((resolve) => {
+        release = () => resolve(read);
       });
-      await store.current();
-      const latest = source.latest;
-      /** @type {() => void} */
-      let finishHung = () => {};
-      source.latest = () =>
-        new Promise((resolve, reject) => {
-          finishHung = () =>
-            outcome ? reject(outcome) : resolve(/** @type {any} */ (null));
-        });
-      now = 1001;
-      await store.current();
-      let checks = 0;
-      source.latest = () => {
-        checks += 1;
-        return latest();
-      };
-      source.publish({ prefix: "p2", snapshotId: "snap2" });
-      now = 6002;
-      await store.current();
-      await vi.waitFor(async () =>
-        expect((await store.current()).prefix).toBe("p2"),
-      );
-      const settled = checks;
-      now = 6500;
-      finishHung();
-      await setImmediate();
-      await setImmediate();
-      expect((await store.current()).prefix).toBe("p2");
-      expect(checks).toBe(settled);
-      // Due by the newer refresh's time, not the abandoned one's.
-      now = 7100;
-      await store.current();
-      expect(checks).toBe(settled + 1);
-    },
-  );
+    };
+    now = 1;
+    const first = store.current();
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    now = 2;
+    const second = store.current();
+    release();
+    expect((await first).prefix).toBe("p1");
+    expect((await second).prefix).toBe("p2");
+  });
+
+  it("answers 503 when a first load outlasts its wait, then serves that load once it lands", async () => {
+    const source = fakeSource();
+    const load = source.load.bind(source);
+    /** @type {() => void} */
+    let finish = () => {};
+    source.load = vi.fn(
+      (/** @type {string} */ prefix) =>
+        new Promise((resolve) => {
+          finish = () => resolve(load(prefix));
+        }),
+    );
+    const store = createSnapshotStore({
+      source,
+      firstLoadWaitMs: 100,
+      wait: async () => {},
+    });
+    await expect(store.current()).rejects.toMatchObject({
+      code: "snapshot_unavailable",
+      statusCode: 503,
+    });
+    finish();
+    await vi.waitFor(async () =>
+      expect((await store.current()).prefix).toBe("p1"),
+    );
+    expect(source.load).toHaveBeenCalledOnce();
+  });
+
+  it("reports dropping the held snapshot when latest.json is gone", async () => {
+    const source = fakeSource();
+    const onError = vi.fn();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+      onError,
+    });
+    await store.current();
+    source.latest = async () => null;
+    now = 1001;
+    await store.current();
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
+    expect(onError.mock.calls[0][0]).toMatchObject({
+      code: "snapshot_unavailable",
+    });
+  });
 
   it("stops the wait timer once the refresh wins", async () => {
     const source = fakeSource();
@@ -573,17 +626,46 @@ describe("s3Source", () => {
     expect(await source.latest()).toBeNull();
   });
 
-  it("passes on a missing table's error, having asked for every table", async () => {
+  it.each([
+    ["a table", "issues.parquet"],
+    ["the manifest", "manifest.json"],
+  ])(
+    "answers not ready when %s has expired before latest.json",
+    async (_, file) => {
+      const instance = await DuckDBInstance.create(":memory:");
+      const conn = await instance.connect();
+      await writeSyntheticProjection(conn, join(dir, "p1"));
+      conn.closeSync();
+      instance.closeSync();
+      rmSync(join(dir, "p1", file));
+      const s3 = fakeS3({ prefix: "p1", snapshotId: "snap1" });
+      await expect(
+        s3Source({ s3, bucket: "lake" }).load("p1"),
+      ).rejects.toMatchObject({
+        code: "snapshot_unavailable",
+        statusCode: 503,
+      });
+    },
+  );
+
+  it("passes on any other read error, having asked for every table", async () => {
     const instance = await DuckDBInstance.create(":memory:");
     const conn = await instance.connect();
     await writeSyntheticProjection(conn, join(dir, "p1"));
     conn.closeSync();
     instance.closeSync();
-    rmSync(join(dir, "p1", "issues.parquet"));
     const s3 = fakeS3({ prefix: "p1", snapshotId: "snap1" });
+    const send = s3.send.bind(s3);
+    s3.send = async (/** @type {any} */ cmd) => {
+      if (cmd.input.Key.endsWith("issues.parquet")) {
+        s3.keys.push(cmd.input.Key);
+        throw Object.assign(new Error("denied"), { name: "AccessDenied" });
+      }
+      return send(cmd);
+    };
     await expect(
       s3Source({ s3, bucket: "lake" }).load("p1"),
-    ).rejects.toMatchObject({ name: "NoSuchKey" });
+    ).rejects.toMatchObject({ name: "AccessDenied" });
     expect(s3.keys.filter((k) => k.endsWith(".parquet"))).toHaveLength(
       Object.keys(TABLE_SCHEMAS).length,
     );

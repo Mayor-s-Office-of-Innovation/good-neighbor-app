@@ -44,6 +44,7 @@ import {
   dirSource,
   s3Source,
 } from "../reporting/api/snapshot.js";
+import { S3_TIMEOUTS } from "../reporting/contract.js";
 
 /** @typedef {import("aws-lambda").APIGatewayProxyEventV2} Event */
 /** @typedef {import("../reporting/api/snapshot.js").Snapshot} Snapshot */
@@ -53,11 +54,8 @@ const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,128}$/;
 // one, well inside the gateway's 29 s.
 const LAMBDA_REFRESH_WAIT_MS = 3000;
 const FRESH_ONLY_REFRESH_WAIT_MS = 20_000;
-// A request a frozen Lambda left hanging then fails, so the next refresh can retry.
-export const S3_TIMEOUTS = Object.freeze({
-  connectionTimeout: 5_000,
-  socketTimeout: 30_000,
-});
+// A Lambda's first load answers 503 past this, leaving the report time inside 29 s.
+const LAMBDA_FIRST_LOAD_WAIT_MS = 20_000;
 const EXPORT_DATASETS = ["issues", "checks", "sites"];
 // Params a request may carry; anything else is dropped before it's stored.
 const PERIOD_PARAMS = [
@@ -476,6 +474,30 @@ export function createReportingHandlers({
   };
 }
 
+/**
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {{ refreshMs?: number, refreshWaitMs: number, firstLoadWaitMs: number }}
+ */
+export function snapshotTimings(env) {
+  // The emulator E2E sets 0, so each spec sees the lake it has just set up.
+  const refreshMs = env.INSIGHTS_REFRESH_MS
+    ? Number(env.INSIGHTS_REFRESH_MS)
+    : NaN;
+  const freshOnly = Number.isFinite(refreshMs);
+  const lambda = Boolean(env.AWS_LAMBDA_FUNCTION_NAME);
+  return {
+    refreshMs: freshOnly ? refreshMs : undefined,
+    // 20 s outlasts a slow CI runner's reload but stops a hung one holding every request.
+    refreshWaitMs:
+      refreshMs === 0
+        ? FRESH_ONLY_REFRESH_WAIT_MS
+        : lambda || freshOnly
+          ? LAMBDA_REFRESH_WAIT_MS
+          : 0,
+    firstLoadWaitMs: lambda ? LAMBDA_FIRST_LOAD_WAIT_MS : 0,
+  };
+}
+
 /** @type {ReturnType<typeof createReportingHandlers> | null} */
 let fromEnv = null;
 
@@ -510,23 +532,10 @@ export function reportingHandlers(env = process.env) {
         queueUrl: env.INSIGHTS_JOBS_QUEUE_URL,
       })
     : inProcessStarter(() => handlers.runJob);
-  // The emulator E2E sets 0, so each spec sees the lake it has just set up.
-  const refreshMs = env.INSIGHTS_REFRESH_MS
-    ? Number(env.INSIGHTS_REFRESH_MS)
-    : NaN;
-  const freshOnly = Number.isFinite(refreshMs);
-  // 20 s outlasts a slow CI runner's reload but stops a hung one holding every request.
-  const waitMs =
-    refreshMs === 0
-      ? FRESH_ONLY_REFRESH_WAIT_MS
-      : env.AWS_LAMBDA_FUNCTION_NAME || freshOnly
-        ? LAMBDA_REFRESH_WAIT_MS
-        : 0;
   handlers = createReportingHandlers({
     snapshots: createSnapshotStore({
       source,
-      refreshMs: freshOnly ? refreshMs : undefined,
-      refreshWaitMs: waitMs,
+      ...snapshotTimings(env),
       onError: (err) =>
         logServerError("admin-reporting", /** @type {Error} */ (err), {
           extra: { step: "snapshot-refresh" },
