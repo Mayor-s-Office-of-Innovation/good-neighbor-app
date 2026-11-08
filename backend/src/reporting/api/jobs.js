@@ -33,11 +33,14 @@ export const JOB_LIMITS = Object.freeze({
  * @property {Record<string, any> | null} dataQuality
  */
 
+/** @typedef {{ record: JobRecord, version: string }} VersionedJob */
+
 /**
  * @typedef {object} JobStore
  * @property {(owner: string, jobId: string, record: JobRecord) => Promise<boolean>} create false if it already exists
  * @property {(owner: string, jobId: string) => Promise<JobRecord | null>} get
- * @property {(owner: string, jobId: string, record: JobRecord) => Promise<void>} put
+ * @property {(owner: string, jobId: string) => Promise<VersionedJob | null>} read
+ * @property {(owner: string, jobId: string, record: JobRecord, version?: string) => Promise<string | null>} put the new version, or null if `version` is no longer current
  * @property {(owner: string, jobId: string, body: string, contentType: string) => Promise<void>} putResult
  * @property {(owner: string, jobId: string) => Promise<void>} deleteResult
  * @property {(owner: string, jobId: string, filename: string, seconds: number) => Promise<string>} resultUrl
@@ -53,26 +56,48 @@ export function memoryJobStore() {
   const records = new Map();
   /** @type {Map<string, string>} */
   const results = new Map();
+  /** @type {Map<string, string>} */
+  const versions = new Map();
+  let writes = 0;
   /**
    * @param {string} owner
    * @param {string} jobId
    */
   const k = (owner, jobId) => `${owner}/${jobId}`;
   const copy = (/** @type {JobRecord} */ r) => JSON.parse(JSON.stringify(r));
+  /**
+   * @param {string} key
+   * @param {JobRecord} record
+   */
+  const save = (key, record) => {
+    records.set(key, copy(record));
+    versions.set(key, String((writes += 1)));
+    return /** @type {string} */ (versions.get(key));
+  };
   return {
     records,
     results,
     async create(owner, jobId, record) {
       if (records.has(k(owner, jobId))) return false;
-      records.set(k(owner, jobId), copy(record));
+      save(k(owner, jobId), record);
       return true;
     },
     async get(owner, jobId) {
       const r = records.get(k(owner, jobId));
       return r ? copy(r) : null;
     },
-    async put(owner, jobId, record) {
-      records.set(k(owner, jobId), copy(record));
+    async read(owner, jobId) {
+      const r = records.get(k(owner, jobId));
+      return r
+        ? {
+            record: copy(r),
+            version: /** @type {string} */ (versions.get(k(owner, jobId))),
+          }
+        : null;
+    },
+    async put(owner, jobId, record, version) {
+      if (version && versions.get(k(owner, jobId)) !== version) return null;
+      return save(k(owner, jobId), record);
     },
     async putResult(owner, jobId, body) {
       results.set(k(owner, jobId), body);
@@ -135,50 +160,79 @@ export function createJobs({
         : null,
   });
 
+  // Writes only over the version it read, so run, cancel and poll can't undo each other.
   /**
    * @param {string} ownerKey
-   * @param {JobRecord} record
+   * @param {VersionedJob} read
+   * @param {(record: JobRecord) => JobRecord | null} change null leaves the record as it is
+   * @returns {Promise<VersionedJob & { changed: boolean }>}
    */
-  const start = async (ownerKey, record) => {
+  const update = async (ownerKey, read, change) => {
+    let current = read;
+    for (let tries = 0; tries < 3; tries += 1) {
+      const next = change(current.record);
+      if (!next) return { ...current, changed: false };
+      const version = await store.put(
+        ownerKey,
+        next.jobId,
+        next,
+        current.version,
+      );
+      if (version) return { record: next, version, changed: true };
+      const fresh = await store.read(ownerKey, next.jobId);
+      if (!fresh) throw requestError("job_not_found", 404);
+      current = fresh;
+    }
+    throw requestError("job_busy", 409);
+  };
+
+  /**
+   * @param {string} ownerKey
+   * @param {VersionedJob} read
+   */
+  const start = async (ownerKey, read) => {
     try {
-      await starter({ ownerKey, jobId: record.jobId });
+      await starter({ ownerKey, jobId: read.record.jobId });
     } catch (err) {
-      onError(err, record);
-      await store.put(ownerKey, record.jobId, {
-        ...record,
-        state: "failed",
-        error: "job_start_failed",
-        updatedAt: iso(),
-      });
+      onError(err, read.record);
+      await update(ownerKey, read, (r) =>
+        r.state === "queued"
+          ? {
+              ...r,
+              state: "failed",
+              error: "job_start_failed",
+              updatedAt: iso(),
+            }
+          : null,
+      );
       throw requestError("job_start_failed", 503);
     }
+  };
+
+  /** @param {JobRecord} record */
+  const isStalled = (record) => {
+    const quietMs = now() - Date.parse(record.updatedAt);
+    return (
+      (record.state === "running" && quietMs > JOB_LIMITS.stallMs) ||
+      (record.state === "queued" && quietMs > JOB_LIMITS.queueWaitMs)
+    );
   };
 
   /**
    * @param {string} ownerKey
    * @param {string} jobId
-   * @returns {Promise<JobRecord>}
+   * @returns {Promise<VersionedJob>}
    */
   const load = async (ownerKey, jobId) => {
-    const record = await store.get(ownerKey, jobId);
-    if (!record) throw requestError("job_not_found", 404);
-    if (now() > Date.parse(record.expiresAt))
+    const read = await store.read(ownerKey, jobId);
+    if (!read) throw requestError("job_not_found", 404);
+    if (now() > Date.parse(read.record.expiresAt))
       throw requestError("job_expired", 410);
-    const quietMs = now() - Date.parse(record.updatedAt);
-    const stalled =
-      (record.state === "running" && quietMs > JOB_LIMITS.stallMs) ||
-      (record.state === "queued" && quietMs > JOB_LIMITS.queueWaitMs);
-    if (stalled) {
-      const failed = {
-        ...record,
-        state: /** @type {JobState} */ ("failed"),
-        error: "job_timed_out",
-        updatedAt: iso(),
-      };
-      await store.put(ownerKey, jobId, failed);
-      return failed;
-    }
-    return record;
+    return update(ownerKey, read, (r) =>
+      isStalled(r)
+        ? { ...r, state: "failed", error: "job_timed_out", updatedAt: iso() }
+        : null,
+    );
   };
 
   // A repeat of a known key skips `check`, so a double click doesn't redo the count.
@@ -195,8 +249,15 @@ export function createJobs({
       .digest("hex")
       .slice(0, 32);
     const requestHash = queryHash({ kind, params });
-    const existing = await store.get(ownerKey, jobId);
+    const read = await store.read(ownerKey, jobId);
+    const existing = read?.record;
     const live = existing && now() <= Date.parse(existing.expiresAt);
+    // Another request changed the job since it was read; start again from a fresh read.
+    const raced = async () => {
+      if (races >= 2) throw requestError("job_busy", 409);
+      await wait(50 * (races + 1));
+      return create(ownerKey, req, races + 1);
+    };
     if (existing && live) {
       if (existing.requestHash !== requestHash)
         throw requestError("idempotency_key_reused", 409);
@@ -215,8 +276,9 @@ export function createJobs({
         updatedAt: iso(),
         expiresAt: new Date(now() + JOB_LIMITS.ttlMs).toISOString(),
       };
-      await store.put(ownerKey, jobId, retry);
-      await start(ownerKey, retry);
+      const version = await store.put(ownerKey, jobId, retry, read.version);
+      if (!version) return raced();
+      await start(ownerKey, { record: retry, version });
       return { statusCode: 202, job: await view(ownerKey, retry) };
     }
     const snap = await snapshots.current();
@@ -238,14 +300,14 @@ export function createJobs({
       result: null,
       dataQuality: null,
     };
-    if (existing) await store.put(ownerKey, jobId, record);
-    else if (!(await store.create(ownerKey, jobId, record))) {
-      // The same key won a race; S3 can refuse while that write lands, so try twice more.
-      if (races >= 2) throw requestError("job_busy", 409);
-      await wait(50 * (races + 1));
-      return create(ownerKey, req, races + 1);
-    }
-    await start(ownerKey, record);
+    /** @type {string | null} */
+    let version = null;
+    if (read) version = await store.put(ownerKey, jobId, record, read.version);
+    // The same key won a race; S3 can refuse while that write lands, so try twice more.
+    else if (await store.create(ownerKey, jobId, record))
+      version = (await store.read(ownerKey, jobId))?.version ?? null;
+    if (!version) return raced();
+    await start(ownerKey, { record, version });
     return { statusCode: 202, job: await view(ownerKey, record) };
   };
 
@@ -257,7 +319,7 @@ export function createJobs({
      * @param {string} jobId
      */
     async get(ownerKey, jobId) {
-      return view(ownerKey, await load(ownerKey, jobId));
+      return view(ownerKey, (await load(ownerKey, jobId)).record);
     },
 
     /**
@@ -265,67 +327,71 @@ export function createJobs({
      * @param {string} jobId
      */
     async cancel(ownerKey, jobId) {
-      const record = await load(ownerKey, jobId);
-      if (record.state === "succeeded") throw requestError("job_finished", 409);
-      if (record.state === "failed" || record.state === "cancelled")
-        return view(ownerKey, record);
-      const cancelled = {
-        ...record,
-        state: /** @type {JobState} */ ("cancelled"),
-        updatedAt: iso(),
-      };
-      await store.put(ownerKey, jobId, cancelled);
-      return view(ownerKey, cancelled);
+      const { record } = await update(
+        ownerKey,
+        await load(ownerKey, jobId),
+        (r) => {
+          if (r.state === "succeeded") throw requestError("job_finished", 409);
+          if (r.state === "failed" || r.state === "cancelled") return null;
+          return { ...r, state: "cancelled", updatedAt: iso() };
+        },
+      );
+      return view(ownerKey, record);
     },
 
     /** @param {{ ownerKey: string, jobId: string }} ref */
     async run({ ownerKey, jobId }) {
-      const record = await store.get(ownerKey, jobId);
-      if (!record) return;
-      const abandoned =
-        record.state === "running" &&
-        now() - Date.parse(record.updatedAt) > JOB_LIMITS.stallMs;
+      const read = await store.read(ownerKey, jobId);
+      if (!read) return;
       // SQS delivers at least once; a live run or a cancel ends it here.
-      if (record.state !== "queued" && !abandoned) return;
-      const running = {
-        ...record,
-        state: /** @type {JobState} */ ("running"),
-        updatedAt: iso(),
-      };
-      await store.put(ownerKey, jobId, running);
+      const claim = await update(ownerKey, read, (r) =>
+        r.state === "queued" || (r.state === "running" && isStalled(r))
+          ? { ...r, state: "running", updatedAt: iso() }
+          : null,
+      );
+      if (!claim.changed) return;
+      const { record } = claim;
+      /** @type {VersionedJob} */
+      let latest = claim;
       try {
         const snap = await snapshots.byPrefix(record.snapshotPrefix);
         const out = await render(record.kind, record.params, snap);
         await store.putResult(ownerKey, jobId, out.body, out.contentType);
+        latest = await update(ownerKey, claim, (r) =>
+          r.state === "cancelled"
+            ? null
+            : {
+                ...r,
+                state: "succeeded",
+                error: null,
+                updatedAt: iso(),
+                dataQuality: out.dataQuality ?? null,
+                result: {
+                  filename: out.filename,
+                  contentType: out.contentType,
+                  rows: out.rows,
+                  bytes: Buffer.byteLength(out.body),
+                },
+              },
+        );
         // A cancelled request must not leave a file anyone can download.
-        if ((await store.get(ownerKey, jobId))?.state === "cancelled") {
+        if (latest.record.state === "cancelled")
           await store.deleteResult(ownerKey, jobId);
-          return;
-        }
-        await store.put(ownerKey, jobId, {
-          ...running,
-          state: "succeeded",
-          updatedAt: iso(),
-          dataQuality: out.dataQuality ?? null,
-          result: {
-            filename: out.filename,
-            contentType: out.contentType,
-            rows: out.rows,
-            bytes: Buffer.byteLength(out.body),
-          },
-        });
       } catch (err) {
         // A network error's code (ECONNRESET) is ours to log, not the requester's to read.
         const known = isRequestError(err);
         if (!known || err.statusCode >= 500) onError(err, record);
         // A cancel stands; the requester asked for no file.
-        if ((await store.get(ownerKey, jobId))?.state === "cancelled") return;
-        await store.put(ownerKey, jobId, {
-          ...running,
-          state: "failed",
-          error: known ? err.code : "job_failed",
-          updatedAt: iso(),
-        });
+        await update(ownerKey, latest, (r) =>
+          r.state === "cancelled" || r.state === "succeeded"
+            ? null
+            : {
+                ...r,
+                state: "failed",
+                error: known ? err.code : "job_failed",
+                updatedAt: iso(),
+              },
+        );
       }
     },
   };

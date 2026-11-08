@@ -46,6 +46,33 @@ export function s3JobStore({
         ...extra,
       }),
     );
+  /** @param {unknown} err */
+  const lostRace = (err) => {
+    const status = /** @type {any} */ (err)?.$metadata?.httpStatusCode;
+    return status === 412 || status === 409;
+  };
+  /**
+   * @param {string} owner
+   * @param {string} jobId
+   */
+  const read = async (owner, jobId) => {
+    try {
+      const res = await s3.send(
+        new GetObjectCommand({
+          Bucket: bucket,
+          Key: recordKey(owner, jobId),
+        }),
+      );
+      return {
+        record: JSON.parse(await res.Body.transformToString()),
+        version: String(res.ETag),
+      };
+    } catch (err) {
+      // Needs s3:ListBucket, or S3 answers a missing key with 403 and every new job fails.
+      if (/** @type {any} */ (err)?.name === "NoSuchKey") return null;
+      throw err;
+    }
+  };
   return {
     async create(owner, jobId, record) {
       try {
@@ -53,28 +80,26 @@ export function s3JobStore({
         await write(recordKey(owner, jobId), record, { IfNoneMatch: "*" });
         return true;
       } catch (err) {
-        const status = /** @type {any} */ (err)?.$metadata?.httpStatusCode;
-        if (status === 412 || status === 409) return false;
+        if (lostRace(err)) return false;
         throw err;
       }
     },
+    read,
     async get(owner, jobId) {
+      return (await read(owner, jobId))?.record ?? null;
+    },
+    async put(owner, jobId, record, version) {
       try {
-        const res = await s3.send(
-          new GetObjectCommand({
-            Bucket: bucket,
-            Key: recordKey(owner, jobId),
-          }),
+        const res = await write(
+          recordKey(owner, jobId),
+          record,
+          version ? { IfMatch: version } : {},
         );
-        return JSON.parse(await res.Body.transformToString());
+        return String(res?.ETag);
       } catch (err) {
-        // Needs s3:ListBucket, or S3 answers a missing key with 403 and every new job fails.
-        if (/** @type {any} */ (err)?.name === "NoSuchKey") return null;
+        if (version && lostRace(err)) return null;
         throw err;
       }
-    },
-    async put(owner, jobId, record) {
-      await write(recordKey(owner, jobId), record);
     },
     async putResult(owner, jobId, body, contentType) {
       await s3.send(

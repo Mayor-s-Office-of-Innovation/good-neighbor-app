@@ -297,6 +297,32 @@ describe("createJobs", () => {
     expect(store.results.size).toBe(0);
   });
 
+  it.each([
+    ["before its run marks it running", "running"],
+    ["just before its run marks it succeeded", "succeeded"],
+  ])(
+    "keeps a job cancelled %s, with no file left",
+    async (_name, interruptedState) => {
+      const { jobs, store, request } = setup();
+      const { job } = await jobs.create("owner1", {
+        ...request,
+        idempotencyKey: "k1",
+      });
+      const put = store.put.bind(store);
+      let cancelled = false;
+      store.put = async (owner, jobId, record, version) => {
+        if (record.state === interruptedState && !cancelled) {
+          cancelled = true;
+          await jobs.cancel(owner, jobId);
+        }
+        return put(owner, jobId, record, version);
+      };
+      await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
+      expect((await jobs.get("owner1", job.jobId)).state).toBe("cancelled");
+      expect(store.results.size).toBe(0);
+    },
+  );
+
   it("won't cancel a finished job", async () => {
     const { jobs, request } = setup();
     const { job } = await jobs.create("owner1", {

@@ -4,11 +4,14 @@ import { setImmediate } from "node:timers";
 import { inProcessStarter, s3JobStore, sqsStarter } from "./job-store.js";
 
 /**
- * A fake S3 that keeps objects by key and honours IfNoneMatch.
+ * A fake S3 that keeps objects by key and honours IfNoneMatch and IfMatch.
  * @returns {{ send: (cmd: any) => Promise<any>, objects: Map<string, any>, sent: any[] }}
  */
 function fakeS3() {
   const objects = new Map();
+  /** @type {Map<string, string>} */
+  const etags = new Map();
+  let writes = 0;
   /** @type {any[]} */
   const sent = [];
   return {
@@ -18,18 +21,25 @@ function fakeS3() {
       const input = cmd.input;
       sent.push({ name: cmd.constructor.name, input });
       if (cmd.constructor.name === "PutObjectCommand") {
-        if (input.IfNoneMatch === "*" && objects.has(input.Key))
+        if (
+          (input.IfNoneMatch === "*" && objects.has(input.Key)) ||
+          (input.IfMatch && etags.get(input.Key) !== input.IfMatch)
+        )
           throw Object.assign(new Error("PreconditionFailed"), {
             $metadata: { httpStatusCode: 412 },
           });
         objects.set(input.Key, input.Body);
-        return {};
+        etags.set(input.Key, `"e${(writes += 1)}"`);
+        return { ETag: etags.get(input.Key) };
       }
       if (cmd.constructor.name === "GetObjectCommand") {
         if (!objects.has(input.Key))
           throw Object.assign(new Error("NoSuchKey"), { name: "NoSuchKey" });
         const body = objects.get(input.Key);
-        return { Body: { transformToString: async () => body } };
+        return {
+          Body: { transformToString: async () => body },
+          ETag: etags.get(input.Key),
+        };
       }
       if (cmd.constructor.name === "DeleteObjectCommand") {
         objects.delete(input.Key);
@@ -61,6 +71,23 @@ describe("s3JobStore", () => {
     const store = s3JobStore({ s3: fakeS3(), bucket: "lake" });
     await store.put("o", "j1", record);
     expect(await store.get("o", "j1")).toEqual(record);
+  });
+
+  it("writes over a job only at the version it read", async () => {
+    const store = s3JobStore({ s3: fakeS3(), bucket: "lake" });
+    await store.create("o", "j1", record);
+    const read = /** @type {any} */ (await store.read("o", "j1"));
+    const running = { ...record, state: "running" };
+    expect(await store.put("o", "j1", running, read.version)).toBeTruthy();
+    expect(
+      await store.put(
+        "o",
+        "j1",
+        { ...record, state: "cancelled" },
+        read.version,
+      ),
+    ).toBeNull();
+    expect(await store.get("o", "j1")).toEqual(running);
   });
 
   it("passes on S3 failures other than a lost race or a missing job", async () => {
