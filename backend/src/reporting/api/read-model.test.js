@@ -124,8 +124,8 @@ describe("overview", () => {
     ]);
   });
 
-  it.each(["asc"])(
-    "puts a Site with no Issues last, even sorted %s, lowest first",
+  it.each(["asc", "desc"])(
+    "puts a Site with no Issues last, even sorted %s",
     (dir) => {
       const res = overview(snap, {
         interval: october,
@@ -589,16 +589,28 @@ describe("exportRows", () => {
   it.each(Object.keys(SORTS.sites))(
     "writes Sites in the order Overview shows them, sorted by %s",
     (sort) => {
-      // Against each key's default, since the defaults all give name order.
-      const dir = SORTS.sites[/** @type {keyof typeof SORTS.sites} */ (sort)];
-      const args = {
+      /** @param {string} dir */
+      const args = (dir) => ({
         interval: october,
         filter: {},
-        list: list("sites", { sort, dir: dir === "asc" ? "desc" : "asc" }),
-      };
-      const shown = overview(snap, { ...args, now: NOW }).sites;
-      const written = exportRows(snap, { dataset: "sites", ...args }).rows;
-      expect(written.map((r) => r.siteId)).toEqual(shown.map((r) => r.siteId));
+        list: list("sites", { sort, dir }),
+      });
+      const ids = (/** @type {Record<string, any>[]} */ rows) =>
+        rows.map((r) => r.siteId);
+      // An export that skipped sorting would write table order, so test a direction that differs.
+      const tableOrder = ids(snap.tables.sites);
+      const dir = ["asc", "desc"].find(
+        (d) =>
+          ids(overview(snap, { ...args(d), now: NOW }).sites).join() !==
+          tableOrder.join(),
+      );
+      expect(dir).toBeDefined();
+      const shown = overview(snap, { ...args(String(dir)), now: NOW }).sites;
+      const written = exportRows(snap, {
+        dataset: "sites",
+        ...args(String(dir)),
+      }).rows;
+      expect(ids(written)).toEqual(ids(shown));
     },
   );
 
