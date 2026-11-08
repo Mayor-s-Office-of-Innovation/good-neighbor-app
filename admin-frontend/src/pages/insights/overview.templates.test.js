@@ -85,9 +85,7 @@ test("Overdue or late says how many Issues have an unknown response, so 0 isn't 
     box.querySelector("[data-response-unknown]")?.textContent,
     "5 unknown",
   );
-  assert.ok(
-    !table([row({})]).querySelector("[data-response-unknown]"),
-  );
+  assert.ok(!table([row({})]).querySelector("[data-response-unknown]"));
 });
 
 test("a manager's line carries their ID, so a late name fills in place", () => {

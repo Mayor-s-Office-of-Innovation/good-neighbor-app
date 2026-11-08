@@ -186,7 +186,12 @@ test("a Site contact needs a working email and phone, as the server's report doe
 test("a blank or unusable public contact reads as the server's report reads it", () => {
   /** @param {Record<string, string>} person */
   const shown = (person) => {
-    const { state, reasonCodes } = contactShown("public", reported, person, true);
+    const { state, reasonCodes } = contactShown(
+      "public",
+      reported,
+      person,
+      true,
+    );
     return [state, reasonCodes];
   };
   assert.deepEqual(

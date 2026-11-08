@@ -117,8 +117,10 @@ function contactState(contact) {
     !email ? "no_email" : !EMAIL.test(email) && "invalid_email",
     !phone
       ? "no_phone"
-      : !(digits.length === 10 || (digits.length === 11 && digits[0] === "1")) &&
-        "invalid_phone",
+      : !(
+          digits.length === 10 ||
+          (digits.length === 11 && digits[0] === "1")
+        ) && "invalid_phone",
   ].filter((code) => typeof code === "string");
   if (!reasonCodes.length) return { state: "available", reasonCodes };
   // A value the check rejects may still reach someone; only a blank is surely missing.

@@ -94,8 +94,11 @@ test("a late response time never reads the same as its deadline", () => {
 });
 
 test("Load more stays focusable while its page loads, so keyboard users keep their place", () => {
-  const button = drawn({}, { nextCursor: "page-2", total: 2 }, "loading")
-    .querySelector("[data-load-more]");
+  const button = drawn(
+    {},
+    { nextCursor: "page-2", total: 2 },
+    "loading",
+  ).querySelector("[data-load-more]");
   assert.equal(button?.hasAttribute("disabled"), false);
   assert.equal(button?.getAttribute("aria-disabled"), "true");
 });

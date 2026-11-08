@@ -309,8 +309,7 @@ const counted = (site, period) => {
       ? period.startDay
       : addDays(COVERAGE_START, 1);
   /** @param {string} end */
-  const daysTo = (end) =>
-    first < end ? dayKeysBetween(first, end).length : 0;
+  const daysTo = (end) => (first < end ? dayKeysBetween(first, end).length : 0);
   const wholeDays = daysTo(earlier(period.endDay, EVALUATED_DAY));
   const issueDays = daysTo(earlier(period.endDay, addDays(EVALUATED_DAY, 1)));
   const checksPerDay = wholeDays
@@ -330,7 +329,7 @@ const counted = (site, period) => {
     issuesPer30Days,
     concerns: concernsOf(
       {
-        totals: row,
+        totals: { activity: row.activity, response: row.response },
         underOwed,
         longUnresolved: row.longUnresolved,
         issuesPer30Days,

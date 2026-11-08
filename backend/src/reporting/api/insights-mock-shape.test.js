@@ -271,8 +271,11 @@ describe("the admin E2E Insights mock", () => {
   it("works out each Site's counts, rates and concerns for the period asked, as the handler does", () => {
     /** @param {string} search */
     const s1 = (search) =>
-      insightsReply({ method: "GET", path: "reporting/overview", search })
-        ?.json.sites.find((/** @type {any} */ r) => r.siteId === "s1");
+      insightsReply({
+        method: "GET",
+        path: "reporting/overview",
+        search,
+      })?.json.sites.find((/** @type {any} */ r) => r.siteId === "s1");
     const [october, november, beforeRecords] = [
       s1("period=month&month=2026-10&show=all"),
       s1("period=month&month=2026-11&show=all"),
@@ -287,7 +290,13 @@ describe("the admin E2E Insights mock", () => {
     ];
     expect([pick(october), pick(november), pick(beforeRecords)]).toEqual([
       // 62 Checks over 31 days; 9 Issues × 30 / 31.
-      [9, 4, 2, 8.7, ["fewChecks", "repeatedSevere", "manyIssues", "slowResponse"]],
+      [
+        9,
+        4,
+        2,
+        8.7,
+        ["fewChecks", "repeatedSevere", "manyIssues", "slowResponse"],
+      ],
       [0, null, 0, 0, ["fewChecks"]],
       // No records, so no rate: the handler sends null, not 0.
       [0, null, null, null, []],
