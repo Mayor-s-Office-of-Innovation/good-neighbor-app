@@ -314,6 +314,17 @@ describe("installHttpfs", () => {
       `PROVIDER CREDENTIAL_CHAIN, ENDPOINT ${host}, URL_STYLE 'path', USE_SSL ${ssl});`,
     );
   });
+
+  it("keeps the emulator endpoint when credentials are passed too", async () => {
+    const fake = recorder();
+    await installHttpfs(fake, {
+      endpoint: "http://localhost:9020",
+      credentials: async () => ({ accessKeyId: "k", secretAccessKey: "s" }),
+    });
+    expect(fake.secret()).toContain(
+      "ENDPOINT 'localhost:9020', URL_STYLE 'path', USE_SSL false);",
+    );
+  });
 });
 
 describe("stripTrailingSemicolon", () => {

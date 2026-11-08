@@ -17,7 +17,10 @@ import {
 } from "@aws-sdk/client-sqs";
 import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { marshall } from "@aws-sdk/util-dynamodb";
-import { ensureLocalInfra } from "./lib/ensure-infra.mjs";
+import {
+  applyLocalInsightsEnv,
+  ensureLocalInfra,
+} from "./lib/ensure-infra.mjs";
 import { getConfig } from "../src/config.js";
 import { ddb } from "../src/db.js";
 import { handler as processSubmission } from "../src/workers/process-submission.js";
@@ -267,7 +270,8 @@ async function poll(queueUrl) {
     // an N-photo check pay ~N× one call (visible as analyses landing one at a
     // time). Each message is still its own single-record event, so delete /
     // redelivery semantics per message are unchanged.
-    await Promise.allSettled(
+    await settleBatch(
+      received.Messages ?? [],
       (received.Messages ?? []).map(async (msg) => {
         try {
           const handler = pickHandler(msg.Body);
@@ -304,7 +308,20 @@ async function poll(queueUrl) {
   }
 }
 
+/**
+ * Waits for every message except Insights jobs, which can run for minutes and
+ * would hold up the photo analysis and other messages behind them.
+ * @param {{ Body?: string }[]} messages
+ * @param {Promise<void>[]} runs one per message, in order; none may reject
+ */
+export async function settleBatch(messages, runs) {
+  await Promise.allSettled(
+    runs.filter((_, i) => pickHandler(messages[i].Body) !== runInsightsJob),
+  );
+}
+
 async function main() {
+  applyLocalInsightsEnv();
   const { queueUrl } = await ensureLocalInfra();
   console.log(`[worker] polling ${queueUrl}`);
 
@@ -320,7 +337,11 @@ async function main() {
 }
 
 // Only when run as a script, so a test can import pickHandler without starting the poller.
-if (realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// `node -e` and a REPL leave argv[1] unset.
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   main().catch((err) => {
     console.error("[worker] failed to start:", err);
     process.exit(1);

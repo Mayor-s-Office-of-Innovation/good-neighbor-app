@@ -64,11 +64,11 @@ export async function installHttpfs(conn, opts = {}) {
   // The CREDENTIAL_CHAIN secret provider lives in the aws extension, not
   // httpfs; load it explicitly rather than relying on autoload at CREATE time.
   await conn.run(`INSTALL httpfs; LOAD httpfs; INSTALL aws; LOAD aws;`);
+  const url = opts.endpoint ? new URL(opts.endpoint) : null;
+  const emulator = url
+    ? `, ENDPOINT ${sqlString(url.host)}, URL_STYLE 'path', USE_SSL ${url.protocol === "https:"}`
+    : "";
   if (!opts.credentials) {
-    const url = opts.endpoint ? new URL(opts.endpoint) : null;
-    const emulator = url
-      ? `, ENDPOINT ${sqlString(url.host)}, URL_STYLE 'path', USE_SSL ${url.protocol === "https:"}`
-      : "";
     await conn.run(
       `CREATE OR REPLACE SECRET gn_lake (TYPE S3, PROVIDER CREDENTIAL_CHAIN${emulator});`,
     );
@@ -85,7 +85,7 @@ export async function installHttpfs(conn, opts = {}) {
   ].filter(Boolean);
   await runScrubbed(
     conn,
-    `CREATE OR REPLACE SECRET gn_lake (${parts.join(", ")});`,
+    `CREATE OR REPLACE SECRET gn_lake (${parts.join(", ")}${emulator});`,
     "lake secret creation failed",
   );
 }

@@ -1,9 +1,5 @@
-// One bundle, two Lambdas: analytics-query answers API Gateway (HTTP API v2) on
-// the Insights routes, and insights-jobs reads the job queue with a longer
-// timeout than the gateway allows. Separate from the app api function: it
-// carries the DuckDB native binding, needs ~2 GB, and its load must never compete
-// with the operational API's concurrency. The admin JWT authorizer gates every
-// route and the handlers re-check access.
+// One bundle, two Lambdas: analytics-query answers the Insights routes, insights-jobs
+// runs queued jobs. Kept apart from the api function, so DuckDB's 2 GB can't slow it.
 
 import { reportingRoutes, runReportJob } from "../handlers/admin-reporting.js";
 import { jsonResponse } from "../http.js";

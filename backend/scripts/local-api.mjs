@@ -41,9 +41,8 @@ import {
 
 import { handler as supportHandler } from "../src/support/handler.js";
 import { createServer } from "node:http";
-import { fileURLToPath } from "node:url";
 import {
-  LOCAL_INSIGHTS_JOBS_BUCKET,
+  applyLocalInsightsEnv,
   ensureLocalInfra,
 } from "./lib/ensure-infra.mjs";
 import { resolveDeviceClaims } from "./lib/local-device-auth.mjs";
@@ -255,12 +254,7 @@ import { reportingRoutes } from "../src/handlers/admin-reporting.js";
 import { get311Media } from "../src/integrations/sf311-media.js";
 
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
-// Insights reads the synthetic year `npm run insights:data` writes, and keeps
-// its jobs in a local MinIO bucket that ensure-infra creates.
-process.env.INSIGHTS_PROJECTION_DIR ??= fileURLToPath(
-  new URL("../.local/insights-data/projection", import.meta.url),
-);
-process.env.INSIGHTS_JOBS_BUCKET ||= LOCAL_INSIGHTS_JOBS_BUCKET;
+applyLocalInsightsEnv();
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
 // Stub-only requests (no Bearer token) always carry a site claim: the
 // principal fails closed when an authorizer is present without one.

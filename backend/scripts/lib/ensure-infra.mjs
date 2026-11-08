@@ -25,6 +25,7 @@ import {
   HeadBucketCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { fileURLToPath } from "node:url";
 import { seedSiteCodes } from "./site-code-seeds.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -72,6 +73,18 @@ async function waitForService(probe, label) {
 
 // Insights export and report files; private, like the lake bucket they mimic.
 export const LOCAL_INSIGHTS_JOBS_BUCKET = "gnp-local-insights-jobs";
+
+/**
+ * Shared by the local API and worker, so both look for snapshots and job files
+ * in the same place. The default is the synthetic year `npm run insights:data` writes.
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function applyLocalInsightsEnv(env = process.env) {
+  env.INSIGHTS_PROJECTION_DIR ??= fileURLToPath(
+    new URL("../../.local/insights-data/projection", import.meta.url),
+  );
+  env.INSIGHTS_JOBS_BUCKET ||= LOCAL_INSIGHTS_JOBS_BUCKET;
+}
 
 /**
  * A blank INSIGHTS_PROJECTION_DIR means the lake lives in MinIO. Otherwise

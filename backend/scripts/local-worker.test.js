@@ -5,7 +5,7 @@ const { runJobs } = vi.hoisted(() => ({
 }));
 vi.mock("../src/lambda/analytics-query.js", () => ({ runJobs }));
 
-const { pickHandler } = await import("./local-worker.mjs");
+const { pickHandler, settleBatch } = await import("./local-worker.mjs");
 const { handler: processSubmission } = await import(
   "../src/workers/process-submission.js"
 );
@@ -40,5 +40,46 @@ describe("pickHandler", () => {
 
   it("treats a body that isn't JSON as a submission", () => {
     expect(pickHandler("{")).toBe(processSubmission);
+  });
+});
+
+describe("settleBatch", () => {
+  it("moves on while an Insights job runs, so photo analysis isn't held up", async () => {
+    const insights = JSON.stringify({
+      insightsJob: { ownerKey: "o", jobId: "j" },
+    });
+    let analysed = false;
+    const settled = await Promise.race([
+      settleBatch(
+        [
+          { Body: insights },
+          { Body: JSON.stringify({ artifactId: "a", s3Key: "k" }) },
+        ],
+        [
+          new Promise(() => {}),
+          Promise.resolve().then(() => {
+            analysed = true;
+          }),
+        ],
+      ).then(() => "settled"),
+      new Promise((resolve) => setTimeout(() => resolve("held"), 50)),
+    ]);
+    expect(settled).toBe("settled");
+    expect(analysed).toBe(true);
+  });
+});
+
+describe("entry check", () => {
+  it("imports without argv[1], as `node -e` leaves it", async () => {
+    const argv = process.argv;
+    process.argv = [argv[0]];
+    try {
+      vi.resetModules();
+      await expect(import("./local-worker.mjs")).resolves.toHaveProperty(
+        "pickHandler",
+      );
+    } finally {
+      process.argv = argv;
+    }
   });
 });

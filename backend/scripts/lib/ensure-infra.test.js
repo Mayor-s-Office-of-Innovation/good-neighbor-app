@@ -4,7 +4,9 @@ import {
   UpdateTableCommand,
 } from "@aws-sdk/client-dynamodb";
 import {
+  LOCAL_INSIGHTS_JOBS_BUCKET,
   TABLE_SCHEMA,
+  applyLocalInsightsEnv,
   emulatedLakeBuckets,
   ensureLocalTableIndexes,
 } from "./ensure-infra.mjs";
@@ -93,4 +95,24 @@ it("still surfaces unrelated UpdateTable failures", async () => {
   await expect(
     ensureLocalTableIndexes(/** @type {any} */ (ddb), "gnp-local-app"),
   ).rejects.toThrow("denied");
+});
+
+it("gives the local API and worker the same Insights folder and jobs bucket", () => {
+  /** @type {NodeJS.ProcessEnv} */
+  const env = {};
+  applyLocalInsightsEnv(env);
+  expect(env.INSIGHTS_PROJECTION_DIR).toMatch(
+    /backend\/\.local\/insights-data\/projection$/,
+  );
+  expect(env.INSIGHTS_JOBS_BUCKET).toBe(LOCAL_INSIGHTS_JOBS_BUCKET);
+});
+
+it("keeps a blank projection folder and a named jobs bucket, as the emulator suite sets them", () => {
+  /** @type {NodeJS.ProcessEnv} */
+  const env = { INSIGHTS_PROJECTION_DIR: "", INSIGHTS_JOBS_BUCKET: "mine" };
+  applyLocalInsightsEnv(env);
+  expect(env).toEqual({
+    INSIGHTS_PROJECTION_DIR: "",
+    INSIGHTS_JOBS_BUCKET: "mine",
+  });
 });
