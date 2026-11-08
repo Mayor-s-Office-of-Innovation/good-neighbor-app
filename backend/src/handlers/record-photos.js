@@ -10,7 +10,6 @@ import { queryAllItems } from "../lib/query-all-items.js";
 import { presignGet } from "../s3.js";
 import { jsonResponse } from "../http.js";
 import {
-  artifactKey,
   checkArtifactPrefix,
   checkHeaderKey,
   conditionKey,
@@ -144,7 +143,7 @@ async function issueTasks(siteId, root) {
   for (let wave = [root]; wave.length; ) {
     const conditions = await Promise.all(
       wave.map((t) =>
-        t.assessmentId && t.conditionId
+        t.assessmentId && t.conditionId && !DEAD_STATUSES.has(t.status)
           ? get(conditionKey(siteId, t.assessmentId, t.conditionId))
           : undefined,
       ),
@@ -154,10 +153,11 @@ async function issueTasks(siteId, root) {
       ...conditions.flatMap((c) => (c?.taskIds ?? []).map(String)),
     ].filter((id) => !seen.has(id) && seen.add(id));
     const tasks = await Promise.all(next.map((id) => get(taskKey(siteId, id))));
+    // A replaced sighting's own duplicates still join, as on the Issue list.
     wave = /** @type {Record<string, any>[]} */ (
-      tasks.filter((t) => t !== undefined && !DEAD_STATUSES.has(t.status))
+      tasks.filter((t) => t !== undefined)
     );
-    members.push(...wave);
+    members.push(...wave.filter((t) => !DEAD_STATUSES.has(t.status)));
   }
   return members;
 }
@@ -196,11 +196,18 @@ export const getRecordPhotos = (event) =>
         ),
       ),
     );
+    /** @type {Map<string, Promise<Record<string, any>[]>>} */
+    const artifactsOf = new Map();
     const [sources, timelines] = await Promise.all([
       // The photos each sighting was found in, first task first.
       Promise.all(
         [...found.values()].map(async ({ checkId: from, id }) => {
-          const row = await get(artifactKey(siteId, from, id));
+          // A prefix read, since older rows carry a place segment in their key.
+          if (!artifactsOf.has(from))
+            artifactsOf.set(from, under(pk, checkArtifactPrefix(from)));
+          const row = (await artifactsOf.get(from))?.find(
+            (a) => String(a.artifactId) === String(id),
+          );
           return checkEvidence(row ? [row] : [], siteId, from);
         }),
       ),

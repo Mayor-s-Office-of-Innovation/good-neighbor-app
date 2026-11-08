@@ -294,6 +294,46 @@ describe("getRecordPhotos", () => {
     );
   });
 
+  it("follows a duplicate linked through a replaced sighting, as the Issue list does", async () => {
+    /** @param {string} sk @param {Record<string, unknown>} row */
+    const put = (sk, row) =>
+      rows.set(`SITE#s1|${sk}`, { pk: "SITE#s1", sk, ...row });
+    put("TASK#t8", { taskId: "t8", checkId: "c2", status: "superseded" });
+    put("DUP_LINK#t8", { taskId: "t8", originalTaskId: "t1" });
+    put("TASK#t8#UPDATE#2026-10-07T17:00:00.000Z#u1", {
+      notes: ["Replaced note"],
+      occurredAt: "2026-10-07T17:00:00.000Z",
+    });
+    put("TASK#t9", {
+      taskId: "t9",
+      checkId: "c2",
+      sourceArtifactIds: ["art-8"],
+    });
+    put("DUP_LINK#t9", { taskId: "t9", originalTaskId: "t8" });
+    put("CHECK#c2#ART#art-8", {
+      artifactId: "art-8",
+      s3Key: "checks/s1/c2/art-8",
+    });
+    const { body } = await call(event({ issueId: "t1" }));
+    expect(ids(body.photos)).toContainEqual(["art-8", "check"]);
+    // The replaced sighting itself stays out.
+    expect(body.notes.map((/** @type {any} */ n) => n.text)).not.toContain(
+      "Replaced note",
+    );
+  });
+
+  it("finds a sighting's photo saved under the older key with a place segment", async () => {
+    rows.delete("SITE#s1|CHECK#c2#ART#art-9");
+    rows.set("SITE#s1|CHECK#c2#ART#place-1#art-9", {
+      pk: "SITE#s1",
+      sk: "CHECK#c2#ART#place-1#art-9",
+      artifactId: "art-9",
+      s3Key: "checks/s1/c2/art-9",
+    });
+    const { body } = await call(event({ issueId: "t1" }));
+    expect(ids(body.photos)).toContainEqual(["art-9", "check"]);
+  });
+
   it("answers 404 for an Issue the Site doesn't have", async () => {
     expect((await call(event({ issueId: "nope" }))).status).toBe(404);
     expect(
