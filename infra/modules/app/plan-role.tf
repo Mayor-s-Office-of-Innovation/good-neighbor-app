@@ -1,6 +1,6 @@
 # Read-only role for plan-dev.yml, so a person can read a plan before anything changes.
 # Any job in the plan Environment can assume it from any branch, so that Environment's
-# protection rules decide who can read the dev state.
+# required reviewers decide who can read the dev state.
 
 locals {
   plan_role_enabled = var.plan_role_github_subject != ""

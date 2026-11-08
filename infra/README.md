@@ -83,14 +83,13 @@ resource address and file line; run the plan locally for the detail. It uses the
 `AWS_ACCOUNT_ID` and `AWS_PLAN_ROLE_ARN` (the `terraform_plan_role_arn` output), and the variable
 `AWS_REGION`.
 
-**Before creating `AWS_PLAN_ROLE_ARN`, protect the `dev-plan` Environment.** The role can read the
-dev state file, which holds secrets such as the support origin token, and Lambda environment
-values. Any run of a job in `dev-plan` can assume it, from any branch, and a branch can edit the
-workflow or add Terraform that runs its own code in that job. So the Environment's protection is
-the only gate. Give it required reviewers, so a maintainer approves each run after checking the
-branch, or a deployment branch restriction to protected branches, which stops plans of feature
-branches. `npm ci` and the Lambda build run in a job with no `id-token` permission, which stops a
-package script from taking the role, but not a branch's own changes.
+**Before creating `AWS_PLAN_ROLE_ARN`, give the `dev-plan` Environment required reviewers.** The
+role can read the dev state file, which holds secrets such as the support origin token, and Lambda
+environment values. Any run of a job in `dev-plan` can assume it, from any branch, and a branch can
+edit the workflow or add Terraform that runs its own code in that job. So a maintainer approving
+each run, after checking the branch, is the only gate. `npm ci` and the Lambda build run in a job
+with no `id-token` permission, which stops a package script from taking the role, but not a
+branch's own changes.
 
 It skips the cost-tag state step in `deploy.yml`, because that writes state. The plan also shows
 the Cognito email key policy changing to name the plan role, since its

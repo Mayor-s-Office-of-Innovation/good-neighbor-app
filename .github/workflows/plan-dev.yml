@@ -1,7 +1,7 @@
 name: Plan dev
 
 # Shows what a deploy of a branch would change in dev; deploy.yml applies in the same job.
-# Needs the protected `dev-plan` Environment that infra/README.md describes.
+# Needs the `dev-plan` Environment with required reviewers, as infra/README.md describes.
 on:
   workflow_dispatch:
 
@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev-plan
     # Only this job gets a token. A branch can still edit this file or its Terraform to
-    # run code here, so the dev-plan Environment's protection (see infra/README.md) is the gate.
+    # run code here, so a maintainer approving each run on dev-plan is the gate.
     permissions:
       contents: read
       id-token: write
