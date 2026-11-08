@@ -103,7 +103,17 @@ export function createReportJobs({
     // A poll with no news mustn't redraw the bar or repeat its announcement.
     if (mine !== run || same(current, next)) return;
     current = next;
-    for (const listener of listeners) listener();
+    tell();
+  };
+
+  // A page's drawing bug mustn't fail the report or skip the other pages.
+  const tell = () => {
+    for (const listener of listeners)
+      try {
+        listener();
+      } catch (err) {
+        console.error("report job listener failed", err);
+      }
   };
 
   /** @param {Job} job */
@@ -211,7 +221,7 @@ export function createReportJobs({
       run += 1;
       if (!current) return;
       current = null;
-      for (const listener of listeners) listener();
+      tell();
     },
     /** Whether the ready report's link can still be used. */
     linkFresh() {

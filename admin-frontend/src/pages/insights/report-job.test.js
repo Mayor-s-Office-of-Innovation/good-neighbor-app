@@ -451,16 +451,71 @@ test("a poll that lands after the job was dismissed changes nothing", async () =
   assert.equal(calls.filter((c) => c.name === "get").length, 0);
 });
 
-test("a second report started before the first answers shows its own Site count", async () => {
-  const { api } = fakeApi([]);
+test("a status read already under way when the job is dismissed doesn't bring it back", async () => {
+  /** @type {(value: { job: any }) => void} */
+  let answer = () => {};
   const jobs = createReportJobs({
-    api,
-    create: () => new Promise(() => {}),
+    api: {
+      createInsightsReport: async () => ({ job: job("queued") }),
+      getReportJob: () => new Promise((resolve) => (answer = resolve)),
+    },
     wait: noWait,
   });
-  void jobs.start(["s1"], {});
-  void jobs.start(["s1", "s2"], {});
+  let told = 0;
+  jobs.subscribe(() => (told += 1));
+  const started = jobs.start(["s1"], {});
+  await vi.waitFor(() => assert.equal(jobs.current?.phase, "queued"));
+  jobs.dismiss();
+  const before = told;
+  answer({ job: job("succeeded") });
+  await started;
+  assert.deepEqual([jobs.current, told], [null, before]);
+});
+
+test("when the first report answers after a second was started, only the second is followed", async () => {
+  /** @type {((value: { job: any }) => void)[]} */
+  const answers = [];
+  /** @type {string[]} */
+  const followed = [];
+  const jobs = createReportJobs({
+    api: {
+      createInsightsReport: () =>
+        new Promise((resolve) => answers.push(resolve)),
+      async getReportJob(/** @type {string} */ id) {
+        followed.push(id);
+        return { job: job("succeeded", { jobId: id }) };
+      },
+    },
+    wait: noWait,
+  });
+  const first = jobs.start(["s1"], {});
+  const second = jobs.start(["s1", "s2"], {});
   assert.deepEqual([jobs.current?.phase, jobs.current?.count], ["starting", 2]);
+  answers[0]({ job: job("queued", { jobId: "first" }) });
+  await first;
+  answers[1]({ job: job("queued", { jobId: "second" }) });
+  await second;
+  assert.deepEqual(followed, ["second"]);
+  assert.deepEqual(
+    [jobs.current?.job?.jobId, jobs.current?.count],
+    ["second", 2],
+  );
+});
+
+test("a listener that throws doesn't turn a report into a failed one, or stop the others", async () => {
+  const { api } = fakeApi(["succeeded"]);
+  const jobs = createReportJobs({ api, wait: noWait });
+  /** @type {string[]} */
+  const seen = [];
+  const thrown = vi.spyOn(console, "error").mockImplementation(() => {});
+  jobs.subscribe(() => {
+    throw new Error("listener bug");
+  });
+  jobs.subscribe(() => seen.push(jobs.current?.phase ?? ""));
+  await jobs.start(["s1"], {});
+  thrown.mockRestore();
+  assert.equal(jobs.current?.phase, "succeeded");
+  assert.deepEqual(seen, ["starting", "queued", "succeeded"]);
 });
 
 test("a dismissed job is gone, so its dialog isn't shown again", async () => {
