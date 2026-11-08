@@ -380,6 +380,7 @@
   "admin.insights.quality.beforeCoverage": "Partial period: reporting data begins {day}.",
   "admin.insights.quality.label": "Data Quality Issues",
   "admin.insights.quality.noCoverage": "There's no reporting data yet.",
+  "admin.insights.quality.noTerms": "Some open Sites have no compliance terms, so Few Checks can't flag them.",
   "admin.insights.quality.stale": "This data is more than 6 hours old, so recent changes are missing.",
   "admin.insights.quality.undated": "Some records have no usable time, so they're left out of these counts.",
   "admin.insights.raw": "Raw data",

@@ -197,6 +197,7 @@ export function freshnessView(meta) {
             })),
     (reasons.has("undated_issues") || reasons.has("undated_checks")) &&
       t("admin.insights.quality.undated"),
+    reasons.has("sites_without_terms") && t("admin.insights.quality.noTerms"),
   ].filter((note) => typeof note === "string");
   return `<p class="muted insights__freshness" data-insights-freshness>${escapeHtml(
     time

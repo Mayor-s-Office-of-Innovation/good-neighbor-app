@@ -87,6 +87,9 @@ export function dataQuality(snap, interval, now) {
     reasons.push("undated_checks");
   // Issues with no usable time are left out of every count.
   if (snap.manifest.dataQuality?.undated > 0) reasons.push("undated_issues");
+  // They owe no Checks, so Few Checks can't flag them.
+  if (snap.manifest.dataQuality?.openSitesWithoutTerms > 0)
+    reasons.push("sites_without_terms");
   const partial = reasons.some((r) => r !== "stale_snapshot");
   return {
     state: partial ? "partial" : reasons.length ? "stale" : "ok",

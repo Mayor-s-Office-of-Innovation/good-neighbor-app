@@ -85,6 +85,16 @@ describe("dataQuality", () => {
     });
   });
 
+  it("lists open Sites with no compliance terms as a data gap", () => {
+    const s = edited((_, m) => {
+      m.dataQuality = { ...m.dataQuality, openSitesWithoutTerms: 2 };
+    });
+    expect(dataQuality(s, october, NOW)).toMatchObject({
+      state: "partial",
+      reasons: ["sites_without_terms"],
+    });
+  });
+
   it("flags Issues left out for having no usable time as partial", () => {
     const s = edited((_, m) => {
       m.dataQuality = { ...m.dataQuality, undated: 1 };
