@@ -280,7 +280,7 @@
   "admin.insights.col.response": "Late responses",
   "admin.insights.col.severity": "Worst Issue",
   "admin.insights.col.site": "Site",
-  "admin.insights.colHelp.checks": "Average Perimeter Checks completed a day, over the whole days the Site owed Checks. The bar fills at the Site's required number.",
+  "admin.insights.colHelp.checks": "Average Perimeter Checks completed a day, over the whole days the Site owed Checks. The bar fills at the Site's required number. A Site that owes none shows its average over whole days, with no bar.",
   "admin.insights.colHelp.issuesPer30d": "Average Issues created per 30 days over the period.",
   "admin.insights.colHelp.response": "Issues created in the period that got no response, or a late one, within their response time.",
   "admin.insights.colHelp.severity": "The highest severity among Issues created in the period.",

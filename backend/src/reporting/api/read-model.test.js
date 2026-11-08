@@ -720,11 +720,15 @@ describe("overview", () => {
     expect(row.checksPerDay).toBe(0.3);
   });
 
-  it("gives no average for a Site with no perimeter to walk", () => {
-    expect(shown({}).sites.map((r) => r.checksPerDay)).toEqual([
-      null,
-      null,
-      null,
+  it("averages a Site's Checks over whole days even with no perimeter on file, without flagging it", () => {
+    // s1 completed 2 Checks in October's 31 days, s2 and s3 one each.
+    const rows = shown({ show: "all" }).sites;
+    expect(
+      rows.map((r) => [r.checksPerDay, r.concerns.includes("fewChecks")]),
+    ).toEqual([
+      [0.1, false],
+      [0, false],
+      [0, false],
     ]);
   });
 

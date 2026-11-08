@@ -497,7 +497,7 @@ function siteFacts(snap, site, interval) {
       checks += row.completedPerimeterChecks ?? 0;
   }
   const totals = split(sum);
-  // No perimeter means nothing to walk, so no average.
+  // No perimeter means nothing owed, so no target.
   const owed =
     site.hasPerimeter && range ? owedChecks(snap, site.siteId, range) : null;
   const evaluated = Date.parse(snap.manifest.evaluatedAt);
@@ -524,9 +524,9 @@ function siteFacts(snap, site, interval) {
     ? oneDecimal(owed.completed / owed.days)
     : null;
   // The pages show one average, the one Few Checks judges, when there is one.
+  // Sites with no perimeter on file still log Checks, so they get a plain one.
   const checksPerDay =
-    checksPerOwedDay ??
-    (site.hasPerimeter && days ? oneDecimal(checks / days) : null);
+    checksPerOwedDay ?? (days ? oneDecimal(checks / days) : null);
   // Rounded first, so "3.0 a day" is never under its own number of 3.
   const underOwed =
     checksPerOwedDay !== null &&
