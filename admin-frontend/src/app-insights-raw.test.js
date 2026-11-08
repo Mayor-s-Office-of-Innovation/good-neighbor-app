@@ -582,6 +582,19 @@ test("back from a record reached by Load more restores every loaded row and its 
   assert.equal(api.calls("GET", /^reporting\/issues\?/).length, asked);
 });
 
+test("Load more still works after coming back to a list with rows left to load", async () => {
+  await mountAdmin("/insights/raw/issues?period=2026-10", {
+    insights: true,
+    setup: onePerPage,
+  });
+  await click('[data-record-link="s1|t2"]');
+  await click("#insights-panel-full");
+  await click('[data-crumb="root"]');
+  assert.deepEqual(recordLinks(), ["s1|t2"]);
+  await click("#insights-load-more");
+  assert.deepEqual(recordLinks(), ["s1|t2", "s1|t1"]);
+});
+
 test("each record opened from another is a history entry, so browser Back steps back one record", async () => {
   await mountAdmin("/insights/raw/issues/t1?period=2026-10&siteId=s1", {
     insights: true,

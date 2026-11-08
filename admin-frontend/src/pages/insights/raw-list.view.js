@@ -207,7 +207,8 @@ class InsightsRawList extends HTMLElement {
   /** @param {string} cursor */
   fetchPage(cursor) {
     const params = rawApiParams(this.kind, this.state, this.period, cursor);
-    const signal = /** @type {AbortController} */ (this.controller).signal;
+    // A list restored on Back never ran load(), so it has no controller yet.
+    const signal = (this.controller ??= new AbortController()).signal;
     return this.kind === "issues"
       ? adminApi.reportingIssues(params, signal)
       : adminApi.reportingChecks(params, signal);
