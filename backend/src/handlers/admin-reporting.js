@@ -266,9 +266,10 @@ export function createReportingHandlers({
       return jsonResponse(statusCode, body);
     } catch (err) {
       if (isRequestError(err)) {
-        // A 503 like snapshot_contract_mismatch is ours to fix, so log it. The
-        // snapshot store logs an expired file once itself.
-        if (err.statusCode >= 500 && !(/** @type {any} */ (err).expiredKey))
+        // A 503 like snapshot_contract_mismatch is ours to fix, so log it. A missing
+        // snapshot isn't logged per request, or the error alarm fires before the first
+        // build; the snapshot store logs a dropped or expired one once itself.
+        if (err.statusCode >= 500 && err.code !== "snapshot_unavailable")
           logServerError("admin-reporting", err, {
             extra: { routeKey: /** @type {any} */ (event).routeKey },
           });

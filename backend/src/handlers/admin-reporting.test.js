@@ -21,7 +21,7 @@ const {
 } = await import("./admin-reporting.js");
 const { createSnapshotStore } = await import("../reporting/api/snapshot.js");
 const { memoryJobStore } = await import("../reporting/api/jobs.js");
-const { LIMITS, SITE_DIMENSIONS } = await import(
+const { LIMITS, SITE_DIMENSIONS, requestError } = await import(
   "../reporting/api/requests.js"
 );
 
@@ -171,7 +171,7 @@ describe("reads", () => {
     expect([res.statusCode, json(res).error]).toEqual([400, "invalid_period"]);
   });
 
-  it("answers 503 with no snapshot, so the page shows unavailable, not zero", async () => {
+  it("answers 503 with no snapshot, so the page shows unavailable, not zero, and logs nothing per request", async () => {
     const { h } = setup({
       source: { latest: async () => null, load: async () => ({}) },
     });
@@ -180,8 +180,8 @@ describe("reads", () => {
       503,
       "snapshot_unavailable",
     ]);
-    // Ours to fix, so it reaches the logs, not only the page.
-    expect(logServerError).toHaveBeenCalledOnce();
+    // Every page load before the first build would otherwise trip the error alarm.
+    expect(logServerError).not.toHaveBeenCalled();
   });
 
   it("answers 503 without a log line per request when a snapshot file has expired", async () => {
@@ -189,9 +189,7 @@ describe("reads", () => {
       source: {
         latest: async () => ({ prefix: "p1", snapshotId: "snap1" }),
         load: async () => {
-          throw Object.assign(new Error("snapshot_unavailable"), {
-            code: "snapshot_unavailable",
-            statusCode: 503,
+          throw Object.assign(requestError("snapshot_unavailable", 503), {
             expiredKey: "p1/issues.parquet",
           });
         },
@@ -203,6 +201,26 @@ describe("reads", () => {
       "snapshot_unavailable",
     ]);
     expect(logServerError).not.toHaveBeenCalled();
+  });
+
+  it("logs a 503 that is ours to fix, such as a snapshot of another contract", async () => {
+    const { projection } = setup();
+    const { h } = setup({
+      source: {
+        latest: async () => ({ prefix: "p1", snapshotId: "snap1" }),
+        load: async (/** @type {string} */ prefix) => ({
+          prefix,
+          manifest: { ...projection.manifest, contractVersion: "old" },
+          tables: projection.tables,
+        }),
+      },
+    });
+    const res = await h.getOverview(event());
+    expect([res.statusCode, json(res).error]).toEqual([
+      503,
+      "snapshot_contract_mismatch",
+    ]);
+    expect(logServerError).toHaveBeenCalledOnce();
   });
 
   it("answers 400 without logging, since the caller's request was wrong", async () => {
@@ -811,6 +829,14 @@ describe("export and report jobs", () => {
             /** @type {any} */ (sent.mock.calls[0][0]).input.MessageBody,
           ).insightsJob.jobId,
         ).toBe(json(res).job.jobId);
+      // The job runs after the reply, so it must finish before the S3 mock and folder go.
+      else
+        await vi.waitFor(() => {
+          const record = [...objects].find(([k]) =>
+            k.endsWith(`${json(res).job.jobId}.json`),
+          )?.[1];
+          expect(JSON.parse(String(record)).state).toBe("succeeded");
+        });
     } finally {
       vi.restoreAllMocks();
       conn.closeSync();
