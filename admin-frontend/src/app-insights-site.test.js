@@ -1074,7 +1074,7 @@ test("a contact fixed in Manage since the report doesn't still read Missing", as
   assert.ok(missing('[data-contact="public"] [data-tone]'));
 });
 
-test("a Site contact with only a name on the record shows the name", async () => {
+test("a Site contact with only a name on the record shows the name and reads Missing, as the report does", async () => {
   await mountAdmin("/insights/sites/s1?period=2026-10", {
     insights: true,
     setup: (api) => {
@@ -1083,7 +1083,10 @@ test("a Site contact with only a name on the record shows the name", async () =>
   });
   await settle();
   assert.equal(text('[data-contact="site"] strong'), "Sam Lee");
-  assert.ok(missing('[data-contact="site"] [data-tone]'));
+  assert.equal(
+    text('[data-contact="site"] [data-tone="warn"]'),
+    t("admin.insights.contact.missing"),
+  );
 });
 
 test("a running period is marked incomplete beside the Site's period range, as on Overview", async () => {

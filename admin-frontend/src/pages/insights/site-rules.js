@@ -93,22 +93,35 @@ export function contactShown(kind, reported, person, read) {
       state: reported.state,
       reasonCodes: reported.reasonCodes,
     };
-  if (kind === "site")
-    return person &&
-      (person.firstName || person.lastName || person.email || person.phone)
-      ? { person, state: "available", reasonCodes: [] }
-      : {
-          person: undefined,
-          state: "missing",
-          reasonCodes: ["no_site_contact"],
-        };
+  if (kind === "site" && !person)
+    return {
+      person: undefined,
+      state: "missing",
+      reasonCodes: ["no_site_contact"],
+    };
+  return { person, ...contactState(person ?? {}) };
+}
+
+// The report's rule (backend/src/reporting/indicators.js), so the page and the report agree.
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** @param {unknown} value */
+const trimmed = (value) => (typeof value === "string" ? value.trim() : "");
+
+/** @param {Record<string, string>} contact @returns {ContactState} */
+function contactState(contact) {
+  const email = trimmed(contact.email);
+  const phone = trimmed(contact.phone);
+  const digits = phone.replace(/\D/g, "");
   const reasonCodes = [
-    !person?.email && "no_email",
-    !person?.phone && "no_phone",
+    !email ? "no_email" : !EMAIL.test(email) && "invalid_email",
+    !phone
+      ? "no_phone"
+      : !(digits.length === 10 || (digits.length === 11 && digits[0] === "1")) &&
+        "invalid_phone",
   ].filter((code) => typeof code === "string");
-  return {
-    person,
-    state: reasonCodes.length ? "missing" : "available",
-    reasonCodes,
-  };
+  if (!reasonCodes.length) return { state: "available", reasonCodes };
+  // A value the check rejects may still reach someone; only a blank is surely missing.
+  const blank = reasonCodes.some((code) => code.startsWith("no_"));
+  return { state: blank ? "missing" : "unknown", reasonCodes };
 }

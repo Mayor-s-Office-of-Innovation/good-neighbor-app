@@ -160,10 +160,20 @@ test("once read, Manage's public contact gives both the details and the state", 
   });
 });
 
-test("a Site contact on the record with only a name still counts", () => {
+test("a Site contact needs a working email and phone, as the server's report does", () => {
   const site = { state: "missing", reasonCodes: ["no_site_contact"] };
+  assert.deepEqual(contactShown("site", site, { firstName: "Sam" }, true), {
+    person: { firstName: "Sam" },
+    state: "missing",
+    reasonCodes: ["no_email", "no_phone"],
+  });
   assert.equal(
-    contactShown("site", site, { firstName: "Sam" }, true).state,
+    contactShown(
+      "site",
+      site,
+      { firstName: "Sam", email: "sam@example.org", phone: "415-555-0100" },
+      true,
+    ).state,
     "available",
   );
   assert.deepEqual(contactShown("site", site, undefined, true), {
@@ -171,4 +181,26 @@ test("a Site contact on the record with only a name still counts", () => {
     state: "missing",
     reasonCodes: ["no_site_contact"],
   });
+});
+
+test("a blank or unusable public contact reads as the server's report reads it", () => {
+  /** @param {Record<string, string>} person */
+  const shown = (person) => {
+    const { state, reasonCodes } = contactShown("public", reported, person, true);
+    return [state, reasonCodes];
+  };
+  assert.deepEqual(
+    [
+      shown({ email: "   ", phone: "4155550100" }),
+      shown({ email: "n/a", phone: "4155550100" }),
+      shown({ email: "a@example.org", phone: "555-0100" }),
+      shown({ email: " a@example.org ", phone: "1 (415) 555-0100" }),
+    ],
+    [
+      ["missing", ["no_email"]],
+      ["unknown", ["invalid_email"]],
+      ["unknown", ["invalid_phone"]],
+      ["available", []],
+    ],
+  );
 });
