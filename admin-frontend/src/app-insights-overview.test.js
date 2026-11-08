@@ -193,7 +193,7 @@ test("All Sites lists every Site and keeps the choice in the URL", async () => {
   assert.deepEqual(rows(), ["s1", "s3", "s4", "s2"]);
 });
 
-test("Missing data lists only Sites with unknown evidence", async () => {
+test("Unknown data lists only Sites with unknown evidence", async () => {
   await mountAdmin("/insights", { insights: true });
   await click('[data-show="unknown"]');
   assert.deepEqual(rows(), ["s4"]);

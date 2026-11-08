@@ -82,3 +82,12 @@ test("a manager's line carries their ID, so a late name fills in place", () => {
   const box = table([row({ managerId: "pm1" })]);
   assert.equal(box.querySelector('[data-manager="pm1"]')?.textContent, "pm1");
 });
+
+test("the view of Unknown Sites is named for the Unknown state the Site page shows, not Missing", () => {
+  // Missing is a known gap, such as No public contact; this view lists unknowns only.
+  assert.ok(
+    t("admin.insights.show.unknown").startsWith(
+      t("admin.insights.response.unknown"),
+    ),
+  );
+});
