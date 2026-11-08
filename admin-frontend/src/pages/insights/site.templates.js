@@ -9,7 +9,9 @@ import { CONCERN_RULES } from "./concern-rules.js";
 import {
   codeKey,
   contactWord,
+  countWords,
   failedView,
+  formatCount,
   formatDay,
   formatInstant,
   helpTip,
@@ -278,12 +280,12 @@ function activityView(reply) {
       if (!rate)
         return tile(
           key,
-          `<span data-activity-count>${escapeHtml(count)}</span>`,
+          `<span data-activity-count>${escapeHtml(formatCount(count))}</span>`,
           label,
           help,
         );
       const total = showsTotal(key, periodDays(interval))
-        ? `<span class="insights__tile-l muted" data-activity-count>${escapeHtml(t(key === "issuesCreated" ? "admin.insights.raw.issuesCount" : "admin.insights.raw.checksCount", { count }))}</span>`
+        ? `<span class="insights__tile-l muted" data-activity-count>${escapeHtml(countWords(key === "issuesCreated" ? "admin.insights.raw.issuesCount" : "admin.insights.raw.checksCount", count))}</span>`
         : "";
       return tile(key, rate, label, help, total);
     }).join("")}</div>
@@ -326,7 +328,7 @@ function tilesView(list, reply, tile) {
   return `<div class="insights__tiles insights__tiles--${tiles.length === 5 ? "five" : "four"}">${tiles
     .map(
       (key) =>
-        `<div class="insights__tile${warn.has(key) && counts[key] ? " insights__tile--warn" : ""}" data-${name}="${key}"${warn.has(key) && counts[key] ? " data-warn" : ""}><button type="button" class="btn-plain" data-tile="${key}" aria-pressed="${on.includes(key)}"><span class="insights__tile-n" data-${name}-count>${escapeHtml(counts[key] ?? 0)}</span><span class="insights__tile-l">${tileLabel(list, key)}</span></button>${helpTip(`insights-tip-${name}-${key}`, tileWord(list, key), t(`admin.insights.${name === "band" ? "severityHelp" : "responseHelp"}.${key}`))}</div>`,
+        `<div class="insights__tile${warn.has(key) && counts[key] ? " insights__tile--warn" : ""}" data-${name}="${key}"${warn.has(key) && counts[key] ? " data-warn" : ""}><button type="button" class="btn-plain" data-tile="${key}" aria-pressed="${on.includes(key)}"><span class="insights__tile-n" data-${name}-count>${escapeHtml(formatCount(counts[key] ?? 0))}</span><span class="insights__tile-l">${tileLabel(list, key)}</span></button>${helpTip(`insights-tip-${name}-${key}`, tileWord(list, key), t(`admin.insights.${name === "band" ? "severityHelp" : "responseHelp"}.${key}`))}</div>`,
     )
     .join("")}</div>`;
 }
@@ -461,7 +463,7 @@ function moreView(issues, more) {
   const shown = /** @type {Reply[]} */ (issues.issues).length;
   const count =
     issues.total > shown
-      ? `<p class="muted" data-issues-shown>${escapeHtml(t("admin.insights.issuesShown", { shown, count: issues.total }))}</p>`
+      ? `<p class="muted" data-issues-shown>${escapeHtml(t("admin.insights.issuesShown", { shown: formatCount(shown), count: formatCount(issues.total) }))}</p>`
       : "";
   const failed =
     more && more !== "loading"

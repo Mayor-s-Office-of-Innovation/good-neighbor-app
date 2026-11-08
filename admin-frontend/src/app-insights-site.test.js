@@ -1160,3 +1160,18 @@ test("a month the server says hasn't started yet opens the Site's default month 
   assert.equal(url(), "/insights/sites/s1");
   assert.ok(missing("[data-insights-failed]"));
 });
+
+test("a Site's large counts are grouped, as Raw data's counts are", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-Q4", {
+    insights: true,
+    setup: siteReply((json) => {
+      json.totals.activity.completedPerimeterChecks = 12345;
+      json.totals.response.onTime = 1500;
+    }),
+  });
+  assert.equal(
+    activity("completedPerimeterChecks"),
+    t("admin.insights.raw.checksCount.other", { count: "12,345" }),
+  );
+  assert.equal(response("onTime"), "1,500");
+});

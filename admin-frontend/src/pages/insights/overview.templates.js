@@ -10,6 +10,8 @@ import {
 } from "./insights-query.js";
 import { jobButtonView, resultBarView } from "./job-action.js";
 import {
+  countWords,
+  formatCount,
   helpTip,
   noDataFor,
   oneDecimal,
@@ -114,14 +116,14 @@ const late = (row) => row.response.overdue + row.response.late;
 function lateCount(row, most) {
   const count = late(row);
   const full = most > 0 ? count / most : 0;
-  return `<span class="insights__meter-n" data-late-count>${escapeHtml(count)}</span><span class="insights__meter" role="img" aria-label="${escapeHtml(t("admin.insights.lateMeter", { count, most }))}"><span style="inline-size:${Math.round(full * 100)}%"></span></span>`;
+  return `<span class="insights__meter-n" data-late-count>${escapeHtml(formatCount(count))}</span><span class="insights__meter" role="img" aria-label="${escapeHtml(t("admin.insights.lateMeter", { count: formatCount(count), most: formatCount(most) }))}"><span style="inline-size:${Math.round(full * 100)}%"></span></span>`;
 }
 
 /** Issues with no reliable response history could be late too. @param {SiteRow} row */
 function unknownResponses(row) {
   const count = row.response.unknown ?? 0;
   return count > 0
-    ? `<div class="insights__unknown" data-response-unknown>${escapeHtml(t("admin.insights.responseUnknownCount", { count }))}</div>`
+    ? `<div class="insights__unknown" data-response-unknown>${escapeHtml(countWords("admin.insights.responseUnknownCount", count))}</div>`
     : "";
 }
 
@@ -221,8 +223,10 @@ export function countText(reply, state, total) {
     state.show !== "all" ||
     [state.q, ...OVERVIEW_FILTERS.map((k) => state[k])].some(Boolean);
   return narrowed && total !== null && total > count
-    ? t("admin.insights.siteCountOf", { count, total })
-    : t("admin.insights.siteCount", { count });
+    ? countWords("admin.insights.siteCountOf", count, {
+        total: formatCount(total),
+      })
+    : countWords("admin.insights.siteCount", count);
 }
 
 /** The header box ticks when every listed Site is picked. @param {string[]} listedIds @param {string[]} selected */

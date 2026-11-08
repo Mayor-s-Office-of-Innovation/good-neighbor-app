@@ -103,3 +103,8 @@ test("the view of Unknown Sites is named for the Unknown state the Site page sho
     ),
   );
 });
+
+test("a large late count is grouped, as Raw data's counts are", () => {
+  const box = table([row({ response: { overdue: 1200, late: 34 } })]);
+  assert.equal(box.querySelector("[data-late-count]")?.textContent, "1,234");
+});

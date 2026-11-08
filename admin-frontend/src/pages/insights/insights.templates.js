@@ -20,6 +20,28 @@ import {
   stepPeriod,
 } from "./insights-query.js";
 
+// Admin copy is English in every locale, so numbers group the English way.
+// Shared by every Insights page, so a count reads the same on each.
+const grouped = new Intl.NumberFormat("en-US");
+const plurals = new Intl.PluralRules("en-US");
+
+/** @param {number} value e.g. "250,000" */
+export const formatCount = (value) => grouped.format(value);
+
+/**
+ * t() shows a count as "12345"; this shows "12,345 Issues".
+ * @param {string} key a key with .one and .other forms
+ * @param {number} count
+ * @param {Record<string, string | number>} [params]
+ */
+export function countWords(key, count, params = {}) {
+  const form = `${key}.${plurals.select(count)}`;
+  return t(hasKey(form) ? form : `${key}.other`, {
+    ...params,
+    count: formatCount(count),
+  });
+}
+
 /** @typedef {import("./insights-query.js").Period} Period */
 /** @typedef {{ kind: string, startDay: string, endDay: string, incomplete: boolean, observedTo?: string }} Interval */
 /** @typedef {{ asOf: string | null, interval: Interval | null, dataQuality: { reasons: string[], coverageStart: string | null } }} ReplyMeta */
