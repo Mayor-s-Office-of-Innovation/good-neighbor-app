@@ -1,15 +1,17 @@
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 
-const { runJobs } = vi.hoisted(() => ({
+const { runJobs, submit } = vi.hoisted(() => ({
   runJobs: vi.fn(async () => ({ batchItemFailures: [] })),
+  submit: vi.fn(async () => {}),
 }));
 vi.mock("../src/lambda/analytics-query.js", () => ({ runJobs }));
+// Stands in for a quick worker, so a batch test needs no DynamoDB.
+vi.mock("../src/workers/process-submission.js", () => ({ handler: submit }));
 
 const { SQSClient } = await import("@aws-sdk/client-sqs");
-const { createJobRunner, handleMessage, pickHandler } = await import(
-  "./local-worker.mjs"
-);
+const { createJobRunner, handleBatch, handleMessage, pickHandler } =
+  await import("./local-worker.mjs");
 const { handler: processSubmission } = await import(
   "../src/workers/process-submission.js"
 );
@@ -17,6 +19,16 @@ const { handler: analyzeArtifact } = await import(
   "../src/workers/analyze-artifact.js"
 );
 const { handler: sf311Job } = await import("../src/workers/sf311-job.js");
+
+/** @returns {{ promise: Promise<void>, resolve: () => void }} */
+const deferred = () => {
+  /** @type {() => void} */
+  let resolve = () => {};
+  const promise = new Promise((r) => {
+    resolve = () => r(undefined);
+  });
+  return { promise, resolve };
+};
 
 describe("pickHandler", () => {
   it("sends an Insights job to the code the jobs Lambda runs", async () => {
@@ -48,64 +60,114 @@ describe("pickHandler", () => {
 });
 
 describe("createJobRunner", () => {
-  /** @returns {{ promise: Promise<void>, resolve: () => void }} */
-  const deferred = () => {
-    /** @type {() => void} */
-    let resolve = () => {};
-    const promise = new Promise((r) => {
-      resolve = () => r(undefined);
-    });
-    return { promise, resolve };
-  };
-
-  it("runs two Insights jobs at a time, as the jobs Lambda does, and queues the rest", async () => {
+  it("runs two Insights jobs at a time, as the jobs Lambda does, and refuses a third", async () => {
     const runner = createJobRunner(2);
-    const jobs = [deferred(), deferred(), deferred()];
-    let started = 0;
-    for (const job of jobs)
-      runner.run(() => {
-        started += 1;
-        return job.promise;
-      });
-    await setImmediate();
-    expect(started).toBe(2);
+    const jobs = [deferred(), deferred()];
+    expect(jobs.map((job) => runner.tryRun(() => job.promise))).toEqual([
+      true,
+      true,
+    ]);
+    expect(runner.tryRun(async () => {})).toBe(false);
     jobs[0].resolve();
     await setImmediate();
-    expect(started).toBe(3);
+    expect(runner.tryRun(async () => {})).toBe(true);
+    jobs[1].resolve();
+    await runner.drain();
   });
 
-  it("lets a stop wait for running and queued jobs, so none is cut off mid-run", async () => {
+  it("lets a stop wait for running jobs, so none is cut off mid-run", async () => {
     const runner = createJobRunner(1);
-    const jobs = [deferred(), deferred()];
-    let finished = 0;
-    for (const job of jobs)
-      runner.run(async () => {
-        await job.promise;
-        finished += 1;
-      });
+    const job = deferred();
+    let finished = false;
+    runner.tryRun(async () => {
+      await job.promise;
+      finished = true;
+    });
     let drained = false;
     runner.drain().then(() => {
       drained = true;
     });
-    jobs[0].resolve();
     await setImmediate();
     expect(drained).toBe(false);
-    jobs[1].resolve();
+    job.resolve();
     await vi.waitFor(() => expect(drained).toBe(true));
-    expect(finished).toBe(2);
+    expect(finished).toBe(true);
   });
 
-  it("keeps running the queue after a job throws", async () => {
+  it("frees a slot when a job throws", async () => {
     const runner = createJobRunner(1);
-    let ran = false;
-    runner.run(async () => {
+    runner.tryRun(async () => {
       throw new Error("boom");
     });
-    runner.run(async () => {
-      ran = true;
-    });
     await runner.drain();
-    expect(ran).toBe(true);
+    expect(runner.tryRun(async () => {})).toBe(true);
+  });
+});
+
+describe("handleBatch", () => {
+  const insightsMsg = (/** @type {string} */ id) => ({
+    MessageId: id,
+    ReceiptHandle: `r-${id}`,
+    Body: JSON.stringify({ insightsJob: { ownerKey: "o", jobId: id } }),
+  });
+
+  it("moves on while Insights jobs run, so photo analysis isn't held up", async () => {
+    vi.spyOn(SQSClient.prototype, "send").mockImplementation(async () => ({}));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const gate = deferred();
+    runJobs.mockImplementation(async () => {
+      await gate.promise;
+      return { batchItemFailures: [] };
+    });
+    const runner = createJobRunner(2);
+    try {
+      await handleBatch(
+        "q",
+        [
+          insightsMsg("j1"),
+          { MessageId: "m1", ReceiptHandle: "r1", Body: "{}" },
+        ],
+        runner,
+      );
+      expect(submit).toHaveBeenCalledOnce();
+      // The job loads its code first, so it starts a moment later.
+      await vi.waitFor(() => expect(runJobs).toHaveBeenCalledOnce());
+    } finally {
+      gate.resolve();
+      await runner.drain();
+      runJobs.mockReset();
+      submit.mockClear();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("hands a job back to the queue when the runner is full, rather than hold it past its visibility timeout", async () => {
+    const send = vi
+      .spyOn(SQSClient.prototype, "send")
+      .mockImplementation(async () => ({}));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const gate = deferred();
+    runJobs.mockImplementation(async () => {
+      await gate.promise;
+      return { batchItemFailures: [] };
+    });
+    // One slot, so one job fills it, as two do in the worker.
+    const runner = createJobRunner(1);
+    try {
+      await handleBatch("q", [insightsMsg("j1"), insightsMsg("j2")], runner);
+      await vi.waitFor(() => expect(runJobs).toHaveBeenCalledOnce());
+      expect(
+        send.mock.calls.map(([cmd]) => [
+          cmd.constructor.name,
+          /** @type {any} */ (cmd).input.ReceiptHandle,
+        ]),
+      ).toEqual([["ChangeMessageVisibilityCommand", "r-j2"]]);
+    } finally {
+      gate.resolve();
+      await runner.drain();
+      runJobs.mockReset();
+      vi.restoreAllMocks();
+    }
   });
 });
 

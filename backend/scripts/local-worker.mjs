@@ -11,6 +11,7 @@ import { expireComplianceTerms } from "../src/workers/expire-compliance-terms.js
 // handler succeeds (so a throw leaves it for redelivery, like real SQS).
 
 import {
+  ChangeMessageVisibilityCommand,
   DeleteMessageCommand,
   ReceiveMessageCommand,
   SQSClient,
@@ -43,40 +44,36 @@ const runInsightsJob = async (event) => {
 };
 
 /**
- * Runs a few jobs at a time and queues the rest, without holding up the caller.
+ * Runs a few jobs at a time, without holding up the caller. Holds no queue: a
+ * message waiting in memory would reach its visibility timeout and run twice.
  * @param {number} limit
  */
 export function createJobRunner(limit) {
-  /** @type {(() => Promise<void>)[]} */
-  const waiting = [];
   /** @type {Set<Promise<void>>} */
   const running = new Set();
-  const next = () => {
-    while (running.size < limit && waiting.length) {
-      const task = /** @type {() => Promise<void>} */ (waiting.shift());
+  return {
+    /**
+     * @param {() => Promise<void>} task
+     * @returns {boolean} false when full, so the caller can hand the message back
+     */
+    tryRun(task) {
+      if (running.size >= limit) return false;
       const run = task()
         .catch(() => {})
-        .finally(() => {
-          running.delete(run);
-          next();
-        });
+        .finally(() => running.delete(run));
       running.add(run);
-    }
-  };
-  return {
-    /** @param {() => Promise<void>} task */
-    run(task) {
-      waiting.push(task);
-      next();
+      return true;
     },
     async drain() {
-      while (running.size) await Promise.allSettled([...running]);
+      await Promise.allSettled([...running]);
     },
   };
 }
 
 // Two at a time, like the insights-jobs Lambda's queue trigger.
 const insightsJobs = createJobRunner(2);
+// How soon a job handed back while two run is offered again.
+const INSIGHTS_RETRY_SECONDS = 5;
 
 /**
  * Reduce a thrown error to compact, non-sensitive fields for logging. The worker
@@ -300,23 +297,48 @@ async function poll(queueUrl) {
       continue;
     }
 
-    // Process the whole received batch CONCURRENTLY, mirroring the deployed
-    // Lambda (src/lambda/worker.js). Each artifact's latency is almost entirely
-    // its independent remote analyzer call, so a serial `for … await` here made
-    // an N-photo check pay ~N× one call (visible as analyses landing one at a
-    // time). Each message is still its own single-record event, so delete /
-    // redelivery semantics per message are unchanged.
-    /** @type {Promise<void>[]} */
-    const others = [];
-    for (const msg of received.Messages ?? []) {
-      const handler = pickHandler(msg.Body);
-      const task = () => handleMessage(queueUrl, msg, handler);
-      // Insights jobs can run for minutes; photo analysis shouldn't wait behind them.
-      if (handler === runInsightsJob) insightsJobs.run(task);
-      else others.push(task());
-    }
-    await Promise.allSettled(others);
+    await handleBatch(queueUrl, received.Messages ?? []);
   }
+}
+
+/**
+ * Process the whole received batch CONCURRENTLY, mirroring the deployed
+ * Lambda (src/lambda/worker.js). Each artifact's latency is almost entirely
+ * its independent remote analyzer call, so a serial `for … await` here made
+ * an N-photo check pay ~N× one call (visible as analyses landing one at a
+ * time). Each message is still its own single-record event, so delete /
+ * redelivery semantics per message are unchanged.
+ * @param {string} queueUrl
+ * @param {import("@aws-sdk/client-sqs").Message[]} messages
+ * @param {ReturnType<typeof createJobRunner>} [insights]
+ */
+export async function handleBatch(queueUrl, messages, insights = insightsJobs) {
+  /** @type {Promise<unknown>[]} */
+  const others = [];
+  for (const msg of messages) {
+    const handler = pickHandler(msg.Body);
+    const task = () => handleMessage(queueUrl, msg, handler);
+    // Insights jobs can run for minutes; photo analysis shouldn't wait behind them.
+    if (handler !== runInsightsJob) others.push(task());
+    // Like the Lambda trigger's maximum concurrency, which leaves extra jobs in the queue.
+    else if (!insights.tryRun(task))
+      others.push(
+        sqs
+          .send(
+            new ChangeMessageVisibilityCommand({
+              QueueUrl: queueUrl,
+              ReceiptHandle: msg.ReceiptHandle,
+              VisibilityTimeout: INSIGHTS_RETRY_SECONDS,
+            }),
+          )
+          .catch((err) =>
+            console.error(
+              `[worker] couldn't hand back ${msg.MessageId}: ${summarizeError(err)}`,
+            ),
+          ),
+      );
+  }
+  await Promise.allSettled(others);
 }
 
 /**
