@@ -118,11 +118,11 @@ function lateCount(row, most) {
 }
 
 /**
- * The average Few Checks judges, with a bar full at the Site's own daily number.
+ * The Site page's average too, with a bar full at the Site's own daily number.
  * @param {SiteRow} row
  */
 function checksMeter(row) {
-  const perDay = row.checksPerOwedDay ?? row.checksPerDay;
+  const perDay = row.checksPerDay;
   if (perDay === null || perDay === undefined)
     return muted("admin.insights.none");
   const value = oneDecimal(perDay);

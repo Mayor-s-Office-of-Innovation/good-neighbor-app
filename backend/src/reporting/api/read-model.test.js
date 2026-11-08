@@ -650,24 +650,24 @@ describe("overview", () => {
     ]);
   });
 
-  it("flags on the days the Site owed Checks, but shows the average over every whole day", () => {
-    // It owed nothing on Oct 12, so that day's 0 doesn't count toward the flag.
+  it("averages over the days the Site owed Checks, so a day it owed nothing doesn't pull it down", () => {
+    // It owed nothing on Oct 12, so that day's Checks and its 0 don't count.
     expect(
       [owing([0, 3], [0, 3]), owing([3, 0], [3, 0]), owing([0, 3], [3, 3])].map(
         few,
       ),
     ).toEqual([
-      [1.5, 3, false],
-      [1.5, 3, false],
+      [3, 3, false],
+      [3, 3, false],
       [1.5, 3, true],
     ]);
   });
 
-  it("reports the owed-days average the flag compares, beside the whole-days one", () => {
-    // Its terms began Oct 13: 4.0 a day over both days, 2 on the one it owed 3.
+  it("shows the one average the flag compares, so the pages never show two", () => {
+    // Its terms began Oct 13: 2 on the one day it owed 3, not 4.0 over both days.
     const r = owing([6, 2], [0, 3]);
     expect([r.checksPerDay, r.checksPerOwedDay, ...few(r).slice(1)]).toEqual([
-      4,
+      2,
       2,
       3,
       true,

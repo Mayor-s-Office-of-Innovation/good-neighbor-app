@@ -516,8 +516,6 @@ function siteFacts(snap, site, interval) {
     if (issue.severity > (maxSeverity ?? 0)) maxSeverity = issue.severity;
     if (isLongUnresolved(issue, evaluated)) longUnresolved += 1;
   }
-  const checksPerDay =
-    site.hasPerimeter && days ? oneDecimal(checks / days) : null;
   const checksOwedPerDay = owed?.days
     ? oneDecimal(owed.owed / owed.days)
     : null;
@@ -525,6 +523,10 @@ function siteFacts(snap, site, interval) {
   const checksPerOwedDay = owed?.days
     ? oneDecimal(owed.completed / owed.days)
     : null;
+  // The pages show one average, the one Few Checks judges, when there is one.
+  const checksPerDay =
+    checksPerOwedDay ??
+    (site.hasPerimeter && days ? oneDecimal(checks / days) : null);
   // Rounded first, so "3.0 a day" is never under its own number of 3.
   const underOwed =
     checksPerOwedDay !== null &&
