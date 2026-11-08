@@ -3,8 +3,8 @@
 // two (reporting/api/insights-mock-shape.test.js), so a changed reply fails
 // there before a spec passes against an outdated fake. Requests go through
 // the backend's own parsers, so the fake refuses what the handler refuses.
-// Overview and Issue lists apply every filter and sort; Site replies follow
-// the period.
+// Overview and Issue lists apply every filter and sort; Site rows, rates and
+// concerns follow the period.
 
 import {
   addDays,
@@ -13,6 +13,7 @@ import {
 import { comparisonFor } from "../../backend/src/reporting/periods.js";
 import {
   SITE_ROW_FILTERS,
+  concernsOf,
   issueMatches,
   sortRows,
   sortSiteRows,
@@ -273,42 +274,70 @@ const ZERO = Object.freeze({
   response: Object.freeze(zeros(response)),
 });
 
-/** @param {Interval} period */
-const issueDays = (period) => {
-  const end = addDays(EVALUATED_DAY, 1);
-  return dayKeysBetween(
-    period.startDay,
-    period.endDay < end ? period.endDay : end,
-  ).length;
-};
+// Every fake count happened on this day, so a period without it has none.
+const BUSY_DAY = "2026-10-02";
+
+/** @param {string} a @param {string} b */
+const earlier = (a, b) => (a < b ? a : b);
+/** @param {number} n */
+const oneDecimal = (n) => Math.round(n * 10) / 10;
 
 /**
- * @param {Record<string, any>} site
+ * A Site's row for a period, with its rates and concerns worked out as the
+ * handler does: averages from the day after the records begin, and Issues per
+ * 30 days counting today.
+ * @param {Record<string, any>} site October's counts, all on BUSY_DAY
  * @param {Interval} period
  * @returns {Record<string, any>}
  */
 const counted = (site, period) => {
-  const row =
-    period.endDay <= COVERAGE_START
-      ? {
-          ...site,
-          ...ZERO,
-          maxSeverity: null,
-          checksPerDay: null,
-          checksOwedPerDay: null,
-          checksPerOwedDay: null,
-          longUnresolved: 0,
-          // No activity data, so only today's contacts can still be unknown.
-          concerns: [],
-          unknownEvidence: site.unknownEvidence.filter(
-            (/** @type {string} */ u) => u.endsWith("Contact"),
-          ),
-        }
-      : site;
-  // The handler's rate, so a spec reads the number the Many Issues flag compares.
-  const per30 =
-    (row.activity.issuesCreated * 30) / Math.max(issueDays(period), 30);
-  return { ...row, issuesPer30Days: Math.round(per30 * 10) / 10 };
+  const busy = period.startDay <= BUSY_DAY && BUSY_DAY < period.endDay;
+  const row = busy
+    ? site
+    : {
+        ...site,
+        ...ZERO,
+        maxSeverity: null,
+        longUnresolved: 0,
+        // No Issues, so only today's contacts can still be unknown.
+        unknownEvidence: site.unknownEvidence.filter(
+          (/** @type {string} */ u) => u.endsWith("Contact"),
+        ),
+      };
+  const first =
+    period.startDay > COVERAGE_START
+      ? period.startDay
+      : addDays(COVERAGE_START, 1);
+  /** @param {string} end */
+  const daysTo = (end) =>
+    first < end ? dayKeysBetween(first, end).length : 0;
+  const wholeDays = daysTo(earlier(period.endDay, EVALUATED_DAY));
+  const issueDays = daysTo(earlier(period.endDay, addDays(EVALUATED_DAY, 1)));
+  const checksPerDay = wholeDays
+    ? oneDecimal(row.activity.completedPerimeterChecks / wholeDays)
+    : null;
+  const issuesPer30Days = issueDays
+    ? oneDecimal((row.activity.issuesCreated * 30) / Math.max(issueDays, 30))
+    : null;
+  const underOwed =
+    checksPerDay !== null &&
+    row.checksOwedPerDay !== null &&
+    checksPerDay < row.checksOwedPerDay;
+  return {
+    ...row,
+    checksPerDay,
+    checksPerOwedDay: row.checksOwedPerDay === null ? null : checksPerDay,
+    issuesPer30Days,
+    concerns: concernsOf(
+      {
+        totals: row,
+        underOwed,
+        longUnresolved: row.longUnresolved,
+        issuesPer30Days,
+      },
+      row.status !== "inactive",
+    ),
+  };
 };
 
 /** @param {Record<string, any>[]} rows */
@@ -390,8 +419,8 @@ function siteReply(siteId, query) {
   const days = [];
   for (let day = first; day < last; day = addDays(day, 1))
     days.push({ day, ...ZERO.activity, ...ZERO.response });
-  // One busy day holds the period's counts, so the day table has a row to read.
-  if (days.length) Object.assign(days[0], row.activity, row.response);
+  const busy = days.find((d) => d.day === BUSY_DAY);
+  if (busy) Object.assign(busy, row.activity, row.response);
   const dimsOnly = Object.fromEntries(
     Object.keys(dims).map((k) => [k, /** @type {any} */ (row)[k]]),
   );
@@ -636,6 +665,7 @@ export const insightsReplies = {
   "GET reporting/scope-options": {
     json: {
       meta: meta(null),
+      // Every fake Site, counted per value as the handler counts them.
       groups: Object.fromEntries(
         [
           "status",
@@ -644,10 +674,20 @@ export const insightsReplies = {
           "programId",
           "department",
           "managerId",
-        ].map((dim) => [
-          dim,
-          [{ value: String(/** @type {any} */ (dims)[dim]), sites: 1 }],
-        ]),
+        ].map((dim) => {
+          /** @type {Map<string, number>} */
+          const counts = new Map();
+          for (const site of SITES) {
+            const value = String(/** @type {any} */ (site)[dim]);
+            counts.set(value, (counts.get(value) ?? 0) + 1);
+          }
+          return [
+            dim,
+            [...counts]
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([value, sites]) => ({ value, sites })),
+          ];
+        }),
       ),
       categories: [issue.category],
       // Only with include=sites; insightsReply drops it otherwise.

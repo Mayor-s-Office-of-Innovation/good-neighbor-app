@@ -580,7 +580,7 @@ function siteFacts(snap, site, interval) {
  * @param {boolean} active
  * @returns {string[]}
  */
-function concernsOf(
+export function concernsOf(
   {
     totals: { activity, response },
     underOwed,

@@ -268,6 +268,49 @@ describe("the admin E2E Insights mock", () => {
     ]).toEqual([false, false]);
   });
 
+  it("works out each Site's counts, rates and concerns for the period asked, as the handler does", () => {
+    /** @param {string} search */
+    const s1 = (search) =>
+      insightsReply({ method: "GET", path: "reporting/overview", search })
+        ?.json.sites.find((/** @type {any} */ r) => r.siteId === "s1");
+    const [october, november, beforeRecords] = [
+      s1("period=month&month=2026-10&show=all"),
+      s1("period=month&month=2026-11&show=all"),
+      s1("period=month&month=2025-06&show=all"),
+    ];
+    const pick = (/** @type {any} */ r) => [
+      r.activity.issuesCreated,
+      r.maxSeverity,
+      r.checksPerDay,
+      r.issuesPer30Days,
+      r.concerns,
+    ];
+    expect([pick(october), pick(november), pick(beforeRecords)]).toEqual([
+      // 62 Checks over 31 days; 9 Issues × 30 / 31.
+      [9, 4, 2, 8.7, ["fewChecks", "repeatedSevere", "manyIssues", "slowResponse"]],
+      [0, null, 0, 0, ["fewChecks"]],
+      // No records, so no rate: the handler sends null, not 0.
+      [0, null, null, null, []],
+    ]);
+  });
+
+  it("offers every fake Site's value in each scope group, with real counts", () => {
+    const groups = insightsReply({
+      method: "GET",
+      path: "reporting/scope-options",
+    })?.json.groups;
+    expect([groups.providerId, groups.status]).toEqual([
+      [
+        { value: "v1", sites: 3 },
+        { value: "v2", sites: 1 },
+      ],
+      [
+        { value: "active", sites: 3 },
+        { value: "inactive", sites: 1 },
+      ],
+    ]);
+  });
+
   it("explains on the admin pages the same concern limits the server flags", () => {
     expect(ADMIN_CONCERN_RULES).toEqual(CONCERN_RULES);
   });
