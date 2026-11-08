@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
-import { buffer } from "node:stream/consumers";
+import { S3Client } from "@aws-sdk/client-s3";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -39,7 +39,7 @@ const LAKE_ITEMS = [
 let tmp;
 /** @type {string} */
 let scratch;
-/** @type {{ key: string, body: any, length?: number }[]} */
+/** @type {{ key: string, body: any }[]} */
 let puts;
 /** @type {{ send: import("vitest").Mock }} */
 let s3;
@@ -53,10 +53,8 @@ beforeEach(async () => {
   puts = [];
   s3 = {
     send: vi.fn(async (command) => {
-      const { Key, Body, ContentLength } = command.input;
-      // Read a streamed body, as S3 would, so the test sees its text.
-      const body = Body instanceof Readable ? await buffer(Body) : Body;
-      puts.push({ key: Key, body, length: ContentLength });
+      const { Key, Body } = command.input;
+      puts.push({ key: Key, body: Body });
     }),
   };
   vi.spyOn(console, "log").mockImplementation(() => {});
@@ -150,18 +148,6 @@ describe("buildLatestProjection", () => {
     await mkdir(join(scratch, "insights-projection-other"));
     await build();
     expect(await readdir(scratch)).toEqual(["insights-projection-other"]);
-  });
-
-  it("streams each table with its length, so no file sits whole in memory", async () => {
-    vi.spyOn(s3, "send");
-    await build();
-    const tables = s3.send.mock.calls
-      .map(([command]) => command.input)
-      .filter((input) => input.Key.endsWith(".parquet"));
-    expect(tables.length).toBeGreaterThan(1);
-    for (const input of tables) expect(input.Body).toBeInstanceOf(Readable);
-    for (const put of puts.filter((p) => p.key.endsWith(".parquet")))
-      expect(put.length).toBe(put.body.length);
   });
 
   it("closes DuckDB before uploading, so its memory is free for the upload", async () => {
@@ -315,5 +301,44 @@ describe("publishProjection", () => {
     });
     expect(puts[0].key).toBe("projections/v9/snap/sites.parquet");
     expect(String(puts[0].body)).toBe("rows");
+  });
+
+  it("retries a table upload that S3 throttles once", async () => {
+    const dir = join(tmp, "built");
+    await mkdir(dir);
+    await writeFile(join(dir, "sites.parquet"), "rows");
+    /** @type {string[]} */
+    const attempts = [];
+    const client = new S3Client({
+      region: "us-west-2",
+      credentials: { accessKeyId: "test", secretAccessKey: "test" },
+      requestHandler: {
+        handle: async (/** @type {any} */ request) => {
+          attempts.push(request.path);
+          const slowDown = attempts.length === 1;
+          return {
+            response: {
+              statusCode: slowDown ? 503 : 200,
+              headers: {},
+              body: Readable.from(
+                slowDown ? ["<Error><Code>SlowDown</Code></Error>"] : [],
+              ),
+            },
+          };
+        },
+      },
+    });
+    await publishProjection({
+      s3: client,
+      bucket: "lake",
+      dir,
+      manifest: { contractVersion: "v9", snapshotId: "snap" },
+      written: ["sites.parquet"],
+    });
+    expect(attempts).toEqual([
+      "/projections/v9/snap/sites.parquet",
+      "/projections/v9/snap/sites.parquet",
+      `/${LATEST_PROJECTION_KEY}`,
+    ]);
   });
 });

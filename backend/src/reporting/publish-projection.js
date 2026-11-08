@@ -1,8 +1,7 @@
 // Readers find a snapshot through latest.json, so it's written last and a
 // failed run leaves the previous snapshot in place.
 
-import { createReadStream } from "node:fs";
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -48,20 +47,18 @@ export async function publishProjection({
 }) {
   const snapshotId = String(manifest.snapshotId);
   const prefix = `projections/${manifest.contractVersion}/${snapshotId}`;
-  // Streamed, so a large table never sits whole in the Lambda's memory.
+  // Buffers, not streams: the AWS SDK won't retry a streamed body after a 503.
   await Promise.all(
-    written.map(async (name) => {
-      const path = join(dir, name);
-      await s3.send(
+    written.map(async (name) =>
+      s3.send(
         new PutObjectCommand({
           Bucket: bucket,
           Key: `${prefix}/${name}`,
-          Body: createReadStream(path),
-          ContentLength: (await stat(path)).size,
+          Body: await readFile(join(dir, name)),
           ServerSideEncryption: "aws:kms",
         }),
-      );
-    }),
+      ),
+    ),
   );
   await s3.send(
     new PutObjectCommand({
