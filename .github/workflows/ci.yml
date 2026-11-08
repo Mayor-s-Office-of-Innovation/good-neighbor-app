@@ -405,14 +405,14 @@ jobs:
         run: node --test infra/scripts/*.test.mjs
 
       - name: Init without backend
-        run: terraform init -backend=false
+        run: bash "$GITHUB_WORKSPACE/infra/scripts/tf-init-retry.sh"
 
       - name: Validate
         run: terraform validate
 
       - name: Initialize production tests without backend
         working-directory: infra/environments/prod
-        run: terraform init -backend=false
+        run: bash "$GITHUB_WORKSPACE/infra/scripts/tf-init-retry.sh"
 
       - name: Test production Terraform inputs
         working-directory: infra/environments/prod

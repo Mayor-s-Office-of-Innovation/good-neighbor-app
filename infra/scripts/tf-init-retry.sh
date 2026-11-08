@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: tf-init-retry.sh <init args...>  Registry discovery can fail with a transient
-# connection reset, so CI's inits retry here, in one place, instead of in a loop pasted into each step.
+# connection reset, so ci.yml's backend-free inits retry here, in one place, instead of in a loop pasted into each step.
 # It always adds -backend=false and refuses any backend flag, so its callers never need credentials.
 set -uo pipefail
 
