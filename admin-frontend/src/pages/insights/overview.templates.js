@@ -127,6 +127,12 @@ function unknownResponses(row) {
     : "";
 }
 
+/** Says why the Site is under Unknown data, since its Checks have no target bar. @param {SiteRow} row */
+const noTerms = (row) =>
+  row.unknownEvidence?.includes("terms")
+    ? `<div class="insights__unknown" data-no-terms>${escapeHtml(t("admin.insights.noTerms"))}</div>`
+    : "";
+
 /** The Site page's Checks a day, so the two pages never disagree. @param {SiteRow} row */
 function checksMeter(row) {
   const perDay = row.checksPerDay;
@@ -188,7 +194,7 @@ function siteRow(row, { selected, noData, siteHref, names, most }) {
         : ""
     }</th>
     <td role="cell" class="insights__num" ${label("checks")} data-checks>${
-      noData ? unavailable() : checksMeter(row)
+      noData ? unavailable() : `${checksMeter(row)}${noTerms(row)}`
     }</td>
     <td role="cell" class="insights__num" ${label("response")} data-response-cell>${noData ? unavailable() : `${lateCount(row, most.late)}${unknownResponses(row)}`}</td>
     <td role="cell" ${label("severity")} data-issues>${

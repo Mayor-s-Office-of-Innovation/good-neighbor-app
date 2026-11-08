@@ -78,12 +78,6 @@ test("records left out for having no time are named once", () => {
   assert.equal(html.split(t("admin.insights.quality.undated")).length, 2);
 });
 
-test("open Sites with no compliance terms are named with the other data gaps", () => {
-  const html = freshnessView(meta(["sites_without_terms"]));
-  assert.ok(html.includes(t("admin.insights.quality.noTerms")));
-  assert.ok(html.includes("data-insights-quality"));
-});
-
 test("a period starting before the data says it's partial", () => {
   const html = freshnessView(meta(["before_coverage"], {}, "2026-10-15"));
   assert.ok(

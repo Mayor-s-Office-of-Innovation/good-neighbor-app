@@ -91,9 +91,10 @@ function reportCategory(category) {
  * Contacts are labelled "current", because the app keeps no contact history.
  * @param {Record<string, any>[]} sites
  * @param {string} evaluatedAt
+ * @param {Set<string>} withTerms Sites with any compliance terms in the lake
  * @returns {{ sites: Record<string, any>[], siteContacts: Record<string, any>[] }}
  */
-function buildSiteTables(sites, evaluatedAt) {
+function buildSiteTables(sites, evaluatedAt, withTerms) {
   return {
     sites: sites.map((s) => ({
       siteId: String(s.siteId),
@@ -109,6 +110,8 @@ function buildSiteTables(sites, evaluatedAt) {
         Number.isFinite(s.location?.longitude),
       hasPerimeter:
         typeof s.perimeter === "string" && s.perimeter.trim() !== "",
+      // Few Checks can't flag a Site with no terms, so Overview lists it with the unknowns.
+      hasTerms: withTerms.has(String(s.siteId)),
       createdAt: s.createdAt ?? null,
     })),
     siteContacts: sites.map((s) => {
@@ -188,6 +191,7 @@ export const TABLE_SCHEMAS = {
     managerId: V,
     hasLocation: B,
     hasPerimeter: B,
+    hasTerms: B,
     createdAt: V,
   },
   checks: {
@@ -409,7 +413,16 @@ async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
     { ruleId: V, hours: D },
     [...ruleHours].map(([ruleId, hours]) => ({ ruleId, hours })),
   );
-  const { sites, siteContacts } = buildSiteTables(siteRecords, evaluatedAt);
+  const withTerms = new Set(
+    (await rows(conn, "SELECT DISTINCT siteId FROM in_terms")).map((r) =>
+      String(r.siteId),
+    ),
+  );
+  const { sites, siteContacts } = buildSiteTables(
+    siteRecords,
+    evaluatedAt,
+    withTerms,
+  );
   await loadRows(conn, "p_sites", TABLE_SCHEMAS.sites, sites);
   await loadRows(
     conn,

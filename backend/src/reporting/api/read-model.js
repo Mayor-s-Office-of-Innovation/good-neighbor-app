@@ -87,9 +87,6 @@ export function dataQuality(snap, interval, now) {
     reasons.push("undated_checks");
   // Issues with no usable time are left out of every count.
   if (snap.manifest.dataQuality?.undated > 0) reasons.push("undated_issues");
-  // They owe no Checks, so Few Checks can't flag them.
-  if (snap.manifest.dataQuality?.openSitesWithoutTerms > 0)
-    reasons.push("sites_without_terms");
   const partial = reasons.some((r) => r !== "stale_snapshot");
   return {
     state: partial ? "partial" : reasons.length ? "stale" : "ok",
@@ -370,6 +367,7 @@ function siteRows(snap, interval, sites) {
       concerns: facts.concerns,
       unknownEvidence: unknownsOf(facts.totals, indicators, {
         active: site.status !== "inactive",
+        hasTerms: site.hasTerms,
       }),
       manageHref: manageHref(site.siteId),
     };
@@ -602,14 +600,16 @@ export function concernsOf(
  * don't matter.
  * @param {ReturnType<typeof split>} totals
  * @param {ReturnType<typeof contacts>} indicators
- * @param {{ active: boolean }} site
+ * @param {{ active: boolean, hasTerms?: boolean | null }} site
  * @returns {string[]}
  */
-function unknownsOf({ response }, indicators, { active }) {
+function unknownsOf({ response }, indicators, { active, hasTerms }) {
   return [
     response.unknown > 0 && "response",
     active && indicators.publicContact.state === "unknown" && "publicContact",
     active && indicators.siteContact.state === "unknown" && "siteContact",
+    // With no terms it owes no Checks, so Few Checks can't flag it.
+    active && hasTerms === false && "terms",
   ].filter((c) => typeof c === "string");
 }
 

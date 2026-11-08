@@ -85,13 +85,13 @@ describe("dataQuality", () => {
     });
   });
 
-  it("lists open Sites with no compliance terms as a data gap", () => {
+  it("leaves Sites with no compliance terms to Overview's list, not every reply", () => {
     const s = edited((_, m) => {
       m.dataQuality = { ...m.dataQuality, openSitesWithoutTerms: 2 };
     });
     expect(dataQuality(s, october, NOW)).toMatchObject({
-      state: "partial",
-      reasons: ["sites_without_terms"],
+      state: "ok",
+      reasons: [],
     });
   });
 
@@ -1007,6 +1007,19 @@ describe("overview", () => {
     });
     expect([res.sites.length, res.siteCount]).toEqual([150, 150]);
     expect(Object.keys(res)).not.toContain("nextCursor");
+  });
+
+  it("lists open Sites with no compliance terms with the unknown data", () => {
+    // s3 is closed, and a snapshot from before the column says nothing.
+    const gaps = edited((t) => {
+      for (const s of t.sites) if (s.siteId !== "s2") s.hasTerms = false;
+    });
+    expect(
+      shown({ show: "unknown" }, gaps).sites.map((r) => [
+        r.siteId,
+        r.unknownEvidence,
+      ]),
+    ).toEqual([["s1", ["terms"]]]);
   });
 
   it("shows Sites with unknown evidence when asked", () => {

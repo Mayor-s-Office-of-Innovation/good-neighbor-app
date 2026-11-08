@@ -88,6 +88,15 @@ test("Overdue or late says how many Issues have an unknown response, so 0 isn't 
   assert.ok(!table([row({})]).querySelector("[data-response-unknown]"));
 });
 
+test("a Site with no compliance terms says so under its Checks a day", () => {
+  const box = table([row({ unknownEvidence: ["terms"] })]);
+  assert.equal(
+    box.querySelector("[data-no-terms]")?.textContent,
+    t("admin.insights.noTerms"),
+  );
+  assert.ok(!table([row({})]).querySelector("[data-no-terms]"));
+});
+
 test("a manager's line carries their ID, so a late name fills in place", () => {
   const box = table([row({ managerId: "pm1" })]);
   assert.equal(box.querySelector('[data-manager="pm1"]')?.textContent, "pm1");

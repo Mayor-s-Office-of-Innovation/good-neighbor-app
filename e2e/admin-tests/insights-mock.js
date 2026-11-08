@@ -52,7 +52,7 @@ const OCTOBER = requestedPeriod({ period: "month", month: "2026-10" });
 /** @param {Interval | null} period */
 const meta = (period) => ({
   apiVersion: "reporting-v3",
-  contractVersion: "insights-v3",
+  contractVersion: "insights-v4",
   ruleVersion: "2026-11-04",
   snapshotId: SNAPSHOT_ID,
   asOf: "2026-11-04T18:00:00.000Z",

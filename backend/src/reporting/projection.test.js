@@ -260,7 +260,7 @@ describe("buildProjection over a lake written like an export", () => {
     ]);
   });
 
-  it("counts open Sites with no compliance terms, so terms missing from the lake show", async () => {
+  it("marks each Site with no compliance terms, so terms missing from the lake show", async () => {
     // Exports only carry changed items, so terms written before the first export never arrive.
     const count = async (/** @type {Record<string, any>[]} */ kept) => {
       await writeLocalLake(conn, dir, [...items, ...kept], {
@@ -268,10 +268,17 @@ describe("buildProjection over a lake written like an export", () => {
         exportId: "e1",
       });
       await createLocalViews(conn, dir);
-      return (await build()).manifest.dataQuality.openSitesWithoutTerms;
+      const { manifest, tables } = await build();
+      return [
+        manifest.dataQuality.openSitesWithoutTerms,
+        tables.sites.map((s) => [s.siteId, s.hasTerms]),
+      ];
     };
     expect([await count([]), await count([terms("s1", "2026-10-18")])]).toEqual(
-      [1, 0],
+      [
+        [1, [["s1", false]]],
+        [0, [["s1", true]]],
+      ],
     );
   });
 
