@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 
 const script = fileURLToPath(
   new URL("./unpack-lambda-dist.sh", import.meta.url),
@@ -21,17 +22,13 @@ const script = fileURLToPath(
 const workflow = fileURLToPath(
   new URL("../../.github/workflows/plan-dev.yml", import.meta.url),
 );
-const bsdtar = /bsdtar/.test(
-  spawnSync("tar", ["--version"], { encoding: "utf8" }).stdout,
-);
 
 /**
  * Packs `files` into an archive, unpacks it into a fresh checkout and returns
  * what landed.
  * @param {(source: string) => void} files writes the archive's contents
- * @param {string[]} [tarArgs] extra flags for the packing tar
  */
-function unpack(files, tarArgs = []) {
+function unpack(files) {
   const directory = mkdtempSync(join(tmpdir(), "gn-unpack-test-"));
   const source = join(directory, "source");
   const checkout = join(directory, "checkout");
@@ -40,11 +37,9 @@ function unpack(files, tarArgs = []) {
   writeFileSync(join(checkout, "infra", "scripts", "plan-summary.jq"), "safe");
   files(source);
   const archive = join(directory, "lambda-dist.tgz");
-  const pack = spawnSync(
-    "tar",
-    ["-czf", archive, ...tarArgs, "-C", source, "."],
-    { encoding: "utf8" },
-  );
+  const pack = spawnSync("tar", ["-czf", archive, "-C", source, "."], {
+    encoding: "utf8",
+  });
   assert.equal(pack.status, 0, pack.stderr);
   const result = spawnSync("bash", [script, archive, checkout], {
     encoding: "utf8",
@@ -106,15 +101,65 @@ test("refuses a symlink inside backend/dist", () => {
   }
 });
 
+/**
+ * Builds a gzipped ustar archive byte by byte, since GNU tar strips a leading
+ * `../` when it packs one.
+ * @param {{ name: string, body?: string }[]} members a trailing `/` makes a folder
+ */
+function rawTar(members) {
+  const blocks = members.flatMap(({ name, body = "" }) => {
+    const header = Buffer.alloc(512);
+    const dir = name.endsWith("/");
+    const field = (/** @type {string} */ value, /** @type {number} */ at) =>
+      header.write(value, at, "ascii");
+    field(name, 0);
+    field(dir ? "0000755\0" : "0000644\0", 100);
+    field("0000000\0", 108);
+    field("0000000\0", 116);
+    field(`${body.length.toString(8).padStart(11, "0")}\0`, 124);
+    field("00000000000\0", 136);
+    field("        ", 148);
+    field(dir ? "5" : "0", 156);
+    field("ustar\0" + "00", 257);
+    const sum = header.reduce((total, byte) => total + byte, 0);
+    field(`${sum.toString(8).padStart(6, "0")}\0 `, 148);
+    const data = Buffer.alloc(Math.ceil(body.length / 512) * 512);
+    data.write(body);
+    return [header, data];
+  });
+  return gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)]));
+}
+
 test("refuses a member that climbs out with ..", () => {
-  const rename = bsdtar
-    ? ["-s", ",^\\./backend/dist/api/index.mjs$,../escaped,"]
-    : ["--transform", "s,^\\./backend/dist/api/index.mjs$,../escaped,"];
-  const { result, checkout, directory } = unpack(bundle, rename);
+  const directory = mkdtempSync(join(tmpdir(), "gn-unpack-test-"));
   try {
+    // The script's staging folder sits in TMPDIR, so ../escaped lands here.
+    const temp = join(directory, "tmp");
+    const checkout = join(directory, "checkout");
+    mkdirSync(temp);
+    mkdirSync(checkout);
+    const archive = join(directory, "lambda-dist.tgz");
+    writeFileSync(
+      archive,
+      rawTar([
+        { name: "backend/" },
+        { name: "backend/dist/" },
+        { name: "backend/dist/index.mjs", body: "code" },
+        { name: "../escaped", body: "evil" },
+      ]),
+    );
+    const list = spawnSync("tar", ["-tzf", archive], { encoding: "utf8" });
+    assert.match(
+      list.stdout,
+      /^\.\.\/escaped$/m,
+      "archive lost its ../ member",
+    );
+    const result = spawnSync("bash", [script, archive, checkout], {
+      encoding: "utf8",
+      env: { ...process.env, TMPDIR: temp },
+    });
     assert.notEqual(result.status, 0);
-    assert.equal(existsSync(join(checkout, "escaped")), false);
-    assert.equal(existsSync(join(directory, "escaped")), false);
+    assert.equal(existsSync(join(temp, "escaped")), false);
     assert.equal(existsSync(join(checkout, "backend", "dist")), false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
