@@ -227,7 +227,7 @@ run "insights_infra" {
       for rule in aws_s3_bucket_lifecycle_configuration.insights_jobs.rule :
       rule.status == "Enabled" && rule.expiration[0].days == 1 && rule.filter[0].prefix == ""
     ])
-    error_message = "Every job file must expire after 1 day, matching the job lifetime in jobs.js."
+    error_message = "Every job file must expire at S3's shortest, 1 day (24-48 h), outliving the job lifetime in jobs.js."
   }
 
   assert {
@@ -356,5 +356,13 @@ run "insights_waf" {
       if rule.name == "BodySizeRestrictionsOutsideAssessmentEvaluation"
     ]), "/admin/v1/reports/insights")
     error_message = "The Insights report POST must be exempt from the 8 KiB body rule, or a report of about 200 Sites is blocked."
+  }
+
+  assert {
+    condition = strcontains(jsonencode([
+      for rule in aws_wafv2_web_acl.web.rule : rule
+      if rule.name == "BodySizeRestrictionsOutsideAssessmentEvaluation"
+    ]), "/admin/v1/reporting/trends")
+    error_message = "The Insights trends POST must be exempt from the 8 KiB body rule, or a chart of 50 Sites and their groups is blocked."
   }
 }

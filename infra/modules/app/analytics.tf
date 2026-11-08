@@ -99,9 +99,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "analytics_lake" {
     }
   }
 
-  # Each build writes a new snapshot, and a job reads its snapshot for at most a
-  # day. A latest.json this old means builds stopped long ago, so losing it
-  # shows Insights' "no data" state instead of month-old numbers.
+  # A snapshot this old means builds stopped, so Insights shows "no data", not old numbers.
+  # Its files may go a day before latest.json; snapshot.js reads that as no data too.
   rule {
     id     = "expire-projections"
     status = "Enabled"
@@ -652,10 +651,8 @@ resource "aws_iam_role" "analytics_query" {
 
 data "aws_iam_policy_document" "analytics_query" {
   statement {
-    # Objects only from projections, which hold no addresses, people or free text.
-    # ListBucket makes S3 answer a missing latest.json with NoSuchKey, not 403,
-    # so Insights can tell "no data yet" from a broken role. It lists key names
-    # across the whole bucket.
+    # Projections hold no addresses, people or free text. ListBucket (whole bucket) makes
+    # a missing latest.json NoSuchKey, not 403, so "no data yet" isn't a broken role.
     sid       = "ReadProjections"
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:ListBucket"]

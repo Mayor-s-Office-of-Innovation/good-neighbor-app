@@ -68,7 +68,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "insights_jobs" {
   bucket = aws_s3_bucket.insights_jobs.id
 
   rule {
-    # Matches JOB_LIMITS.ttlMs in backend/src/reporting/api/jobs.js.
+    # The shortest S3 allows. It rounds to UTC midnight, so files last 24-48 h,
+    # past JOB_LIMITS.ttlMs in jobs.js, which has already stopped serving them.
     id     = "expire-job-files"
     status = "Enabled"
 
@@ -100,9 +101,8 @@ resource "aws_sqs_queue" "insights_jobs" {
   kms_master_key_id = aws_kms_key.app.arn
   # A job expires after a day, so an older message has nothing left to run.
   message_retention_seconds = 86400
-  # Six times the jobs Lambda's timeout, as AWS advises and the other queues do,
-  # so it also passes JOB_LIMITS.stallMs (360 s) and SQS can't hand a running job
-  # to a second invocation before jobs.js has given up on the first.
+  # Six times the jobs Lambda's timeout, as AWS advises, so SQS can't hand a job
+  # to a second run before jobs.js gives up on the first (stallMs, 360 s).
   visibility_timeout_seconds = 1800
   # Five, like the other queues, so a few throttled deliveries can't dead-letter
   # a job that never ran.
@@ -280,7 +280,7 @@ resource "aws_cloudwatch_metric_alarm" "insights_jobs_dlq_not_empty" {
 # One 5-minute period, so it fires at 10-15 minutes, before jobs.js gives up at 15.
 resource "aws_cloudwatch_metric_alarm" "insights_jobs_queue_backlog" {
   alarm_name          = "${local.name_prefix}-insights-jobs-queue-backlog"
-  alarm_description   = "The oldest message on ${aws_sqs_queue.insights_jobs.name} has waited more than 10 minutes, and jobs.js gives up on a queued job at 15. Check ${aws_lambda_function.insights_jobs.function_name} error alarms and logs in ${aws_cloudwatch_log_group.insights_jobs.name}."
+  alarm_description   = "A message on ${aws_sqs_queue.insights_jobs.name} is more than 10 minutes old. Either jobs are waiting, and jobs.js gives up on a queued job at 15 minutes, or a job died and SQS redelivered it after the 30-minute visibility timeout. Check ${aws_lambda_function.insights_jobs.function_name} error alarms and logs in ${aws_cloudwatch_log_group.insights_jobs.name}."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1

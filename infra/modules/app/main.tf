@@ -1428,7 +1428,7 @@ resource "aws_wafv2_web_acl" "web" {
         vendor_name = "AWS"
 
         # Keep detection/labels, then restore blocking outside the exact
-        # evaluation, CSV preview and report routes below. Other rules still enforce.
+        # evaluation, CSV preview and Insights routes below. Other rules still enforce.
         rule_action_override {
           name = "SizeRestrictions_BODY"
           action_to_use {
@@ -1445,10 +1445,10 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
-  # Assessments, CSV previews and Insights reports exceed the managed 8 KiB body
-  # limit. Only these exact POST routes are exempt; their handlers enforce decoded
-  # limits of 64 KiB, 1 MiB / 500 rows and 2,000 Sites respectively. Preserve the
-  # rule name and metric for existing dashboards and log queries.
+  # Assessments, CSV previews and Insights reports and trends exceed the managed
+  # 8 KiB body limit. Only these exact POST routes are exempt; their handlers enforce
+  # 64 KiB, 1 MiB / 500 rows, 2,000 Sites, and 50 Sites with 50 values per group.
+  # Preserve the rule name and metric for existing dashboards and log queries.
   rule {
     name     = "BodySizeRestrictionsOutsideAssessmentEvaluation"
     priority = 10
@@ -1550,6 +1550,40 @@ resource "aws_wafv2_web_acl" "web" {
                   byte_match_statement {
                     positional_constraint = "EXACTLY"
                     search_string         = "/admin/v1/reports/insights"
+                    field_to_match {
+                      uri_path {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+                statement {
+                  byte_match_statement {
+                    positional_constraint = "EXACTLY"
+                    search_string         = "POST"
+                    field_to_match {
+                      method {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        statement {
+          not_statement {
+            statement {
+              and_statement {
+                statement {
+                  byte_match_statement {
+                    positional_constraint = "EXACTLY"
+                    search_string         = "/admin/v1/reporting/trends"
                     field_to_match {
                       uri_path {}
                     }
