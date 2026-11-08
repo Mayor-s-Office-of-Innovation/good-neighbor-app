@@ -73,8 +73,7 @@ const MARKER = ".insights-data";
 if (
   existsSync(outDir) &&
   (await readdir(outDir)).length > 0 &&
-  !existsSync(join(outDir, MARKER)) &&
-  !existsSync(join(outDir, "check.json"))
+  !existsSync(join(outDir, MARKER))
 ) {
   console.error(
     `[insights-data] ${outDir} has other files; pick an empty --out folder`,
@@ -106,6 +105,9 @@ Object.assign(process.env, {
   AWS_ENDPOINT_URL_S3: `http://127.0.0.1:${S3_PORT}`,
   LAKE_BUCKET: BUCKET,
 });
+// A shell profile makes the SDK skip the MinIO keys above.
+delete process.env.AWS_PROFILE;
+delete process.env.AWS_DEFAULT_PROFILE;
 const { convertExport, sqlString } = await import(
   "../src/analytics/convert.js"
 );
