@@ -324,6 +324,36 @@ test("Load more adds the next rows below and moves focus to the first new one", 
   assert.ok(missing("#insights-load-more"));
 });
 
+test("Load more keeps keyboard focus while its page loads", async () => {
+  const held = gate();
+  await mountAdmin("/insights/raw/issues?period=2026-10", {
+    insights: true,
+    setup: (a) => {
+      onePerPage(a);
+      a.on(
+        "GET",
+        /^reporting\/issues\?.*cursor=/,
+        async (/** @type {any} */ r) => {
+          await held.promise;
+          const params = new URLSearchParams(r.search);
+          params.delete("cursor");
+          const reply = a.reply({ ...r, search: `?${params}` });
+          reply.json.issues = reply.json.issues.slice(1, 2);
+          reply.json.nextCursor = "p2";
+          return reply;
+        },
+      );
+    },
+  });
+  $("#insights-load-more").focus();
+  await click("#insights-load-more");
+  assert.ok(focused("#insights-load-more"));
+  assert.equal($("#insights-load-more").getAttribute("aria-disabled"), "true");
+  held.release();
+  await settle();
+  assert.ok(focused('[data-record-link="s1|t1"]'));
+});
+
 /** happy-dom never scrolls, so a test says when the Load more row comes into view. */
 function stubObserver() {
   /** @type {{ callback: Function, targets: Set<Element> }[]} */
@@ -390,7 +420,7 @@ test("scrolling near Load more fetches the next page once, leaves focus alone, a
   io.scrollIn();
   await tick(0);
   assert.equal(pages(), 1);
-  assert.equal($("#insights-load-more").disabled, true);
+  assert.equal($("#insights-load-more").getAttribute("aria-disabled"), "true");
   held.release();
   await settle();
   assert.deepEqual(recordLinks(), ["s1|t2", "s1|t1"]);

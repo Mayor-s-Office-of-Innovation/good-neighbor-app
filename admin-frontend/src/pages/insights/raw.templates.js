@@ -396,7 +396,7 @@ export function moreView({ more, rows, reply }) {
       ? `<p class="error">${escapeHtml(more)}</p>`
       : "";
   const shown = `<span class="muted" data-shown>${escapeHtml(t("admin.insights.raw.showing", { shown: formatCount(rows.length), total: formatCount(reply.total) }))}</span>`;
-  return `<div class="insights__more" data-load-more-row>${failed}<div class="insights__more-row"><button type="button" class="btn-secondary" id="insights-load-more" ${more === "loading" ? "disabled" : ""}>${escapeHtml(t("admin.status.loadMore"))}</button>${shown}</div></div>`;
+  return `<div class="insights__more" data-load-more-row>${failed}<div class="insights__more-row"><button type="button" class="btn-secondary" id="insights-load-more"${more === "loading" ? ' aria-disabled="true"' : ""}>${escapeHtml(t("admin.status.loadMore"))}</button>${shown}</div></div>`;
 }
 
 /** @param {ListView} view */

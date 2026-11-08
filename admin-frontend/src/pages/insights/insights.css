@@ -224,7 +224,7 @@
 }
 
 /* Still focusable while its page loads, so a keyboard user's place survives the redraw. */
-[data-load-more][aria-disabled="true"] {
+:is([data-load-more], #insights-load-more)[aria-disabled="true"] {
   cursor: progress;
   opacity: 0.6;
 }

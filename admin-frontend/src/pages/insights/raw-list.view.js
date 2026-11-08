@@ -362,11 +362,17 @@ class InsightsRawList extends HTMLElement {
   drawMore() {
     const region = this.querySelector("[data-more-region]");
     if (!region || !this.reply) return this.drawResults();
+    const focused = document.activeElement?.id === "insights-load-more";
     region.innerHTML = moreView({
       more: this.more,
       rows: this.rows,
       reply: this.reply,
     });
+    // The redraw replaces Load more, so keyboard users keep their place.
+    if (focused)
+      /** @type {HTMLElement | null} */ (
+        region.querySelector("#insights-load-more")
+      )?.focus();
     this.watchMore();
   }
 
