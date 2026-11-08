@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { formatDateTime } from "../../../../frontend/src/i18n/dates.js";
 import { escapeHtml } from "../../dom.js";
+import { weekdayInitials } from "../../../../frontend/src/domain/reports-periods.js";
 import { activityChart, buckets, chartUnit } from "./activity-chart.js";
 
 /** @param {string} html @param {string} attribute */
@@ -43,8 +44,8 @@ test("a month or less is drawn by day, up to 100 days by week, longer by month",
   );
 });
 
-test("weeks start on Monday and the first is clipped to the period", () => {
-  // Jul 1, 2026 is a Wednesday, so its week runs Jul 1–5.
+test("weeks start on Sunday, as the app's reports do, and the first is clipped to the period", () => {
+  // Jul 1, 2026 is a Wednesday, so its week runs Jul 1–4.
   const span = { startDay: "2026-07-01", endDay: "2026-07-20" };
   const list = buckets(
     span,
@@ -54,9 +55,80 @@ test("weeks start on Monday and the first is clipped to the period", () => {
   assert.deepEqual(
     list.map((b) => [b.start, b.value, b.partial]),
     [
-      ["2026-07-01", 5, true],
-      ["2026-07-06", 7, false],
-      ["2026-07-13", 7, false],
+      ["2026-07-01", 4, true],
+      ["2026-07-05", 7, false],
+      ["2026-07-12", 7, false],
+      ["2026-07-19", 1, true],
+    ],
+  );
+});
+
+test("a day calendar puts Sunday in its first column", () => {
+  const box = document.createElement("div");
+  box.innerHTML = activityChart(
+    { startDay: "2026-10-01", endDay: "2026-11-01" },
+    run("2026-10-01", 31, () => 1),
+    "checks",
+  );
+  const [heads, firstWeek] = box.querySelectorAll("tr");
+  assert.deepEqual(
+    [...heads.cells].map((c) => c.textContent),
+    weekdayInitials(),
+  );
+  // Oct 1, 2026 is a Thursday.
+  assert.deepEqual(
+    [...firstWeek.cells].map((c) => c.querySelector("span")?.textContent ?? ""),
+    ["", "", "", "", "1", "2", "3"],
+  );
+});
+
+test("a running period's last day is drawn as partial and doesn't set the shading", () => {
+  const span = {
+    startDay: "2026-11-01",
+    endDay: "2026-12-01",
+    incomplete: true,
+    observedTo: "2026-11-04T19:00:00.000Z",
+  };
+  const box = document.createElement("div");
+  box.innerHTML = activityChart(
+    span,
+    run("2026-11-01", 4, (i) => (i === 3 ? 9 : 1)),
+    "checks",
+  );
+  const cells = [...box.querySelectorAll("td[data-cal]")].slice(0, 4);
+  assert.deepEqual(
+    cells.map((c) => [c.className, c.hasAttribute("data-cal-partial")]),
+    [
+      ["insights__cal-3", false],
+      ["insights__cal-3", false],
+      ["insights__cal-3", false],
+      ["insights__cal-3 insights__cal--partial", true],
+    ],
+  );
+  assert.equal(
+    cells[3].getAttribute("title"),
+    t("admin.insights.chart.partialDay"),
+  );
+});
+
+test("a running period's week is partial even when its last day is today", () => {
+  // Nov 7, 2026 is a Saturday, the last day of its week.
+  const span = {
+    startDay: "2026-10-01",
+    endDay: "2027-01-01",
+    incomplete: true,
+    observedTo: "2026-11-07T19:00:00.000Z",
+  };
+  const list = buckets(
+    span,
+    run("2026-10-01", 38, () => 1),
+    "week",
+  );
+  assert.deepEqual(
+    list.slice(5, 7).map((b) => [b.start, b.partial, b.future]),
+    [
+      ["2026-11-01", true, false],
+      ["2026-11-08", false, true],
     ],
   );
 });
@@ -145,7 +217,7 @@ test("weeks after the data time in a running quarter have no bar", () => {
     run("2026-10-01", 35, () => 1),
     "issues",
   );
-  // Oct 1–4 and Nov 2–4 are only part of their weeks.
+  // Oct 1–3 and Nov 1–4 are only part of their weeks.
   assert.deepEqual(values(html, "data-bar"), [
     "partial",
     ...Array(4).fill("full"),

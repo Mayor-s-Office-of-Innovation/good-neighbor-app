@@ -9,7 +9,9 @@ import {
   addDays,
   dayInstant,
   dayKeysBetween,
+  periodContaining,
   weekdayIndex,
+  weekdayInitials,
 } from "../../../../frontend/src/domain/reports-periods.js";
 import { escapeHtml } from "../../dom.js";
 
@@ -17,17 +19,8 @@ import { escapeHtml } from "../../dom.js";
 /** @typedef {{ day: string, value: number | null }} Point null: no data that day */
 /** @typedef {{ start: string, value: number | null, partial: boolean, future: boolean }} Bucket */
 
-/** Monday is 0, since the calendars start the week on Monday. @param {string} day */
-const weekday = (day) => (weekdayIndex(day) + 6) % 7;
 /** @param {string} day */
-const monthStart = (day) => `${day.slice(0, 7)}-01`;
-/** @param {string} day */
-const nextMonth = (day) => {
-  const [y, m] = day.split("-").map(Number);
-  return m === 12
-    ? `${y + 1}-01-01`
-    : `${y}-${String(m + 1).padStart(2, "0")}-01`;
-};
+const nextMonth = (day) => periodContaining("month", day).endExclusive;
 
 /**
  * The day after the last one with data. In a running period later days
@@ -35,9 +28,19 @@ const nextMonth = (day) => {
  * @param {Span} span
  */
 function dataEnd(span) {
-  if (!span.incomplete || !span.observedTo) return span.endDay;
-  const after = addDays(pacificDateKey(span.observedTo), 1);
-  return after < span.endDay ? after : span.endDay;
+  const today = runningDay(span);
+  return today === null ? span.endDay : addDays(today, 1);
+}
+
+/**
+ * A running period's last day with data, still under way at the update.
+ * @param {Span} span
+ * @returns {string | null}
+ */
+function runningDay(span) {
+  if (!span.incomplete || !span.observedTo) return null;
+  const day = pacificDateKey(span.observedTo);
+  return day < span.endDay ? day : null;
 }
 
 /** Up to a month reads best by day; longer periods as weekly or monthly totals. @param {Span} span @returns {"day" | "week" | "month"} */
@@ -47,7 +50,7 @@ export function chartUnit(span) {
 }
 
 /**
- * Totals per week (from Monday) or month, clipped to the period. A bucket
+ * Totals per week (from Sunday) or month, clipped to the period. A bucket
  * with no day of data is null, so it shows as no data, not zero.
  * @param {Span} span
  * @param {Point[]} points
@@ -57,14 +60,12 @@ export function chartUnit(span) {
 export function buckets(span, points, unit) {
   const byDay = new Map(points.map((p) => [p.day, p.value]));
   const end = dataEnd(span);
+  const today = runningDay(span);
   /** @type {Bucket[]} */
   const out = [];
-  let start =
-    unit === "week"
-      ? addDays(span.startDay, -weekday(span.startDay))
-      : monthStart(span.startDay);
+  let start = periodContaining(unit, span.startDay).start;
   while (start < span.endDay) {
-    const next = unit === "week" ? addDays(start, 7) : nextMonth(start);
+    const next = periodContaining(unit, start).endExclusive;
     let value = /** @type {number | null} */ (null);
     let missing = false;
     const from = start < span.startDay ? span.startDay : start;
@@ -77,7 +78,12 @@ export function buckets(span, points, unit) {
     out.push({
       start: from,
       value,
-      partial: value !== null && (missing || from !== start || to !== next),
+      partial:
+        value !== null &&
+        (missing ||
+          from !== start ||
+          to !== next ||
+          (today !== null && today >= from && today < to)),
       future: from >= end,
     });
     start = next;
@@ -92,19 +98,25 @@ const level = (value, max) =>
 /** @param {Span} span @param {Point[]} points @param {string} kind "checks" | "issues", for colour */
 function calendars(span, points, kind) {
   const byDay = new Map(points.map((p) => [p.day, p.value]));
-  const max = Math.max(0, ...points.map((p) => p.value ?? 0));
-  const end = dataEnd(span);
-  const heads = Array.from({ length: 7 }, (_, i) =>
-    // 2026-11-02 is a Monday.
-    formatDateTime(dayInstant(addDays("2026-11-02", i)), { weekday: "narrow" }),
+  const today = runningDay(span);
+  // A day still under way would shade every finished day lighter.
+  const max = Math.max(
+    0,
+    ...points.map((p) => (p.day === today ? 0 : (p.value ?? 0))),
   );
+  const end = dataEnd(span);
+  const heads = weekdayInitials();
+  const partial = escapeHtml(t("admin.insights.chart.partialDay"));
   let html = "";
   for (
-    let month = monthStart(span.startDay);
+    let month = periodContaining("month", span.startDay).start;
     month < span.endDay;
     month = nextMonth(month)
   ) {
-    const cells = Array.from({ length: weekday(month) }, () => "<td></td>");
+    const cells = Array.from(
+      { length: weekdayIndex(month) },
+      () => "<td></td>",
+    );
     for (let day = month; day < nextMonth(month); day = addDays(day, 1)) {
       const n = Number(day.slice(8));
       const value = byDay.get(day);
@@ -114,6 +126,10 @@ function calendars(span, points, kind) {
       else if (value === undefined || value === null)
         cells.push(
           `<td class="insights__cal-none" data-cal="none"><span>${n}</span></td>`,
+        );
+      else if (day === today)
+        cells.push(
+          `<td class="insights__cal-${level(value, max)} insights__cal--partial" data-cal="${value}" data-cal-partial title="${partial}"><span>${n}</span>${value}</td>`,
         );
       else
         cells.push(

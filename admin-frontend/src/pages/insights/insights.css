@@ -662,6 +662,12 @@
   color: var(--muted);
 }
 
+/* Dashed, so today's count so far isn't read as a whole quiet day; a fade would dim its text. */
+.insights__cal--partial {
+  outline: 1px dashed var(--muted);
+  outline-offset: -4px;
+}
+
 .insights__bars {
   display: flex;
   align-items: flex-end;

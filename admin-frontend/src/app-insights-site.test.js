@@ -556,9 +556,9 @@ test("a month shows Checks and Issues by day; a year shows them by month", async
       t("admin.insights.chart.issues.day"),
     ],
   );
-  // October 2026 begins on a Thursday: three blank cells, then day 1.
+  // October 2026 begins on a Thursday: four blank cells from Sunday, then day 1.
   const first = $('[data-chart="checks"] table tr:nth-child(2)');
-  assert.equal(first.querySelectorAll("td:empty").length, 3);
+  assert.equal(first.querySelectorAll("td:empty").length, 4);
   await click('[data-period-kind="year"]');
   assert.deepEqual(
     $$("[data-charts] h3").map((h) => h.textContent),

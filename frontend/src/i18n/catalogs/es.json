@@ -267,6 +267,7 @@
   "admin.insights.chart.issues.week": "Issues created by week",
   "admin.insights.chart.noData": "No data for this period.",
   "admin.insights.chart.partial": "Covers only part of this week or month.",
+  "admin.insights.chart.partialDay": "So far today; the day isn't over.",
   "admin.insights.check": "Check {id}",
   "admin.insights.checks": "Checks",
   "admin.insights.checksMeter": "{value} a day, target {owed}",
