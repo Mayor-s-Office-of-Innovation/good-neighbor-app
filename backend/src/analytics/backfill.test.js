@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { STATE_KEY, backfillIfFormatChanged } from "./backfill.js";
 
 const BUCKET = "lake";
@@ -8,7 +8,7 @@ const manifest = (/** @type {string} */ id) =>
 /**
  * An in-memory lake bucket that answers the three calls the backfill makes.
  * @param {Record<string, string>} objects key → LastModified
- * @param {{ state?: object, pageSize?: number }} [opts]
+ * @param {{ state?: object, pageSize?: number, sizes?: Record<string, number> }} [opts]
  */
 function fakeS3(objects, opts = {}) {
   /** @type {string | null} */
@@ -39,6 +39,7 @@ function fakeS3(objects, opts = {}) {
       Contents: page.map((Key) => ({
         Key,
         LastModified: new Date(objects[Key]),
+        Size: opts.sizes?.[Key] ?? 100,
       })),
       IsTruncated: next < keys.length,
       NextContinuationToken: String(next),
@@ -71,6 +72,10 @@ const LAKE = {
 };
 
 describe("backfillIfFormatChanged", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
   it("re-converts every earlier export once, oldest first, at its own time", async () => {
     const s3 = fakeS3(LAKE, { state: { formatVersion: 1 } });
     const { calls, convert } = recorder();
@@ -85,7 +90,7 @@ describe("backfillIfFormatChanged", () => {
       [manifest("e1"), "2026-10-01T06:00:00.000Z"],
       [manifest("e2"), "2026-10-02T06:00:00.000Z"],
     ]);
-    expect(result).toEqual({ backfilled: 2, finished: true });
+    expect(result).toEqual({ backfilled: 2, failed: 0, finished: true });
     expect(s3.state()).toMatchObject({ formatVersion: 2 });
     expect(s3.state().backfill).toBeUndefined();
   });
@@ -97,7 +102,7 @@ describe("backfillIfFormatChanged", () => {
     const again = recorder();
     expect(
       await backfillIfFormatChanged({ ...deps, convert: again.convert }),
-    ).toEqual({ backfilled: 0, finished: true });
+    ).toEqual({ backfilled: 0, failed: 0, finished: true });
     expect(again.calls).toEqual([]);
   });
 
@@ -114,24 +119,65 @@ describe("backfillIfFormatChanged", () => {
     expect(s3.state()).toMatchObject({ formatVersion: 2 });
   });
 
-  it("keeps the old version after a failure, and the retry skips finished exports", async () => {
+  it("converts past a failing export, keeps the old version, and retries only that one", async () => {
     const s3 = fakeS3(LAKE, { state: { formatVersion: 1 } });
     const deps = { send: s3.send, bucket: BUCKET, formatVersion: 2 };
     const failing = recorder({ failOn: manifest("e2") });
-    await expect(
-      backfillIfFormatChanged({ ...deps, convert: failing.convert }),
-    ).rejects.toThrow("timed out");
+    expect(
+      await backfillIfFormatChanged({ ...deps, convert: failing.convert }),
+    ).toEqual({ backfilled: 2, failed: 1, finished: false });
+    expect(failing.calls.map(([key]) => key)).toEqual([
+      manifest("e1"),
+      manifest("e3"),
+    ]);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining(manifest("e2")),
+    );
     expect(s3.state()).toMatchObject({
       formatVersion: 1,
-      backfill: { formatVersion: 2, done: [manifest("e1")] },
+      backfill: { formatVersion: 2, done: [manifest("e1"), manifest("e3")] },
     });
     const retry = recorder();
     await backfillIfFormatChanged({ ...deps, convert: retry.convert });
-    expect(retry.calls.map(([key]) => key)).toEqual([
-      manifest("e2"),
-      manifest("e3"),
-    ]);
+    expect(retry.calls.map(([key]) => key)).toEqual([manifest("e2")]);
     expect(s3.state()).toMatchObject({ formatVersion: 2 });
+  });
+
+  it("leaves a large export for a fresh run when it won't fit the time left", async () => {
+    const s3 = fakeS3(LAKE, {
+      state: { formatVersion: 1 },
+      sizes: { "raw/AWSDynamoDB/e1/data/part-1.json.gz": 200_000_000 },
+    });
+    const { calls, convert } = recorder();
+    const result = await backfillIfFormatChanged({
+      send: s3.send,
+      convert,
+      bucket: BUCKET,
+      formatVersion: 2,
+      timeLeftMs: () => 300_000,
+    });
+    expect(result).toEqual({ backfilled: 0, failed: 0, finished: false });
+    expect(calls).toEqual([]);
+  });
+
+  it("logs and passes an export too large for any one run", async () => {
+    const s3 = fakeS3(LAKE, {
+      state: { formatVersion: 1 },
+      sizes: { "raw/AWSDynamoDB/e1/data/part-1.json.gz": 900_000_000 },
+    });
+    const { calls, convert } = recorder();
+    const result = await backfillIfFormatChanged({
+      send: s3.send,
+      convert,
+      bucket: BUCKET,
+      formatVersion: 2,
+      timeLeftMs: () => 590_000,
+    });
+    expect(result).toEqual({ backfilled: 2, failed: 1, finished: false });
+    expect(calls.map(([key]) => key)).toEqual([manifest("e2"), manifest("e3")]);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("too large"),
+    );
   });
 
   it("starts over when a newer version replaces an unfinished backfill", async () => {
@@ -176,7 +222,7 @@ describe("backfillIfFormatChanged", () => {
       },
       timeLeftMs: () => left,
     });
-    expect(result).toEqual({ backfilled: 1, finished: false });
+    expect(result).toEqual({ backfilled: 1, failed: 0, finished: false });
     expect(s3.state()).toMatchObject({ formatVersion: 1 });
     const next = recorder();
     await backfillIfFormatChanged({ ...deps, convert: next.convert });

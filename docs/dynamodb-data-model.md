@@ -976,9 +976,11 @@ listed fields, so update text, notes, photo keys, the actor and Program contacts
 stay out of the lake. The converter records its format version in
 `readings/_converter/state.json` (`FORMAT_VERSION` in `convert.js`). The first
 conversion after the version changes re-converts every `raw/` export still kept
-(30 days), once, oldest first and at each export's own time; a failed backfill, or
-one that stops with two minutes left, keeps the old version and resumes on the next
-export. Exports are incremental, so an item unchanged in those 30 days keeps only
+(30 days), once, oldest first and at each export's own time. An export that fails
+is logged and passed, so later exports still convert; the old version stays until a
+later run converts it or it expires. A run stops when the next export's estimated
+time, from its data files' size, plus two minutes passes the time left, and resumes
+on the next export. Exports are incremental, so an item unchanged in those 30 days keeps only
 what its first conversion wrote. The backfill runs only when
 `ANALYTICS_BACKFILL_ENABLED=true`, which waits on the converter role being allowed
 to list `raw/` and read the state file.

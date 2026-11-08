@@ -33,6 +33,7 @@ const {
   columnSchema,
   listManifestDataFiles,
   convertS3Event,
+  exportStamp,
   FORMAT_VERSION,
 } = await import("./convert.js");
 
@@ -650,6 +651,27 @@ describe("dateFromTimestamp calendar validity", () => {
     expect(dateFromTimestamp("")).toBeNull();
     expect(dateFromTimestamp("yesterday")).toBeNull();
     expect(dateFromTimestamp(null)).toBeNull();
+  });
+});
+
+describe("exportStamp", () => {
+  const fallback = "2026-10-02T06:04:31.000Z";
+
+  it.each([
+    [
+      "an incremental export's end time",
+      { exportToTime: "2026-10-02T05:30:00Z" },
+      "2026-10-02T05:30:00.000Z",
+    ],
+    [
+      "a full export's time",
+      { exportTime: "2026-10-02T05:00:00.123Z" },
+      "2026-10-02T05:00:00.123Z",
+    ],
+    ["the fallback when the summary has no time", {}, fallback],
+    ["the fallback for an unreadable time", { exportTime: "soon" }, fallback],
+  ])("uses %s", (_name, summary, expected) => {
+    expect(exportStamp(summary, fallback)).toBe(expected);
   });
 });
 

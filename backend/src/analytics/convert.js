@@ -527,11 +527,12 @@ export async function writeEntityParquet(conn, entity, rows, parquetPath) {
  * write path simpler), then uploaded.
  * @param {string} bucket
  * @param {string} manifestSummaryKey full key of manifest-summary.json
- * @param {string} exportedAt ISO stamp (the export's own timestamp)
+ * @param {string} fallbackAt ISO stamp for a summary without an export time
  * @returns {Promise<{ files: string[], rows: number }>}
  */
-export async function convertExport(bucket, manifestSummaryKey, exportedAt) {
+export async function convertExport(bucket, manifestSummaryKey, fallbackAt) {
   const summary = await getJson(bucket, manifestSummaryKey);
+  const exportedAt = exportStamp(summary, fallbackAt);
   const manifestKey = summary.manifestFilesS3Key;
   if (!manifestKey)
     throw new Error("manifest-summary.json missing manifestFilesS3Key");
@@ -610,6 +611,18 @@ export async function convertExport(bucket, manifestSummaryKey, exportedAt) {
   return { files: written, rows: totalRows };
 }
 
+// The trigger and the backfill both stamp from the summary, so a re-converted
+// row orders against newer rows the same way its first conversion did.
+/**
+ * @param {Record<string, unknown>} summary manifest-summary.json
+ * @param {string} fallback
+ * @returns {string}
+ */
+export function exportStamp(summary, fallback) {
+  const at = Date.parse(String(summary.exportToTime ?? summary.exportTime));
+  return Number.isNaN(at) ? fallback : new Date(at).toISOString();
+}
+
 /**
  * @param {string} bucket
  * @param {string} key
@@ -674,10 +687,9 @@ export async function convertS3Event(event, context) {
       record?.s3?.object?.key?.replace(/\+/g, " ") ?? "",
     );
     if (!key.endsWith("manifest-summary.json")) continue;
-    // Exported-at stamp: the manifest summary's lastModified, not the
-    // conversion time, so ordering is stable across converter retries.
-    const exportedAt = new Date(record?.eventTime ?? Date.now()).toISOString();
-    const result = await convertExport(bucket, key, exportedAt);
+    // Only for a summary without an export time; the conversion time would reorder retries.
+    const fallbackAt = new Date(record?.eventTime ?? Date.now()).toISOString();
+    const result = await convertExport(bucket, key, fallbackAt);
     seen.add(key);
     converted += 1;
     files += result.files.length;
