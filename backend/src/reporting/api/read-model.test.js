@@ -1956,3 +1956,25 @@ describe("Issues list filters", () => {
     },
   );
 });
+
+describe("records of a Site missing from sites", () => {
+  it("are left out of citywide lists and trends, as each Site's totals leave them out", async () => {
+    const gone = await edited((t) => {
+      const issue = t.issues.find(
+        (i) => i.createdDay >= "2026-10-01" && i.createdDay < "2026-11-01",
+      );
+      t.issues.push({ ...issue, issueId: "i-gone", siteId: "gone" });
+    });
+    const ask = {
+      interval: october,
+      filter: {},
+      list: list("issues"),
+      now: NOW,
+    };
+    expect((await listIssues(gone, ask)).total).toBe(
+      (await listIssues(snap, ask)).total,
+    );
+    const citywide = { interval: october, scope: {}, now: NOW };
+    expect(await trends(gone, citywide)).toEqual(await trends(snap, citywide));
+  });
+});

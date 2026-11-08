@@ -203,6 +203,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await h.close();
   await rm(root, { recursive: true, force: true });
 });
 
@@ -265,16 +266,19 @@ function pages(route, query) {
   let cursor;
   let done = false;
   // Each page follows the cursor the page before it returned.
-  const run = async () => {
+  const run = async (/** @type {number} */ page) => {
     if (done) return { statusCode: 0, body: "(after the last page)" };
     const res = await h[route](
       event({ query: { ...query, ...(cursor && { cursor }) } }),
     );
     cursor = JSON.parse(res.body).nextCursor ?? undefined;
     done = !cursor;
+    // Otherwise a longer list would pass with its last pages never read.
+    if (page === 8 && !done) throw new Error(`${route} has more than 8 pages`);
     return res;
   };
-  for (let page = 1; page <= 8; page++) cases.push([`page ${page}`, run]);
+  for (let page = 1; page <= 8; page++)
+    cases.push([`page ${page}`, () => run(page)]);
   return cases;
 }
 
@@ -367,6 +371,16 @@ async function jobCase(route, body, key) {
     body: `${created.body}\n${job.body}\n${result}`,
   };
 }
+
+describe("job replies", () => {
+  it("answers 404 for a job that was never made", async () => {
+    const res = await h.getJob(event({ path: { jobId: "f".repeat(32) } }));
+    expect([res.statusCode, JSON.parse(res.body).error]).toEqual([
+      404,
+      "job_not_found",
+    ]);
+  });
+});
 
 describe("golden replies", () => {
   it("Overview, every sort both ways", () =>
