@@ -50,6 +50,7 @@ test("with Insights switched off, no tabs show and Insights links open Sites", a
   await mountAdmin("/insights/sites/s1");
   assert.equal(url(), "/sites");
   assert.ok(missing("#admin-modes"));
+  assert.equal(heading(), t("admin.breadcrumb.admin"));
 });
 
 test("a session without Insights keeps it hidden even when switched on", async () => {
