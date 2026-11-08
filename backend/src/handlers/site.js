@@ -170,7 +170,7 @@ export const updateSiteAdmin = async (event) => {
     const isPrimary =
       Boolean(site.primaryContact) &&
       (site.primaryContactUserId
-        ? site.primaryContactUserId === assignment.userId
+        ? assigned.userIds.includes(site.primaryContactUserId)
         : Boolean(site.primaryContact.email) &&
           String(site.primaryContact.email).toLowerCase() ===
             String(assigned.person.email || "").toLowerCase());
