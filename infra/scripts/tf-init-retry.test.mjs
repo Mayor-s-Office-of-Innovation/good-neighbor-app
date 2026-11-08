@@ -11,20 +11,17 @@ const script = fileURLToPath(new URL("./tf-init-retry.sh", import.meta.url));
 /**
  * @param {number[]} statuses exit status of each terraform call, in order
  * @param {string[]} [args]
- * @param {string[]} [outputs] what each terraform call prints, in order
  */
-function run(statuses, args = [], outputs = []) {
+function run(statuses, args = []) {
   const directory = mkdtempSync(join(tmpdir(), "gn-tf-init-test-"));
   try {
     const log = join(directory, "calls");
     writeFileSync(log, "");
-    outputs.forEach((output, i) => writeFileSync(join(directory, `out${i + 1}`), output));
     writeFileSync(
       join(directory, "terraform"),
       `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$TF_TEST_LOG"
 calls=$(wc -l < "$TF_TEST_LOG" | tr -d ' ')
-[ ! -f "$TF_TEST_DIR/out$calls" ] || cat "$TF_TEST_DIR/out$calls"
 set -- $TF_TEST_STATUSES
 shift $((calls - 1))
 exit "$1"
@@ -38,14 +35,12 @@ exit "$1"
         PATH: `${directory}:${process.env.PATH}`,
         TF_INIT_RETRY_DELAY: "0",
         TF_TEST_LOG: log,
-        TF_TEST_DIR: directory,
         TF_TEST_STATUSES: statuses.join(" "),
       },
     });
     return {
       status: result.status,
       calls: readFileSync(log, "utf8").trim().split("\n").filter(Boolean),
-      stdout: result.stdout,
     };
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -76,85 +71,16 @@ test("passes its arguments after -backend=false, as CI's callers expect", () => 
   assert.deepEqual(calls, ["init -backend=false -upgrade"]);
 });
 
-
-/** @param {Record<string, unknown>} diagnostic */
-const diagnosticLine = (diagnostic) => JSON.stringify({ type: "diagnostic", diagnostic }) + "\n";
-const chain = (name) =>
-  `operation error STS: GetCallerIdentity, https response error StatusCode: 403, RequestID: 1a2b, api error ${name}: x`;
-const reset = diagnosticLine({
-  severity: "error",
-  summary: "Failed to query available provider packages",
-  detail: "Could not retrieve the list of available versions for provider hashicorp/aws: read: connection reset by peer",
-});
-
-test("inits with the backend only after --backend, as plan-dev.yml asks", () => {
-  const { status, calls, stdout } = run([1, 0], ["--backend", "-input=false", "-json"], [reset]);
-  assert.equal(status, 0);
-  assert.deepEqual(calls, Array(2).fill("init -input=false -json"));
-  assert.equal(stdout, reset + "Terraform initialization failed; retrying in 0 seconds (attempt 1/3).\n");
-});
-
-for (const [name, output] of [
-  ["a permission failure", diagnosticLine({ severity: "error", summary: `validating provider credentials: ${chain("AccessDenied")}` })],
-  ["an expired token", diagnosticLine({ severity: "error", summary: "x", detail: chain("ExpiredToken") })],
-  [
-    "a bad backend block",
-    diagnosticLine({ severity: "error", summary: "Unsupported argument", range: { filename: "main.tf", start: { line: 4 } } }),
-  ],
-  ["an error with no class or file line", "\u2502 Error: Backend initialization required, please run \"terraform init\"\n"],
+for (const flag of [
+  "-backend=true",
+  "-backend",
+  "--backend",
+  "--backend=true",
+  "-backend=false",
 ]) {
-  test(`runs a --backend init once for ${name}, since a retry can't pass`, () => {
-    const { status, calls, stdout } = run([1, 0], ["--backend", "-json"], [output]);
-    assert.equal(status, 1);
-    assert.equal(calls.length, 1);
-    assert.equal(stdout, output);
+  test(`refuses ${flag}, so the script can never init a backend`, () => {
+    const { status, calls } = run([0], ["-input=false", flag]);
+    assert.equal(status, 2);
+    assert.equal(calls.length, 0);
   });
 }
-
-for (const [name, output] of [
-  ["a connection reset", reset],
-  ["an i/o timeout", "Error: Failed to query available provider packages: dial tcp 1.2.3.4:443: i/o timeout\n"],
-  ["a TLS handshake timeout", diagnosticLine({ severity: "error", summary: "x", detail: "net/http: TLS handshake timeout" })],
-  ["an expired deadline", diagnosticLine({ severity: "error", summary: "x", detail: "context deadline exceeded" })],
-  [
-    "an EOF from the registry",
-    diagnosticLine({ severity: "error", summary: "x", detail: 'Get "https://registry.terraform.io/.well-known/terraform.json": EOF' }),
-  ],
-  [
-    "a registry 503 on a module block",
-    diagnosticLine({
-      severity: "error",
-      summary: "Failed to download module",
-      detail: "could not download https://registry.terraform.io/v1/modules/x/y/aws/1.0.0/download: 503 Service Unavailable",
-      range: { filename: "main.tf", start: { line: 1 } },
-    }),
-  ],
-  ["a releases 429", "Error: https://releases.hashicorp.com/terraform-provider-aws/index.json: 429 Too Many Requests\n"],
-  ["throttling", diagnosticLine({ severity: "error", summary: chain("Throttling") })],
-  ["a throttling exception", diagnosticLine({ severity: "error", summary: chain("ThrottlingException") })],
-  ["a request limit", diagnosticLine({ severity: "error", summary: chain("RequestLimitExceeded") })],
-  [
-    "a warning with a file line and then a reset",
-    diagnosticLine({ severity: "warning", summary: "Deprecated attribute", range: { filename: "main.tf", start: { line: 9 } } }) +
-      reset,
-  ],
-]) {
-  test(`retries a --backend init after ${name}`, () => {
-    const { status, calls } = run([1, 0], ["--backend", "-json"], [output]);
-    assert.equal(status, 0);
-    assert.equal(calls.length, 2);
-  });
-}
-
-test("refuses --backend anywhere but first, so a misplaced flag can't reach terraform", () => {
-  const { status, calls } = run([0], ["-input=false", "--backend"]);
-  assert.notEqual(status, 0);
-  assert.equal(calls.length, 0);
-});
-
-test("still retries a permission failure without --backend, as CI did before", () => {
-  const output = diagnosticLine({ severity: "error", summary: chain("AccessDenied") });
-  const { status, calls } = run([1, 0], [], [output]);
-  assert.equal(status, 0);
-  assert.equal(calls.length, 2);
-});

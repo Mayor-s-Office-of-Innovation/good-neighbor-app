@@ -102,8 +102,9 @@ jobs:
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
 
       # run-filtered.sh keeps Terraform's text off this public log, since errors can quote state; infra/README.md lists what prints.
+      # One attempt: a maintainer starts each run, so a network blip costs a re-run, not a guess at which errors to retry.
       - name: Init
-        run: bash "$GITHUB_WORKSPACE/infra/scripts/run-filtered.sh" "$RUNNER_TEMP/init.log" bash "$GITHUB_WORKSPACE/infra/scripts/tf-init-retry.sh" --backend -input=false -json
+        run: bash "$GITHUB_WORKSPACE/infra/scripts/run-filtered.sh" "$RUNNER_TEMP/init.log" terraform init -input=false -json
 
       # No lock: it would fail a deploy that starts meanwhile, and the role can't write it.
       - name: Plan

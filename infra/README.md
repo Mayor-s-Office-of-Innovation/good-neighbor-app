@@ -83,8 +83,11 @@ runner. Error text can quote state, so the Init and Plan steps print only:
 - its resource address, with any `[...]` key cut (plan only);
 - its relative `.tf` file and line, where Terraform gives them;
 - its AWS error class, such as `AccessDenied`;
-- the provider versions init chose, and any lock file change;
-- init's retry line. Init retries only network errors, such as a registry reset, and AWS throttling.
+- the provider versions init chose, and any lock file change. A version that doesn't look like a
+  release shows as `(version withheld)`.
+
+Init makes one attempt, with no retry, so re-run Plan dev after a network error such as a registry
+reset.
 
 When a step fails, a fixed line on how to read these follows. Config errors, such as a typo or an
 invalid argument, reproduce with a local plan on dev credentials. A permission failure shows the
