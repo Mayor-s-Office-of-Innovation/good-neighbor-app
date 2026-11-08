@@ -75,19 +75,26 @@ different `AWS_DEPLOY_ROLE_ARN` in each job: the export job uses `dev`; the migr
 
 **Plan dev** (`plan-dev.yml`) shows what a deploy of the chosen branch would change, without
 changing anything. Run it from the Actions tab; the summary lists the action and address of each
-changed resource. It publishes nothing else: this repo is public, and the role can read Lambda
-environment values, so the plan's text stays on the runner. It uses the read-only role in
-`infra/modules/app/plan-role.tf`, through a `dev-plan` GitHub Environment that holds
-`AWS_ACCOUNT_ID`, `AWS_PLAN_ROLE_ARN` (the `terraform_plan_role_arn` output) and `AWS_REGION`.
+changed resource, and the names of the attributes an update changes. It publishes no values: this
+repo is public, and the role can read Lambda environment values, so the plan's text stays on the
+runner. It uses the read-only role in `infra/modules/app/plan-role.tf`, through a `dev-plan`
+GitHub Environment that holds the secrets `AWS_ACCOUNT_ID` and `AWS_PLAN_ROLE_ARN` (the
+`terraform_plan_role_arn` output), and the variable `AWS_REGION`.
 
-The workflow file can't stop a branch from using `id-token: write` before the credentials step, so
-give the `dev-plan` Environment a deployment branch restriction. Only those branches can then
-assume the role.
+The role can read the dev state file, which holds secrets such as the support origin token, so
+the control that matters is who can assume it. `npm ci` and the Lambda build run in a job with no
+`id-token` permission, because a package script could otherwise request its own token. Give the
+`dev-plan` Environment a deployment branch restriction too, so only those branches can reach the
+job that holds the token.
 
 It skips the cost-tag state step in `deploy.yml`, because that writes state. The plan also shows
 the Cognito email key policy changing to name the plan role, since its
 `AllowDeployRoleCreateCognitoGrant` statement names whoever runs Terraform; a deploy from
 `deploy.yml` won't make that change.
+
+The first plan may fail with AccessDenied while refreshing the CloudWatch Omni access grants
+(`omni.tf`), because `ReadOnlyAccess` may not cover that service. The error names the missing
+action; add it to the `plan` policy in `plan-role.tf`.
 
 ## Production DNS bootstrap
 
@@ -213,7 +220,9 @@ aws lambda invoke --function-name good-neighbor-app-<env>-analytics-projection \
   --invocation-type Event /dev/null
 ```
 
-Then check its log group for an `InsightsProjectionPublished` line.
+Then check its log group for an `InsightsProjectionPublished` line. The
+`insights-projection-stalled` alarm fires right after each first deploy, since it has no data yet;
+this build clears it.
 
 ## What the module provisions
 
