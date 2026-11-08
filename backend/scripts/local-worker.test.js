@@ -141,7 +141,7 @@ describe("handleBatch", () => {
     }
   });
 
-  it("hands a job back to the queue when the runner is full, rather than hold it past its visibility timeout", async () => {
+  it("hides a running job for 15 minutes, and hands one back when the runner is full rather than hold it past its visibility timeout", async () => {
     const send = vi
       .spyOn(SQSClient.prototype, "send")
       .mockImplementation(async () => ({}));
@@ -162,7 +162,10 @@ describe("handleBatch", () => {
           /** @type {any} */ (cmd).input.ReceiptHandle,
           /** @type {any} */ (cmd).input.VisibilityTimeout,
         ]),
-      ).toEqual([["ChangeMessageVisibilityCommand", "r-j2", 30]]);
+      ).toEqual([
+        ["ChangeMessageVisibilityCommand", "r-j1", 900],
+        ["ChangeMessageVisibilityCommand", "r-j2", 30],
+      ]);
     } finally {
       gate.resolve();
       await runner.drain();

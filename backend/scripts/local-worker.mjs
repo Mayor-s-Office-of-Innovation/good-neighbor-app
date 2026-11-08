@@ -74,6 +74,9 @@ export function createJobRunner(limit) {
 const insightsJobs = createJobRunner(2);
 // A job runs for minutes, so a sooner retry would just be handed back again many times.
 const INSIGHTS_RETRY_SECONDS = 30;
+// The shared local queue hides a message for 30 s; past that a running job would be
+// received twice. 900 s outlasts the jobs Lambda's 5 minutes, as insights.tf's queue does.
+const INSIGHTS_RUN_SECONDS = 900;
 
 /**
  * Reduce a thrown error to compact, non-sensitive fields for logging. The worker
@@ -317,24 +320,35 @@ export async function handleBatch(queueUrl, messages, insights = insightsJobs) {
     // Insights jobs can run for minutes; photo analysis shouldn't wait behind them.
     if (handler !== runInsightsJob) others.push(task());
     // Like the Lambda trigger's maximum concurrency, which leaves extra jobs in the queue.
-    else if (!insights.tryRun(task))
-      others.push(
-        sqs
-          .send(
-            new ChangeMessageVisibilityCommand({
-              QueueUrl: queueUrl,
-              ReceiptHandle: msg.ReceiptHandle,
-              VisibilityTimeout: INSIGHTS_RETRY_SECONDS,
-            }),
-          )
-          .catch((err) =>
-            console.error(
-              `[worker] couldn't hand back ${msg.MessageId}: ${summarizeError(err)}`,
-            ),
-          ),
-      );
+    else if (
+      !insights.tryRun(() =>
+        hide(queueUrl, msg, INSIGHTS_RUN_SECONDS).then(task),
+      )
+    )
+      others.push(hide(queueUrl, msg, INSIGHTS_RETRY_SECONDS));
   }
   await Promise.allSettled(others);
+}
+
+/**
+ * @param {string} queueUrl
+ * @param {import("@aws-sdk/client-sqs").Message} msg
+ * @param {number} seconds
+ */
+async function hide(queueUrl, msg, seconds) {
+  try {
+    await sqs.send(
+      new ChangeMessageVisibilityCommand({
+        QueueUrl: queueUrl,
+        ReceiptHandle: msg.ReceiptHandle,
+        VisibilityTimeout: seconds,
+      }),
+    );
+  } catch (err) {
+    console.error(
+      `[worker] couldn't set ${msg.MessageId}'s visibility: ${summarizeError(err)}`,
+    );
+  }
 }
 
 /**
