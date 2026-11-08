@@ -125,6 +125,13 @@ export function indexSnapshot({ prefix, manifest, tables: all }) {
   };
 }
 
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+const isExpired = (err) =>
+  Boolean(/** @type {{ expiredKey?: string } | null} */ (err)?.expiredKey);
+
 // Checked first: another contract's columns would fail in DuckDB unexplained, not as this 503.
 /** @param {Record<string, any>} manifest */
 function checkContract(manifest) {
@@ -289,7 +296,9 @@ export function createSnapshotStore({
   /** @type {Promise<Snapshot> | null} */
   let older = null;
   let olderKey = "";
-  let reportedExpiry = "";
+  // The snapshot latest.json named when a load found its files expired.
+  /** @type {{ key: string, err: unknown } | null} */
+  let expired = null;
 
   // Shared, since two copies of one snapshot would double the Lambda's memory. The ID is in
   // the key because a rebuilt local folder keeps its path.
@@ -305,6 +314,9 @@ export function createSnapshotStore({
         const loaded = await source.load(prefix);
         // The built-in sources check first; this covers any other source.
         checkContract(loaded.manifest);
+        // A rebuilt local folder keeps its path, so a job could read another snapshot's numbers.
+        if (String(loaded.manifest.snapshotId) !== snapshotId)
+          throw requestError("snapshot_changed", 503);
         return indexSnapshot(loaded);
       })();
       const clear = () => loading.delete(key);
@@ -312,16 +324,6 @@ export function createSnapshotStore({
       loading.set(key, run);
     }
     return run;
-  };
-
-  // An expired file stays expired, so its key is logged once, not on every request.
-  /** @param {unknown} err */
-  const report = (err) => {
-    const key = /** @type {any} */ (err)?.expiredKey;
-    if (key === undefined) return onError(err);
-    if (key === reportedExpiry) return;
-    reportedExpiry = key;
-    onError(err);
   };
 
   /** @param {number} startedAt */
@@ -342,15 +344,27 @@ export function createSnapshotStore({
         held.prefix !== latest.prefix ||
         held.snapshotId !== latest.snapshotId
       ) {
-        // The old one isn't kept: two indexed snapshots would double the Lambda's
-        // memory. A job on it reloads it once.
-        held = await load(latest.prefix, latest.snapshotId);
+        const key = JSON.stringify([latest.prefix, latest.snapshotId]);
+        // Expired files stay gone, so answer at once rather than download the rest again.
+        if (expired?.key === key) throw expired.err;
+        try {
+          // The old one isn't kept: two indexed snapshots would double the Lambda's
+          // memory. A job on it reloads it once.
+          held = await load(latest.prefix, latest.snapshotId);
+        } catch (err) {
+          // Logged once per snapshot, since parallel downloads can fail on a different file each time.
+          if (isExpired(err)) {
+            expired = { key, err };
+            onError(err);
+          }
+          throw err;
+        }
       }
       checkedAt = startedAt;
       return held;
     } catch (err) {
       // Stale data still serves, but someone needs to hear about it.
-      if (held || /** @type {any} */ (err)?.expiredKey) report(err);
+      if (held && !isExpired(err)) onError(err);
       if (held) {
         checkedAt = startedAt;
         return held;

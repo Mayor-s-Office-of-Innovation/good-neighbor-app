@@ -43,7 +43,10 @@ function fakeSource(manifest = {}) {
         manifest: {
           ...projection.manifest,
           ...manifest,
-          snapshotId: latest.prefix === prefix ? latest.snapshotId : prefix,
+          snapshotId:
+            latest.prefix === prefix
+              ? latest.snapshotId
+              : prefix.replace(/^p/, "snap"),
         },
         tables: projection.tables,
       };
@@ -446,7 +449,8 @@ describe("createSnapshotStore", () => {
     await setImmediate();
     expect(source.load).toHaveBeenCalledTimes(2);
     for (const done of finish) done();
-    await job;
+    // The folder now holds snap2-new, so the job must not read it as snap2-old.
+    await expect(job).rejects.toMatchObject({ code: "snapshot_changed" });
   });
 
   it("with refreshMs 0, checks latest.json again rather than join a check that read it earlier", async () => {
@@ -586,6 +590,57 @@ describe("createSnapshotStore", () => {
         code: "snapshot_unavailable",
       });
     expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it("reports an expired snapshot once, whichever of its files a load fails on", async () => {
+    const source = fakeSource();
+    const onError = vi.fn();
+    const files = ["p1/issues.parquet", "p1/checks.parquet"];
+    let loads = 0;
+    source.load = async () => {
+      loads += 1;
+      throw Object.assign(new Error("snapshot_unavailable"), {
+        code: "snapshot_unavailable",
+        statusCode: 503,
+        expiredKey: files[loads % 2],
+      });
+    };
+    const store = createSnapshotStore({ source, refreshMs: 0, onError });
+    for (let i = 0; i < 3; i += 1)
+      await expect(store.current()).rejects.toMatchObject({
+        code: "snapshot_unavailable",
+      });
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it("answers 503 for an expired snapshot without downloading it again, until latest.json moves on", async () => {
+    const source = fakeSource();
+    const load = source.load.bind(source);
+    source.load = vi.fn(async () => {
+      throw Object.assign(new Error("snapshot_unavailable"), {
+        code: "snapshot_unavailable",
+        statusCode: 503,
+        expiredKey: "p1/manifest.json",
+      });
+    });
+    const store = createSnapshotStore({ source, refreshMs: 0 });
+    for (let i = 0; i < 3; i += 1)
+      await expect(store.current()).rejects.toMatchObject({
+        code: "snapshot_unavailable",
+      });
+    expect(source.load).toHaveBeenCalledOnce();
+    source.load = load;
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    expect((await store.current()).prefix).toBe("p2");
+  });
+
+  it("refuses a job's snapshot when its folder now holds another one", async () => {
+    const source = fakeSource();
+    const store = createSnapshotStore({ source });
+    await store.current();
+    await expect(store.byPrefix("p1", "snap1-old")).rejects.toMatchObject({
+      code: "snapshot_changed",
+    });
   });
 
   it("loads an older snapshot once for all the jobs that read it", async () => {
