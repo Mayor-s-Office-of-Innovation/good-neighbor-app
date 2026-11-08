@@ -438,6 +438,13 @@ describe("getRecordPhotos", () => {
     expect(ids(body.photos)).toContainEqual(["art-9", "check"]);
   });
 
+  it("shows only a replaced task's own notes, since no Issue counts it", async () => {
+    const { body } = await call(event({ issueId: "t5" }));
+    expect(body.notes.map((/** @type {any} */ n) => n.text)).toEqual([
+      "Deleted note",
+    ]);
+  });
+
   it("answers 404 for an Issue the Site doesn't have", async () => {
     expect((await call(event({ issueId: "nope" }))).status).toBe(404);
     expect(

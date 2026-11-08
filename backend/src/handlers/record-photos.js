@@ -114,13 +114,15 @@ async function checkEvidence(artifacts, siteId, checkId) {
 }
 
 /**
- * The Issue's first task, then its duplicates and follow-up tasks, so the
- * panel shows every response.
+ * The Issue's tasks as the Issue list counts them (`issue_members` in
+ * projection-sql.js), so the panel shows every response and no other Issue's.
  * @param {string} siteId
- * @param {Record<string, any>} root
+ * @param {Record<string, any>} requested the task the request names
  * @returns {Promise<Record<string, any>[]>}
  */
-async function issueTasks(siteId, root) {
+async function issueTasks(siteId, requested) {
+  // The Issue list never counts a replaced task, so no other task joins it.
+  if (DEAD_STATUSES.has(requested.status)) return [requested];
   const pk = sitePk(siteId);
   const [links, overrides] = await Promise.all([
     under(pk, "DUP_LINK#"),
@@ -128,62 +130,120 @@ async function issueTasks(siteId, root) {
   ]);
   // Staff split these sightings back out, so they are their own Issues.
   const separated = new Set(overrides.map((o) => String(o.taskId)));
-  /** @type {Map<string, string[]>} original task → its duplicates */
-  const duplicates = new Map();
   /** @type {Map<string, string>} duplicate → its original */
   const originalOf = new Map();
+  /** @type {Map<string, string[]>} original → its duplicates */
+  const duplicates = new Map();
   for (const link of links) {
     const id = String(link.taskId);
     if (separated.has(id)) continue;
-    const original = String(link.originalTaskId);
+    const original = String(link.originalTaskId ?? "");
     originalOf.set(id, original);
     const list = duplicates.get(original);
     if (list) list.push(id);
     else duplicates.set(original, [id]);
   }
-  const members = [root];
-  const seen = new Set([String(root.taskId)]);
-  // Tasks whose duplicates belong to this Issue.
-  const joined = new Set([String(root.taskId)]);
-  /** @type {Map<string, Record<string, any>>} replaced sightings whose original hasn't joined yet */
-  const pending = new Map();
-  for (let wave = [root]; wave.length; ) {
-    const conditions = await Promise.all(
-      wave.map((t) =>
-        t.assessmentId && t.conditionId && !DEAD_STATUSES.has(t.status)
-          ? get(conditionKey(siteId, t.assessmentId, t.conditionId))
-          : undefined,
-      ),
+  /** @param {Record<string, any>} t */
+  const idOf = (t) => String(t.taskId);
+  /**
+   * @param {Record<string, any> | undefined} t
+   * @returns {t is Record<string, any>}
+   */
+  const isLive = (t) => t !== undefined && !DEAD_STATUSES.has(t.status);
+  /** @type {Map<string, Promise<Record<string, any> | undefined>>} */
+  const tasks = new Map([[idOf(requested), Promise.resolve(requested)]]);
+  /** @param {string} id */
+  const task = (id) => {
+    if (!tasks.has(id)) tasks.set(id, get(taskKey(siteId, id)));
+    return /** @type {Promise<Record<string, any> | undefined>} */ (
+      tasks.get(id)
     );
-    const next = [
-      ...wave.flatMap((t) => duplicates.get(String(t.taskId)) ?? []),
-      ...conditions.flatMap((c) => (c?.taskIds ?? []).map(String)),
-    ].filter((id) => !seen.has(id) && seen.add(id));
-    const found = /** @type {Record<string, any>[]} */ (
-      (await Promise.all(next.map((id) => get(taskKey(siteId, id))))).filter(
-        (t) => t !== undefined,
-      )
-    );
-    const live = found.filter((t) => !DEAD_STATUSES.has(t.status));
-    for (const t of live) joined.add(String(t.taskId));
-    for (const t of found)
-      if (DEAD_STATUSES.has(t.status)) pending.set(String(t.taskId), t);
-    // As on the Issue list, a replaced sighting passes its duplicates on only
-    // when it links into this Issue. Rechecked until nothing moves, since its
-    // original may join later or be another replaced sighting.
-    const dead = [];
-    for (let moved = true; moved; ) {
-      moved = false;
-      for (const [id, t] of pending)
-        if (joined.has(originalOf.get(id) ?? "")) {
-          pending.delete(id);
-          joined.add(id);
-          dead.push(t);
-          moved = true;
-        }
+  };
+  // The condition's list finds its tasks, as guidance-store.js's task cards do.
+  /** @type {Map<string, Promise<Record<string, any>[]>>} */
+  const listed = new Map();
+  /**
+   * In the condition's order, since its first live task leads the Issue.
+   * @param {Record<string, any>} t
+   */
+  const listedLive = (t) => {
+    const key = JSON.stringify([t.assessmentId ?? null, t.conditionId]);
+    if (!listed.has(key))
+      listed.set(
+        key,
+        (async () => {
+          const condition = t.assessmentId
+            ? await get(conditionKey(siteId, t.assessmentId, t.conditionId))
+            : undefined;
+          const list = Array.isArray(condition?.taskIds)
+            ? condition.taskIds
+            : [];
+          const ids = [...new Set(list.map(String))];
+          return (await Promise.all(ids.map(task))).filter(
+            /** @returns {x is Record<string, any>} */
+            (x) =>
+              isLive(x) &&
+              (x.assessmentId ?? null) === (t.assessmentId ?? null) &&
+              x.conditionId === t.conditionId,
+          );
+        })(),
+      );
+    return /** @type {Promise<Record<string, any>[]>} */ (listed.get(key));
+  };
+  // The task a condition lists first leads its Issue; the rest are follow-ups.
+  /** @param {Record<string, any>} t */
+  const leaderOf = async (t) =>
+    (t.conditionId ? (await listedLive(t))[0] : undefined) ?? t;
+  /** @param {Record<string, any>} leader */
+  const followersOf = async (leader) => {
+    const list = leader.conditionId ? await listedLive(leader) : [];
+    return list[0] && idOf(list[0]) === idOf(leader) ? list : [leader];
+  };
+  /** @param {string} id */
+  const nextOf = async (id) => {
+    const original = /** @type {string} */ (originalOf.get(id));
+    const o = await task(original);
+    return isLive(o) ? idOf(await leaderOf(o)) : original;
+  };
+  /** @param {string} start the first live task on its condition */
+  const rootOf = async (start) => {
+    const seen = new Set();
+    let cur = start;
+    for (; originalOf.has(cur); cur = await nextOf(cur)) {
+      // A loop, or a chain ending at a dropped task, stays its own Issue.
+      if (seen.has(cur)) return start;
+      seen.add(cur);
     }
-    members.push(...live);
-    wave = [...live, ...dead];
+    return isLive(await task(cur)) ? cur : start;
+  };
+  const root = await rootOf(idOf(await leaderOf(requested)));
+  const rootTask = /** @type {Record<string, any>} */ (await task(root));
+  // A root with its own link stays alone; no other chain can end at it.
+  if (originalOf.has(root)) return followersOf(rootTask);
+  // Walk links backwards, since only links name their original task.
+  /** @type {Record<string, any>[]} */
+  const members = [];
+  const seen = new Set([root]);
+  for (let wave = [root]; wave.length; ) {
+    const reached = await Promise.all(
+      wave.map(async (id) => {
+        const t = await task(id);
+        return isLive(t) ? followersOf(t) : null;
+      }),
+    );
+    members.push(...reached.flatMap((r) => r ?? []));
+    const next = wave
+      .flatMap((id, i) => reached[i]?.map(idOf) ?? [id])
+      .flatMap((id) => duplicates.get(id) ?? [])
+      .filter((id) => !seen.has(id) && seen.add(id));
+    // A follow-up's own link is never followed, as on the Issue list.
+    const steps = await Promise.all(
+      next.map(async (id) => {
+        const t = await task(id);
+        return !isLive(t) || idOf(await leaderOf(t)) === id;
+      }),
+    );
+    wave = next.filter((_, i) => steps[i]);
   }
   return members;
 }
