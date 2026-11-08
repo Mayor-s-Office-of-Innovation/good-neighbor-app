@@ -66,8 +66,6 @@ export function createInsightsSession(catalog = createAdminCatalog()) {
   /** @type {Promise<any> | null} */
   let scope = null;
   /** @type {Promise<Option[]> | null} */
-  let programs = null;
-  /** @type {Promise<Option[]> | null} */
   let sites = null;
   // The snapshot the cached scope came from; "" until it answers.
   let scopeSnapshot = "";
@@ -177,40 +175,25 @@ export function createInsightsSession(catalog = createAdminCatalog()) {
       );
       return sites;
     },
-    /** Only Raw data filters by Program. @returns {Promise<Option[]>} */
-    programOptions() {
-      if (programs) return programs;
-      let complete = true;
-      // Without names the options still work, labelled by ID, and are read again next time.
-      const listed = catalog.ensure(START_UP_LISTS).then(
-        () => catalog.programs,
-        () => {
-          complete = false;
-          return catalog.programs;
-        },
+    /** Only Raw data filters by Program. Labels are rebuilt each time, so a renamed Program shows. @returns {Promise<Option[]>} */
+    async programOptions() {
+      const [read] = await Promise.all([
+        scopeRead(),
+        // Without names the options still work, labelled by ID, and are read again next time.
+        catalog.ensure(START_UP_LISTS).catch(() => {}),
+      ]);
+      return optionsFor(
+        new Map(
+          catalog.programs.map(
+            (/** @type {any} */ p) =>
+              /** @type {[string, string]} */ ([
+                p.programId,
+                p.name || p.programId,
+              ]),
+          ),
+        ),
+        read.groups?.programId ?? [],
       );
-      programs = Promise.all([scopeRead(), listed]).then(
-        ([read, list]) => {
-          if (!complete) programs = null;
-          return optionsFor(
-            new Map(
-              list.map(
-                (/** @type {any} */ p) =>
-                  /** @type {[string, string]} */ ([
-                    p.programId,
-                    p.name || p.programId,
-                  ]),
-              ),
-            ),
-            read.groups?.programId ?? [],
-          );
-        },
-        (err) => {
-          programs = null;
-          throw err;
-        },
-      );
-      return programs;
     },
   };
   return session;

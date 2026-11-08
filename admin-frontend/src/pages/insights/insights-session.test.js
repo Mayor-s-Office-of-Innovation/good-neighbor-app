@@ -286,3 +286,17 @@ test("Program options share the scope read and fall back to IDs until the names 
   assert.equal(programs.mock.calls.length, reads);
   assert.equal(calls.scope.mock.calls.length, 1);
 });
+
+test("a Program renamed in Manage shows under its new name in Program options", async () => {
+  fakeDirectory({
+    scope: async () => ({ groups: { programId: [{ value: "g1" }] } }),
+  });
+  vi.spyOn(adminApi, "listPrograms").mockResolvedValue({
+    programs: [{ programId: "g1", name: "Example Program" }],
+  });
+  const catalog = createAdminCatalog();
+  const session = createInsightsSession(catalog);
+  assert.equal((await session.programOptions())[0].label, "Example Program");
+  catalog.addProgram({ programId: "g1", name: "Renamed Program" });
+  assert.equal((await session.programOptions())[0].label, "Renamed Program");
+});
