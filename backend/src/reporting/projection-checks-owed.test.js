@@ -265,7 +265,17 @@ describe("checks_owed in the projection", () => {
         expiresOnExclusive: "2026-09-25",
       }),
       terms("s1", "2026-10-01", { requiredChecksPerDay: undefined }),
-      terms("s1", "2026-10-10", { requiredChecksPerDay: 6 }),
+      // Two made the same day, read newer first.
+      terms("s1", "2026-10-10", {
+        termsVersionId: "v-b",
+        createdAt: "2026-10-10T18:00:00.000Z",
+        requiredChecksPerDay: 6,
+      }),
+      terms("s1", "2026-10-10", {
+        termsVersionId: "v-a",
+        createdAt: "2026-10-10T16:00:00.000Z",
+        requiredChecksPerDay: 1,
+      }),
     ];
     const { owed } = await buildOwed([site], own);
     const { owedOn } = checksOwedResolver(site, own, "2026-10-19");
