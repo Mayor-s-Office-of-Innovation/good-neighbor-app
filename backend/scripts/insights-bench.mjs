@@ -10,37 +10,18 @@
 // The in-memory and browser designs it was picked over were measured on
 // 11/05; their numbers are in the architecture doc.
 //
-// Input is the projection from `npm run insights:data` (24 Sites, a year).
-// Sizes are made from it by copying each Site's rows under new Site IDs,
-// and each extra year by copying every row with its days moved back by the
-// data's span. Copies change the size, not the rules. Built files are kept in
-// backend/.local/insights-bench/ and reused while the input is unchanged.
+// Input is the projection from `npm run insights:data`. Sizes copy each Site's
+// rows under new Site IDs, and each extra year moves every row back by the
+// data's span, so copies change the size, not the rules. Built files are kept
+// in backend/.local/insights-bench/ and reused while the input is unchanged.
 //
 // Each query × size runs in its own Node process with
 // --max-old-space-size=2048, the Lambda's memory, so one query's garbage
-// can't slow another. A run whose peak RSS, native memory included, passes
-// 2,048 MiB fails, as it would on the Lambda.
-//
-// Options:
-//   --dir      insights:data output folder (default backend/.local/insights-data)
-//   --sites    Site counts, comma-separated (default 500,1000)
-//   --years    years of data, comma-separated (default 1,2)
-//   --runs     warm runs per query after the first answer (default 30)
-//   --threads  DuckDB threads (default 1; a 2 GB Lambda has about 1.2 vCPUs)
-//   --rebuild  rebuild the sized files even if the input is unchanged
-//   --json     also write every result to this file
-//
-// Columns:
-//   cold ms     process start to the first answer: imports, opening the
-//               files, and the query
-//   peak RSS    the process's peak resident memory, native memory included
-//               (DuckDB's buffers count here, not in heap)
-//   peak heap   the largest V8 heap in use, sampled after each answer
-//   warm p50    median time per answer over --runs answers, same process
-//   warm p95    95th percentile of those
-//   files MB    bytes on disk of the files the query reads
+// can't slow another. A run whose peak RSS passes 2,048 MiB fails, as it
+// would on the Lambda. docs/dev-commands.md lists the options and columns.
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -487,6 +468,22 @@ export async function measure(query, dir, { runs, threads }) {
   }
 }
 
+// insights:data keeps the generator's fixed snapshot ID, so a rerun is spotted by the whole manifest.
+/**
+ * @param {string} text the input's manifest.json
+ * @returns {string}
+ */
+const hashOf = (text) => createHash("sha256").update(text).digest("hex");
+
+/**
+ * @param {Record<string, any> | null} built a sized copy's manifest
+ * @param {string} baseText the input's manifest.json
+ * @returns {boolean}
+ */
+export function builtFrom(built, baseText) {
+  return built?.bench?.base === hashOf(baseText);
+}
+
 /**
  * The input projection copied up to `sites` Sites and `years` years.
  * @param {string} base
@@ -498,9 +495,8 @@ export async function buildSize(base, out, sites, years) {
   const tmp = `${out}.partial`;
   await rm(tmp, { recursive: true, force: true });
   await mkdir(tmp, { recursive: true });
-  const manifest = JSON.parse(
-    await readFile(join(base, "manifest.json"), "utf8"),
-  );
+  const baseText = await readFile(join(base, "manifest.json"), "utf8");
+  const manifest = JSON.parse(baseText);
   const { DuckDBInstance } = await import("@duckdb/node-api");
   const instance = await DuckDBInstance.create(":memory:");
   const conn = await instance.connect();
@@ -568,7 +564,11 @@ export async function buildSize(base, out, sites, years) {
     await writeFile(
       join(tmp, "manifest.json"),
       JSON.stringify(
-        { ...manifest, rowCounts, bench: { sites, years, copies, span } },
+        {
+          ...manifest,
+          rowCounts,
+          bench: { sites, years, copies, span, base: hashOf(baseText) },
+        },
         null,
         2,
       ),
@@ -687,9 +687,7 @@ export async function main(opts, benchDir = BENCH_DIR) {
     throw new Error(
       `no projection in ${dataDir}; run npm run insights:data -w backend first`,
     );
-  const baseManifest = JSON.parse(
-    await readFile(join(base, "manifest.json"), "utf8"),
-  );
+  const baseText = await readFile(join(base, "manifest.json"), "utf8");
   /** @type {Record<string, any>[]} */
   const results = [];
   for (const sites of sizes)
@@ -699,7 +697,7 @@ export async function main(opts, benchDir = BENCH_DIR) {
       const stamp = existsSync(join(dir, "manifest.json"))
         ? JSON.parse(await readFile(join(dir, "manifest.json"), "utf8"))
         : null;
-      if (opts.rebuild || stamp?.snapshotId !== baseManifest.snapshotId) {
+      if (opts.rebuild || !builtFrom(stamp, baseText)) {
         const started = performance.now();
         await buildSize(base, dir, sites, years);
         console.log(

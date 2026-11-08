@@ -11,6 +11,7 @@ import {
   QUERIES,
   bucketRanges,
   buildSize,
+  builtFrom,
   byName,
   childResult,
   designB,
@@ -232,6 +233,17 @@ describe("designB", () => {
     } finally {
       b.close();
     }
+  });
+});
+
+describe("builtFrom", () => {
+  it("rebuilds after insights:data reruns, though the snapshot ID stays the same", async () => {
+    const out = join(root, "3-sites-1y");
+    await buildSize(base, out, 3, 1);
+    const baseText = readFileSync(join(base, "manifest.json"), "utf8");
+    expect(builtFrom(manifestOf(out), baseText)).toBe(true);
+    const rerun = { ...JSON.parse(baseText), rowCounts: { issues: 1 } };
+    expect(builtFrom(manifestOf(out), JSON.stringify(rerun))).toBe(false);
   });
 });
 
