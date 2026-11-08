@@ -256,7 +256,7 @@ resource "aws_cloudwatch_log_metric_filter" "insights_jobs_errors" {
 
 resource "aws_cloudwatch_metric_alarm" "insights_jobs_dlq_not_empty" {
   alarm_name          = "${local.name_prefix}-insights-jobs-dlq-not-empty"
-  alarm_description   = "An Insights export or report job failed all its deliveries in ${aws_sqs_queue.insights_jobs_dlq.name}. Its requester saw a timeout up to 2 hours earlier, since each failed delivery waits out the 30-minute visibility timeout. Check the insights-jobs logs, then redrive or purge the DLQ."
+  alarm_description   = "An Insights export or report job failed all its deliveries in ${aws_sqs_queue.insights_jobs_dlq.name}. Its requester saw a timeout about 2.5 hours earlier, since each of its 5 deliveries waits out the 30-minute visibility timeout. Check the insights-jobs logs, then redrive or purge the DLQ."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1
