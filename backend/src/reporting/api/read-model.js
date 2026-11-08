@@ -17,6 +17,7 @@ import {
   encodeCursor,
   requestError,
 } from "./requests.js";
+import { addedDay } from "./snapshot.js";
 
 /** @typedef {import("./snapshot.js").Snapshot} Snapshot */
 /** @typedef {import("../periods.js").Interval} Interval */
@@ -428,15 +429,6 @@ function firstWholeDay(snap, site, interval) {
 }
 
 /**
- * @param {Record<string, any>} site
- * @returns {string}
- */
-function addedDay(site) {
-  // A createdAt that doesn't parse can't say when the Site began.
-  return site.createdAt ? pacificDateKey(site.createdAt) : "";
-}
-
-/**
  * The days a Site's Issues per 30 days spreads them over: from the Checks
  * average's first day to the update. Today counts, since its Issues do.
  * @param {Snapshot} snap
@@ -498,8 +490,7 @@ function siteFacts(snap, site, interval) {
   const issueDays = issueSpan
     ? dayCountBetween(issueSpan.startDay, issueSpan.endDay)
     : 0;
-  // Rows from before the Site was added aren't the Site's activity.
-  const start = laterDay(interval.startDay, addedDay(site));
+  const start = interval.startDay;
   // One pass over the Site's days; the whole days sit inside the period.
   const sum = Object.fromEntries(SITE_DAY_METRICS.map((m) => [m, 0]));
   let checks = 0;

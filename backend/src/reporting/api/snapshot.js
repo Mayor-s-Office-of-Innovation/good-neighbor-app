@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { sqlString } from "../../analytics/convert.js";
+import { pacificDateKey } from "../../lib/pacific-dates.js";
 import { CONTRACT_VERSION } from "../contract.js";
 import { TABLE_SCHEMAS } from "../projection.js";
 import { requestError } from "./requests.js";
@@ -52,21 +53,42 @@ function groupBy(rows, field) {
 }
 
 /**
+ * @param {Record<string, any>} site
+ * @returns {string}
+ */
+export function addedDay(site) {
+  // A createdAt that doesn't parse can't say when the Site began.
+  return site.createdAt ? pacificDateKey(site.createdAt) : "";
+}
+
+/**
  * @param {{ prefix: string, manifest: Record<string, any>, tables: Record<string, Record<string, any>[]> }} loaded
  * @returns {Snapshot}
  */
-export function indexSnapshot({ prefix, manifest, tables }) {
+export function indexSnapshot({ prefix, manifest, tables: all }) {
   /** @param {Record<string, any>[]} rows */
   const byDay = (rows) =>
     rows.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
   let coverageStart = null;
   for (const name of ["site_days", "checks"])
-    for (const row of tables[name] ?? [])
+    for (const row of all[name] ?? [])
       if (coverageStart === null || row.day < coverageStart)
         coverageStart = row.day;
-  for (const row of tables.issues ?? [])
+  for (const row of all.issues ?? [])
     if (coverageStart === null || row.createdDay < coverageStart)
       coverageStart = row.createdDay;
+  // Dropped once here, so every total, comparison and list counts the same days.
+  const added = new Map(all.sites.map((s) => [s.siteId, addedDay(s)]));
+  /** @param {Record<string, any>[] | undefined} rows @param {string} field */
+  const sinceAdded = (rows, field) =>
+    (rows ?? []).filter((r) => !(r[field] < (added.get(r.siteId) ?? "")));
+  /** @type {Record<string, Record<string, any>[]>} */
+  const tables = {
+    ...all,
+    site_days: sinceAdded(all.site_days, "day"),
+    checks: sinceAdded(all.checks, "day"),
+    issues: sinceAdded(all.issues, "createdDay"),
+  };
   return {
     prefix,
     snapshotId: String(manifest.snapshotId),
@@ -74,8 +96,9 @@ export function indexSnapshot({ prefix, manifest, tables }) {
     tables,
     sitesById: new Map(tables.sites.map((s) => [s.siteId, s])),
     contactsBySite: new Map(tables.site_contacts.map((c) => [c.siteId, c])),
-    issuesById: groupBy(tables.issues, "issueId"),
-    checksById: groupBy(tables.checks, "checkId"),
+    // From every row, so a record linked from elsewhere still opens.
+    issuesById: groupBy(all.issues, "issueId"),
+    checksById: groupBy(all.checks, "checkId"),
     // Grouped once, so a report reads each Site's rows, not the whole table per Site.
     daysBySite: new Map(
       [...groupBy(tables.site_days, "siteId")].map(([siteId, rows]) => [

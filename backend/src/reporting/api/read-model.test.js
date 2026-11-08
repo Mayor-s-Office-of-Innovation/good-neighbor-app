@@ -547,6 +547,47 @@ describe("overview", () => {
     ]).toEqual([1, 1, 5]);
   });
 
+  it("counts the same days in totals, comparison, Trends and the Issues list for a Site added mid-period", () => {
+    const early = edited((t) => {
+      t.sites[0].createdAt = "2026-10-15T20:00:00.000Z";
+    });
+    const filter = { siteIds: ["s1"] };
+    const ov = overview(early, {
+      interval: october,
+      filter,
+      list: list("sites"),
+      now: NOW,
+    });
+    const tr = trends(early, {
+      interval: october,
+      scope: filter,
+      breakdown: "department",
+      now: NOW,
+    });
+    const issues = listIssues(early, {
+      interval: october,
+      filter,
+      list: list("issues"),
+      now: NOW,
+    });
+    // Only t3 (Oct 20) comes after Oct 15, on every view of the month.
+    expect({
+      totals: ov.totals.activity.issuesCreated,
+      comparison: ov.comparison.change?.issuesCreated.current,
+      weeks: tr.series.current.reduce((n, b) => n + b.issuesCreated, 0),
+      categories: tr.categories.reduce((n, c) => n + c.issues, 0),
+      breakdown: tr.breakdown?.[0].current.issuesCreated,
+      list: issues.total,
+    }).toEqual({
+      totals: 1,
+      comparison: 1,
+      weeks: 1,
+      categories: 1,
+      breakdown: 1,
+      list: 1,
+    });
+  });
+
   it("can flag Many Issues on a period's first day, before any whole day", () => {
     const firstDay = edited((t, m) => {
       m.evaluatedAt = "2026-11-01T17:00:00.000Z";
