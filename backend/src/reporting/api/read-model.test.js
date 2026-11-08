@@ -306,6 +306,52 @@ describe("overview", () => {
     expect(res.sites.map((s) => s.siteId)).toEqual(["s3", "s2", "s1"]);
   });
 
+  it("sorts the Checks and Issues columns by the rates they show, not by totals", () => {
+    // s2 opens Oct 30 and has one Check and three Issues on Oct 31: fewer than s1 in total, at a higher rate.
+    const opened = edited((t) => {
+      for (const site of t.sites) site.hasPerimeter = true;
+      t.sites[1].createdAt = "2026-10-30T20:00:00.000Z";
+      t.site_days = t.site_days.filter((d) => d.siteId !== "s2");
+      t.site_days.push({
+        siteId: "s2",
+        day: "2026-10-31",
+        completedPerimeterChecks: 1,
+        issuesCreated: 3,
+      });
+    });
+    const fy = parsePeriodParams(
+      { period: "financialYear", startYear: "2026" },
+      TEST_EVALUATED_AT,
+      snap.dataDays,
+    );
+    /** @param {string} sort @param {string} dir */
+    const sorted = (sort, dir) =>
+      overview(opened, {
+        interval: fy,
+        filter: {},
+        list: list("sites", { sort, dir }),
+        now: NOW,
+      }).sites.map((r) => [
+        r.siteId,
+        sort === "checksPerDay" ? r.checksPerDay : r.issuesPer30Days,
+      ]);
+    expect([
+      sorted("checksPerDay", "desc"),
+      sorted("issuesPer30Days", "desc"),
+    ]).toEqual([
+      [
+        ["s2", 0.3],
+        ["s1", 0.1],
+        ["s3", 0],
+      ],
+      [
+        ["s2", 3],
+        ["s1", 2.4],
+        ["s3", 0],
+      ],
+    ]);
+  });
+
   /**
    * October's Overview with list filters, as the page asks for it.
    * @param {Record<string, unknown>} params

@@ -294,8 +294,7 @@ describe("parseListQuery", () => {
 
   it("sorts Sites by Checks fewest first, unless asked otherwise", () => {
     const sort = (/** @type {Record<string, string>} */ params) =>
-      parseListQuery("sites", { sort: "completedPerimeterChecks", ...params })
-        .sort.dir;
+      parseListQuery("sites", { sort: "checksPerDay", ...params }).sort.dir;
     expect([sort({}), sort({ dir: "desc" })]).toEqual(["asc", "desc"]);
   });
 

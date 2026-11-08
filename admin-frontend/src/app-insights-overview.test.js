@@ -328,8 +328,8 @@ test("a new sort keeps the picks, since every Site is still listed", async () =>
     insights: true,
   });
   await fill('[data-select-site="s1"]', true);
-  await click('[data-sort-key="issuesCreated"]');
-  assert.equal(lastOverviewCall(api).sort, "issuesCreated");
+  await click('[data-sort-key="issuesPer30Days"]');
+  assert.equal(lastOverviewCall(api).sort, "issuesPer30Days");
   assert.ok($('[data-select-site="s1"]').checked);
 });
 
@@ -340,27 +340,21 @@ test("a header's first click shows the worst Sites first; a second click flips i
   const th = (/** @type {string} */ key) =>
     $(`[data-sort-key="${key}"]`).closest("th");
   assert.equal(th("name").getAttribute("aria-sort"), "ascending");
-  await click('[data-sort-key="completedPerimeterChecks"]');
+  await click('[data-sort-key="checksPerDay"]');
   // Fewest Checks first, the server's own first direction for this column.
-  assert.equal(lastOverviewCall(api).sort, "completedPerimeterChecks");
+  assert.equal(lastOverviewCall(api).sort, "checksPerDay");
   assert.equal(lastOverviewCall(api).dir, undefined);
-  assert.equal(
-    th("completedPerimeterChecks").getAttribute("aria-sort"),
-    "ascending",
-  );
+  assert.equal(th("checksPerDay").getAttribute("aria-sort"), "ascending");
   assert.equal(th("name").getAttribute("aria-sort"), "none");
   // The redrawn header keeps focus, so its new order is read out.
-  assert.ok(focused('[data-sort-key="completedPerimeterChecks"]'));
-  await click('[data-sort-key="completedPerimeterChecks"]');
+  assert.ok(focused('[data-sort-key="checksPerDay"]'));
+  await click('[data-sort-key="checksPerDay"]');
   assert.equal(lastOverviewCall(api).dir, "desc");
   assert.equal(
     url(),
-    "/insights?period=2026-10&show=all&sort=completedPerimeterChecks&dir=desc",
+    "/insights?period=2026-10&show=all&sort=checksPerDay&dir=desc",
   );
-  assert.equal(
-    th("completedPerimeterChecks").getAttribute("aria-sort"),
-    "descending",
-  );
+  assert.equal(th("checksPerDay").getAttribute("aria-sort"), "descending");
   await click('[data-sort-key="overdueLate"]');
   assert.equal(lastOverviewCall(api).dir, undefined);
   assert.equal(th("overdueLate").getAttribute("aria-sort"), "descending");

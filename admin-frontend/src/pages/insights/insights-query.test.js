@@ -241,21 +241,18 @@ test("Overview opens on Top concerns, sorted by Site name", () => {
 });
 
 test("a shared link keeps a flipped sort, and drops a direction it doesn't offer", () => {
-  const flipped = readOverview("?sort=completedPerimeterChecks&dir=desc");
+  const flipped = readOverview("?sort=checksPerDay&dir=desc");
   assert.equal(sortDir(flipped), "desc");
-  assert.equal(
-    overviewSearch(flipped, null),
-    "?sort=completedPerimeterChecks&dir=desc",
-  );
+  assert.equal(overviewSearch(flipped, null), "?sort=checksPerDay&dir=desc");
   assert.deepEqual(overviewApiParams(flipped, null), {
     show: "top",
-    sort: "completedPerimeterChecks",
+    sort: "checksPerDay",
     dir: "desc",
   });
-  const odd = readOverview("?sort=completedPerimeterChecks&dir=up");
+  const odd = readOverview("?sort=checksPerDay&dir=up");
   // Fewest Checks first, as the server sorts it unless asked.
   assert.equal(sortDir(odd), "asc");
-  assert.equal(overviewSearch(odd, null), "?sort=completedPerimeterChecks");
+  assert.equal(overviewSearch(odd, null), "?sort=checksPerDay");
 });
 
 test("Overview ignores filter values it doesn't offer", () => {

@@ -210,8 +210,8 @@ export const SORTS = Object.freeze({
     overdueLate: "desc",
     maxSeverity: "desc",
     // Fewest first, since few Checks is the concern.
-    completedPerimeterChecks: "asc",
-    issuesCreated: "desc",
+    checksPerDay: "asc",
+    issuesPer30Days: "desc",
   },
   issues: {
     createdAt: "desc",

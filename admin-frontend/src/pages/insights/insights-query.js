@@ -27,19 +27,19 @@ export const OVERVIEW_FILTERS = /** @type {const} */ ([
 // Only sorts the server accepts, so a shared link never asks for one it refuses.
 export const SITE_SORTS = [
   "name",
-  "completedPerimeterChecks",
+  "checksPerDay",
   "overdueLate",
   "maxSeverity",
-  "issuesCreated",
+  "issuesPer30Days",
 ];
 // Matches SORTS.sites' defaults, so a column's first click sends no dir.
 /** @type {Record<string, "asc" | "desc">} */
 export const SITE_SORT_DIR = {
   name: "asc",
-  completedPerimeterChecks: "asc",
+  checksPerDay: "asc",
   overdueLate: "desc",
   maxSeverity: "desc",
-  issuesCreated: "desc",
+  issuesPer30Days: "desc",
 };
 
 // Years 2000–2999, the only years the server accepts.

@@ -231,10 +231,10 @@ export function selectAllState(listedIds, selected) {
 /** @type {Record<string, string>} */
 const SORT_COLUMN = {
   name: "site",
-  completedPerimeterChecks: "checks",
+  checksPerDay: "checks",
   overdueLate: "response",
   maxSeverity: "severity",
-  issuesCreated: "issuesPer30d",
+  issuesPer30Days: "issuesPer30d",
 };
 
 /** @param {string} key admin.insights.col.* @param {boolean} num @param {OverviewState} state */

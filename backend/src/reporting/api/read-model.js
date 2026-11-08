@@ -647,9 +647,9 @@ const SITE_SORT_VALUE = {
   /** @param {any} r */ overdueLate: (r) =>
     r.response.overdue + r.response.late + r.longUnresolved,
   /** @param {any} r */ maxSeverity: (r) => r.maxSeverity,
-  /** @param {any} r */
-  completedPerimeterChecks: (r) => r.activity.completedPerimeterChecks,
-  /** @param {any} r */ issuesCreated: (r) => r.activity.issuesCreated,
+  // The rates the columns show, so a sort never ranks by a hidden total.
+  /** @param {any} r */ checksPerDay: (r) => r.checksPerDay,
+  /** @param {any} r */ issuesPer30Days: (r) => r.issuesPer30Days,
 };
 
 /**
