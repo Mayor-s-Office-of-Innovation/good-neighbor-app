@@ -371,6 +371,61 @@ describe("getRecordPhotos", () => {
     expect(ids(body.photos)).toContainEqual(["art-8", "check"]);
   });
 
+  it("keeps a replaced sighting's duplicate when the sighting's original joins in a later wave", async () => {
+    /** @param {string} sk @param {Record<string, unknown>} row */
+    const put = (sk, row) =>
+      rows.set(`SITE#s1|${sk}`, { pk: "SITE#s1", sk, ...row });
+    // Wave 1 reaches t8; its original t6 joins only in wave 2, as t4's duplicate.
+    put("ASSESSMENT#a1#COND#k1", { taskIds: ["t1", "t4", "t5", "t8"] });
+    put("TASK#t8", { taskId: "t8", checkId: "c2", status: "superseded" });
+    put("DUP_LINK#t8", { taskId: "t8", originalTaskId: "t6" });
+    put("TASK#t6", { taskId: "t6", checkId: "c2" });
+    put("DUP_LINK#t6", { taskId: "t6", originalTaskId: "t4" });
+    put("TASK#t9", {
+      taskId: "t9",
+      checkId: "c2",
+      sourceArtifactIds: ["art-8"],
+    });
+    put("DUP_LINK#t9", { taskId: "t9", originalTaskId: "t8" });
+    put("CHECK#c2#ART#art-8", {
+      artifactId: "art-8",
+      s3Key: "checks/s1/c2/art-8",
+    });
+    const { body } = await call(event({ issueId: "t1" }));
+    expect(ids(body.photos)).toContainEqual(["art-8", "check"]);
+  });
+
+  it.each([
+    ["t10", "t11"],
+    ["t11", "t10"],
+  ])(
+    "keeps the duplicate at the end of two replaced sightings the condition lists as %s, %s",
+    async (first, second) => {
+      /** @param {string} sk @param {Record<string, unknown>} row */
+      const put = (sk, row) =>
+        rows.set(`SITE#s1|${sk}`, { pk: "SITE#s1", sk, ...row });
+      put("ASSESSMENT#a1#COND#k1", {
+        taskIds: ["t1", "t4", "t5", first, second],
+      });
+      put("TASK#t10", { taskId: "t10", checkId: "c2", status: "superseded" });
+      put("DUP_LINK#t10", { taskId: "t10", originalTaskId: "t4" });
+      put("TASK#t11", { taskId: "t11", checkId: "c2", status: "deleted" });
+      put("DUP_LINK#t11", { taskId: "t11", originalTaskId: "t10" });
+      put("TASK#t12", {
+        taskId: "t12",
+        checkId: "c2",
+        sourceArtifactIds: ["art-8"],
+      });
+      put("DUP_LINK#t12", { taskId: "t12", originalTaskId: "t11" });
+      put("CHECK#c2#ART#art-8", {
+        artifactId: "art-8",
+        s3Key: "checks/s1/c2/art-8",
+      });
+      const { body } = await call(event({ issueId: "t1" }));
+      expect(ids(body.photos)).toContainEqual(["art-8", "check"]);
+    },
+  );
+
   it("finds a sighting's photo saved under the older key with a place segment", async () => {
     rows.delete("SITE#s1|CHECK#c2#ART#art-9");
     rows.set("SITE#s1|CHECK#c2#ART#place-1#art-9", {

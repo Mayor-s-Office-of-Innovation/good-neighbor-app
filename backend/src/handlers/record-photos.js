@@ -145,6 +145,8 @@ async function issueTasks(siteId, root) {
   const seen = new Set([String(root.taskId)]);
   // Tasks whose duplicates belong to this Issue.
   const joined = new Set([String(root.taskId)]);
+  /** @type {Map<string, Record<string, any>>} replaced sightings whose original hasn't joined yet */
+  const pending = new Map();
   for (let wave = [root]; wave.length; ) {
     const conditions = await Promise.all(
       wave.map((t) =>
@@ -164,14 +166,22 @@ async function issueTasks(siteId, root) {
     );
     const live = found.filter((t) => !DEAD_STATUSES.has(t.status));
     for (const t of live) joined.add(String(t.taskId));
+    for (const t of found)
+      if (DEAD_STATUSES.has(t.status)) pending.set(String(t.taskId), t);
     // As on the Issue list, a replaced sighting passes its duplicates on only
-    // when it links into this Issue itself.
-    const dead = found.filter(
-      (t) =>
-        DEAD_STATUSES.has(t.status) &&
-        joined.has(originalOf.get(String(t.taskId)) ?? ""),
-    );
-    for (const t of dead) joined.add(String(t.taskId));
+    // when it links into this Issue. Rechecked until nothing moves, since its
+    // original may join later or be another replaced sighting.
+    const dead = [];
+    for (let moved = true; moved; ) {
+      moved = false;
+      for (const [id, t] of pending)
+        if (joined.has(originalOf.get(id) ?? "")) {
+          pending.delete(id);
+          joined.add(id);
+          dead.push(t);
+          moved = true;
+        }
+    }
     members.push(...live);
     wave = [...live, ...dead];
   }
