@@ -1,10 +1,7 @@
 name: Plan dev
 
-# Shows what a deploy of the chosen branch would change in dev, without changing
-# it: deploy.yml plans and applies in one job, so nobody can read its plan first.
-# Needs a `dev-plan` GitHub Environment with the secrets AWS_ACCOUNT_ID and
-# AWS_PLAN_ROLE_ARN (the read-only role from infra/modules/app/plan-role.tf) and
-# the variable AWS_REGION. The deploy role is deliberately not in it.
+# Shows what a deploy of a branch would change in dev; deploy.yml applies in the same job.
+# Needs the protected `dev-plan` Environment that infra/README.md describes.
 on:
   workflow_dispatch:
 
@@ -59,7 +56,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment: dev-plan
-    # Only this job can get a token, and it runs no npm code.
+    # Only this job gets a token. A branch can still edit this file or its Terraform
+    # to run code here, so dev-plan's required reviewers are the real gate.
     permissions:
       contents: read
       id-token: write
@@ -106,11 +104,14 @@ jobs:
       - name: Init
         run: terraform init -input=false
 
-      # No lock: a held lock would fail a deploy that starts during this plan, and
-      # the role can't write the lock table. S3 serves the state whole either way.
-      # The log is public, and a plan's text holds env values, so stdout goes nowhere.
+      # No lock: it would fail a deploy that starts meanwhile, and the role can't write it.
+      # The log is public, so it shows only each error's summary, address and line.
       - name: Plan
-        run: terraform plan -input=false -lock=false -out=tfplan > /dev/null
+        run: |
+          status=0
+          terraform plan -input=false -lock=false -out=tfplan -json > "$RUNNER_TEMP/plan.log" 2>&1 || status=$?
+          jq -R -r -f "$GITHUB_WORKSPACE/infra/scripts/plan-diagnostics.jq" "$RUNNER_TEMP/plan.log"
+          exit "$status"
 
       # This repo is public, so the summary names changed attributes but never their values.
       - name: Summarize plan

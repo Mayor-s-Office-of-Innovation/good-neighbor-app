@@ -1,6 +1,6 @@
-# Read-only role for the plan-only workflow (.github/workflows/plan-dev.yml), so
-# a person can read a Terraform plan before anything changes. Only the GitHub
-# Environment named in var.plan_role_github_subject can assume it.
+# Read-only role for plan-dev.yml, so a person can read a plan before anything changes.
+# Any job in the plan Environment can assume it from any branch, so that Environment's
+# protection rules decide who can read the dev state.
 
 locals {
   plan_role_enabled = var.plan_role_github_subject != ""
@@ -97,12 +97,16 @@ data "aws_iam_policy_document" "plan" {
   }
 
   statement {
-    # ReadOnlyAccess also grants these, and they return residents' and staff
-    # data. A plan never needs them.
+    # These return residents' and staff data, and a plan never calls them. Not
+    # lambda:GetFunction: refreshing every aws_lambda_function needs it.
     sid    = "DenyDataReads"
     effect = "Deny"
     actions = [
+      "cloudtrail:LookupEvents",
+      "cognito-idp:AdminGetDevice",
       "cognito-idp:AdminGetUser",
+      "cognito-idp:AdminListDevices",
+      "cognito-idp:AdminListGroupsForUser",
       "cognito-idp:AdminListUserAuthEvents",
       "cognito-idp:ListUsers",
       "cognito-idp:ListUsersInGroup",
@@ -119,6 +123,7 @@ data "aws_iam_policy_document" "plan" {
       "logs:GetQueryResults",
       "logs:StartLiveTail",
       "logs:StartQuery",
+      "ses:GetSuppressedDestination",
       "ses:ListSuppressedDestinations",
       "sqs:ReceiveMessage",
       "xray:BatchGetTraces",

@@ -150,7 +150,11 @@ run "plan_role_is_read_only_and_tied_to_one_github_environment" {
     condition = toset(one([
       for statement in data.aws_iam_policy_document.plan[0].statement : statement.actions if statement.sid == "DenyDataReads"
       ])) == toset([
+      "cloudtrail:LookupEvents",
+      "cognito-idp:AdminGetDevice",
       "cognito-idp:AdminGetUser",
+      "cognito-idp:AdminListDevices",
+      "cognito-idp:AdminListGroupsForUser",
       "cognito-idp:AdminListUserAuthEvents",
       "cognito-idp:ListUsers",
       "cognito-idp:ListUsersInGroup",
@@ -167,6 +171,7 @@ run "plan_role_is_read_only_and_tied_to_one_github_environment" {
       "logs:GetQueryResults",
       "logs:StartLiveTail",
       "logs:StartQuery",
+      "ses:GetSuppressedDestination",
       "ses:ListSuppressedDestinations",
       "sqs:ReceiveMessage",
       "xray:BatchGetTraces",

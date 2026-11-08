@@ -77,15 +77,20 @@ different `AWS_DEPLOY_ROLE_ARN` in each job: the export job uses `dev`; the migr
 changing anything. Run it from the Actions tab; the summary lists the action and address of each
 changed resource, and the names of the attributes an update changes. It publishes no values: this
 repo is public, and the role can read Lambda environment values, so the plan's text stays on the
-runner. It uses the read-only role in `infra/modules/app/plan-role.tf`, through a `dev-plan`
-GitHub Environment that holds the secrets `AWS_ACCOUNT_ID` and `AWS_PLAN_ROLE_ARN` (the
-`terraform_plan_role_arn` output), and the variable `AWS_REGION`.
+runner. If the plan fails, the log shows each error's summary, with quoted text cut, and its
+resource address and file line; run the plan locally for the detail. It uses the read-only role in
+`infra/modules/app/plan-role.tf`, through a `dev-plan` GitHub Environment that holds the secrets
+`AWS_ACCOUNT_ID` and `AWS_PLAN_ROLE_ARN` (the `terraform_plan_role_arn` output), and the variable
+`AWS_REGION`.
 
-The role can read the dev state file, which holds secrets such as the support origin token, so
-the control that matters is who can assume it. `npm ci` and the Lambda build run in a job with no
-`id-token` permission, because a package script could otherwise request its own token. Give the
-`dev-plan` Environment a deployment branch restriction too, so only those branches can reach the
-job that holds the token.
+**Before creating `AWS_PLAN_ROLE_ARN`, protect the `dev-plan` Environment.** The role can read the
+dev state file, which holds secrets such as the support origin token, and Lambda environment
+values. Any run of a job in `dev-plan` can assume it, from any branch, and a branch can edit the
+workflow or add Terraform that runs its own code in that job. So the Environment's protection is
+the only gate. Give it required reviewers, so a maintainer approves each run after checking the
+branch, or a deployment branch restriction to protected branches, which stops plans of feature
+branches. `npm ci` and the Lambda build run in a job with no `id-token` permission, which stops a
+package script from taking the role, but not a branch's own changes.
 
 It skips the cost-tag state step in `deploy.yml`, because that writes state. The plan also shows
 the Cognito email key policy changing to name the plan role, since its
