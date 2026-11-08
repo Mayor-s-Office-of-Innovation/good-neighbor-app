@@ -114,6 +114,12 @@ override_resource {
   }
 }
 override_resource {
+  target = aws_dynamodb_table.app
+  values = {
+    arn = "arn:aws:dynamodb:us-west-2:111111111111:table/app"
+  }
+}
+override_resource {
   target = aws_lambda_function.analytics_projection
   values = {
     arn = "arn:aws:lambda:us-west-2:111111111111:function:analytics-projection"
@@ -155,6 +161,7 @@ run "insights_infra" {
       aws_iam_role_policy.insights_jobs,
       aws_lambda_event_source_mapping.insights_jobs,
       aws_lambda_function.analytics_convert,
+      aws_lambda_function.analytics_export,
       aws_lambda_function.analytics_query,
       aws_lambda_function.insights_jobs,
       aws_lambda_function_event_invoke_config.analytics_convert,
@@ -302,6 +309,44 @@ run "insights_infra" {
       contains(statement.actions, "lambda:InvokeFunction") && contains(statement.resources, aws_lambda_function.analytics_projection.arn)
     ])
     error_message = "The convert role must invoke the projection Lambda, or its success destination fails silently."
+  }
+
+  assert {
+    condition = (
+      aws_lambda_function.analytics_convert.environment[0].variables["ANALYTICS_BACKFILL_ENABLED"] == "true"
+      && aws_lambda_function.analytics_convert.environment[0].variables["DYNAMO_TABLE_ARN"] == aws_dynamodb_table.app.arn
+      && aws_lambda_function.analytics_convert.environment[0].variables["EXPORT_PREFIX"] == aws_lambda_function.analytics_export.environment[0].variables["EXPORT_PREFIX"]
+    )
+    error_message = "The converter must run the backfill on this table and write its full export where the scheduled export lands, or history older than raw/'s 30 days never converts."
+  }
+
+  assert {
+    condition = jsonencode({
+      for statement in data.aws_iam_policy_document.analytics_convert.statement :
+      statement.sid => { actions = sort(tolist(statement.actions)), resources = sort(tolist(statement.resources)) }
+      if contains(["ListLake", "ReadConverterState", "StartTableExport", "DescribeTableExport", "WriteRawExports", "UseAppKey"], statement.sid)
+      }) == jsonencode({
+      DescribeTableExport = { actions = ["dynamodb:DescribeExport"], resources = ["arn:aws:dynamodb:us-west-2:111111111111:table/app/export/*"] }
+      ListLake            = { actions = ["s3:ListBucket"], resources = ["arn:aws:s3:::analytics-lake"] }
+      ReadConverterState  = { actions = ["s3:GetObject"], resources = ["arn:aws:s3:::analytics-lake/readings/_converter/state.json"] }
+      StartTableExport    = { actions = ["dynamodb:ExportTableToPointInTime"], resources = ["arn:aws:dynamodb:us-west-2:111111111111:table/app"] }
+      UseAppKey           = { actions = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"], resources = ["arn:aws:kms:us-west-2:111111111111:key/mock"] }
+      WriteRawExports     = { actions = ["s3:AbortMultipartUpload", "s3:PutObject", "s3:PutObjectAcl"], resources = ["arn:aws:s3:::analytics-lake/raw/*"] }
+    })
+    error_message = "The converter's backfill grants must be exactly these: list the lake, read its state, start and describe a table export, and write it to raw/ under the app key."
+  }
+
+  assert {
+    condition = jsonencode(sort(flatten([
+      for statement in data.aws_iam_policy_document.analytics_convert.statement :
+      [for action in statement.actions : action if startswith(action, "dynamodb:")]
+    ]))) == jsonencode(["dynamodb:DescribeExport", "dynamodb:ExportTableToPointInTime"])
+    error_message = "The converter may start and describe exports and nothing else in DynamoDB, so it can't read or change app data."
+  }
+
+  assert {
+    condition     = aws_dynamodb_table.app.point_in_time_recovery[0].enabled
+    error_message = "A full export needs point-in-time recovery on the table."
   }
 
   assert {

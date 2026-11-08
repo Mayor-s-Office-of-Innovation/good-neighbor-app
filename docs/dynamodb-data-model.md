@@ -991,9 +991,10 @@ resumes on the next export. The new version is recorded only once the full expor
 converted and no re-conversion failed; if the full export fails, or completes but
 `raw/` expires its files before they convert, a later run logs an error and starts
 another. Converters that run at once write the state file with `IfMatch` and merge
-each other's progress, so a recorded version never goes back. The backfill runs only when `ANALYTICS_BACKFILL_ENABLED=true`, which waits on
-the converter role being allowed to list `raw/`, read the state file, and start and
-describe table exports.
+each other's progress, so a recorded version never goes back. The backfill runs only
+when `ANALYTICS_BACKFILL_ENABLED=true`, which `analytics.tf` sets on the converter with
+the grants it needs: list the lake, read the state file, and start, describe and write
+table exports.
 Current ART keys and legacy ART keys
 with a place segment remain supported. Assessment/condition and device shapes are
 also matched explicitly; identifiers need not be UUIDs.

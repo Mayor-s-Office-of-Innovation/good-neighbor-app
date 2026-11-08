@@ -316,6 +316,10 @@ resource "aws_lambda_function" "analytics_convert" {
   environment {
     variables = {
       LAKE_BUCKET = aws_s3_bucket.analytics_lake.bucket
+      # After a format change the converter starts one full export, so history older than raw/'s 30 days converts.
+      ANALYTICS_BACKFILL_ENABLED = "true"
+      DYNAMO_TABLE_ARN           = aws_dynamodb_table.app.arn
+      EXPORT_PREFIX              = "raw" # where analytics_export writes; the tftest pins the match
     }
   }
 
@@ -341,10 +345,50 @@ data "aws_iam_policy_document" "analytics_convert" {
   }
 
   statement {
+    # The backfill lists raw/ to re-convert it; whole bucket so a missing state file is NoSuchKey, not 403.
+    sid       = "ListLake"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.analytics_lake.arn]
+  }
+
+  statement {
+    # The backfill's format version and progress (backend/src/analytics/backfill.js).
+    sid       = "ReadConverterState"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.analytics_lake.arn}/readings/_converter/state.json"]
+  }
+
+  statement {
     sid       = "WriteParquet"
     effect    = "Allow"
     actions   = ["s3:PutObject"]
     resources = ["${aws_s3_bucket.analytics_lake.arn}/readings/*"]
+  }
+
+  statement {
+    # One full export after a format change; same grant as the export role's StartTableExport.
+    sid       = "StartTableExport"
+    effect    = "Allow"
+    actions   = ["dynamodb:ExportTableToPointInTime"]
+    resources = [aws_dynamodb_table.app.arn]
+  }
+
+  statement {
+    # A later run checks the full export and starts another if it failed.
+    sid       = "DescribeTableExport"
+    effect    = "Allow"
+    actions   = ["dynamodb:DescribeExport"]
+    resources = ["${aws_dynamodb_table.app.arn}/export/*"]
+  }
+
+  statement {
+    # DynamoDB writes the export with the requester's permissions, as for the export role's WriteRawExports.
+    sid       = "WriteRawExports"
+    effect    = "Allow"
+    actions   = ["s3:AbortMultipartUpload", "s3:PutObject", "s3:PutObjectAcl"]
+    resources = ["${aws_s3_bucket.analytics_lake.arn}/raw/*"]
   }
 
   statement {
@@ -363,9 +407,10 @@ data "aws_iam_policy_document" "analytics_convert" {
   }
 
   statement {
+    # Encrypt and GenerateDataKey let the full export write raw/ under the lake's KMS key, as for the export role.
     sid       = "UseAppKey"
     effect    = "Allow"
-    actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
+    actions   = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"]
     resources = [aws_kms_key.app.arn]
   }
 
