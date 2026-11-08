@@ -478,9 +478,11 @@ describe("site admin", () => {
       });
       const response = await /** @type {any} */ (updateSiteAdmin)(request);
       expect(response.statusCode).toBe(200);
-      const tx = send.mock.calls
-        .map(([command]) => command)
-        .find((command) => command instanceof TransactWriteCommand);
+      const tx = /** @type {any} */ (
+        send.mock.calls
+          .map(([command]) => command)
+          .find((command) => command instanceof TransactWriteCommand)
+      );
       const siteWrite = tx.input.TransactItems.find(
         (/** @type {any} */ item) =>
           (item.Update ?? item.ConditionCheck)?.Key?.sk === "#META",
