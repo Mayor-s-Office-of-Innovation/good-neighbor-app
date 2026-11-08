@@ -234,7 +234,7 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  e2e-insights-aws:
+  e2e-insights-emulator:
     name: E2E Insights on the emulators
     runs-on: ubuntu-latest
     container:
@@ -270,18 +270,25 @@ jobs:
           path: backend/.local
           key: local-harness-${{ runner.os }}-${{ hashFiles('backend/scripts/local-minio.mjs', 'backend/scripts/local-mq.mjs') }}
 
+      # Keyed on the lockfile, which pins DuckDB, so the extensions download once per version.
+      - name: Cache DuckDB extensions
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: backend/.local/duckdb-insights-e2e
+          key: duckdb-extensions-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
       - name: Copy env example
         run: cp .env.example .env.local
 
       - name: Test Insights against S3 and SQS emulators
-        run: npm run test:insights:aws:e2e
+        run: npm run test:insights:emulator:e2e
 
       - name: Upload Insights test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: playwright-insights-aws-results
-          path: e2e/test-results/insights-aws/
+          name: playwright-insights-emulator-results
+          path: e2e/test-results/insights-emulator/
           retention-days: 7
           if-no-files-found: ignore
 
@@ -289,7 +296,7 @@ jobs:
     # Preserve the required check name while covering every shard and UI suite.
     name: E2E (Playwright)
     if: always()
-    needs: [e2e-main, e2e-ui, e2e-admin, e2e-insights-aws]
+    needs: [e2e-main, e2e-ui, e2e-admin, e2e-insights-emulator]
     runs-on: ubuntu-latest
     steps:
       - name: Require all E2E jobs to pass
@@ -297,8 +304,8 @@ jobs:
           MAIN_RESULT: ${{ needs.e2e-main.result }}
           UI_RESULT: ${{ needs.e2e-ui.result }}
           ADMIN_RESULT: ${{ needs.e2e-admin.result }}
-          INSIGHTS_AWS_RESULT: ${{ needs.e2e-insights-aws.result }}
-        run: test "$MAIN_RESULT" = success && test "$UI_RESULT" = success && test "$ADMIN_RESULT" = success && test "$INSIGHTS_AWS_RESULT" = success
+          INSIGHTS_EMULATOR_RESULT: ${{ needs.e2e-insights-emulator.result }}
+        run: test "$MAIN_RESULT" = success && test "$UI_RESULT" = success && test "$ADMIN_RESULT" = success && test "$INSIGHTS_EMULATOR_RESULT" = success
 
   perf:
     name: Performance budgets

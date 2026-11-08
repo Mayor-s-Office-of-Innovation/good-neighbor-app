@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
-import { expect, test } from "@playwright/test";
+import { EXPORT_COLUMNS } from "../../backend/src/reporting/api/read-model.js";
 import { t } from "../helpers/i18n.js";
-import { useLocalApi } from "./lake.js";
+import { expect, test, uploadProjection, useLocalApi } from "./lake.js";
 
-// Its `empty-lake` project has left the projection in the lake.
+test.beforeAll(uploadProjection);
+
 test("a supervisor exports the Issues as CSV and downloads the file", async ({
   page,
 }) => {
@@ -29,11 +30,7 @@ test("a supervisor exports the Issues as CSV and downloads the file", async ({
     .replace(/^\uFEFF/, "")
     .trim()
     .split(/\r\n/);
-  expect(header.split(",").slice(0, 3)).toEqual([
-    "Issue ID",
-    "Site",
-    "Site ID",
-  ]);
+  expect(header.split(",")).toEqual(EXPORT_COLUMNS.issues);
   expect(lines.map((line) => line.split(",")[0]).sort()).toEqual([
     "t1",
     "t2",

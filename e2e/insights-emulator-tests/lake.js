@@ -1,4 +1,5 @@
-// The lake bucket as the Lambdas leave it, and the admin UI pointed at the real API.
+// Sets up the lake in MinIO the way the Lambdas leave it, so the specs exercise
+// the real S3 reads that the admin suite's mock skips.
 
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,9 +7,11 @@ import { join } from "node:path";
 import {
   CreateBucketCommand,
   DeleteObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { test as base, expect } from "@playwright/test";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { s3Source } from "../../backend/src/reporting/api/snapshot.js";
 import { writeSyntheticProjection } from "../../backend/src/reporting/api/test-projection.js";
@@ -19,7 +22,21 @@ import {
   publishProjection,
 } from "../../backend/src/reporting/publish-projection.js";
 import { blankConfigJs } from "../admin-tests/admin-mock.js";
-import { INSIGHTS_AWS_URLS } from "../helpers/ports.js";
+import { INSIGHTS_EMULATOR_URLS } from "../helpers/ports.js";
+
+export const test = base.extend({
+  page: async ({ page }, use) => {
+    /** @type {string[]} */
+    const pageErrors = [];
+    page.on("pageerror", (error) =>
+      pageErrors.push(`${page.url()}: ${error.message}`),
+    );
+    await use(page);
+    // A render that throws can leave the page a test expects empty, so absence checks would pass.
+    expect(pageErrors, "uncaught page errors").toEqual([]);
+  },
+});
+export { expect };
 
 const lake = new S3Client({ forcePathStyle: true });
 const bucket = () => /** @type {string} */ (process.env.LAKE_BUCKET);
@@ -43,7 +60,7 @@ const LAKE_ITEMS = [
 export async function uploadProjection() {
   const instance = await DuckDBInstance.create(":memory:");
   const conn = await instance.connect();
-  const tmp = await mkdtemp(join(tmpdir(), "insights-aws-"));
+  const tmp = await mkdtemp(join(tmpdir(), "insights-emulator-"));
   try {
     const dir = join(tmp, "projection");
     const { manifest, written } = await writeSyntheticProjection(conn, dir);
@@ -68,6 +85,12 @@ async function uploadLakeFiles(dir) {
     .catch((/** @type {any} */ err) => {
       if (err.name !== "BucketAlreadyOwnedByYou") throw err;
     });
+  // MinIO's data folder outlives a run, so an older run's partitions would add rows.
+  const old = await lake.send(
+    new ListObjectsV2Command({ Bucket: BUILD_BUCKET, Prefix: "readings/" }),
+  );
+  for (const { Key } of old.Contents ?? [])
+    await lake.send(new DeleteObjectCommand({ Bucket: BUILD_BUCKET, Key }));
   const files = await readdir(dir, { recursive: true, withFileTypes: true });
   for (const file of files.filter((f) => f.isFile())) {
     const path = join(file.parentPath, file.name);
@@ -81,10 +104,9 @@ async function uploadLakeFiles(dir) {
   }
 }
 
-/** Runs the Lambda's build unchanged against Parquet files in MinIO, then reads back what it published. */
+/** Unit tests fake S3, so only this proves the build can read Parquet over httpfs. */
 export async function buildFromLakeFiles() {
-  const tmp = await mkdtemp(join(tmpdir(), "insights-aws-build-"));
-  const systemTmp = process.env.TMPDIR;
+  const tmp = await mkdtemp(join(tmpdir(), "insights-emulator-build-"));
   const instance = await DuckDBInstance.create(":memory:");
   const conn = await instance.connect();
   try {
@@ -93,13 +115,9 @@ export async function buildFromLakeFiles() {
       exportId: "e1",
     });
     await uploadLakeFiles(join(tmp, "lake"));
-    // The build clears old build folders, which must not be another run's.
-    process.env.TMPDIR = tmp;
     const { prefix } = await buildLatestProjection({ bucket: BUILD_BUCKET });
     return await s3Source({ s3: lake, bucket: BUILD_BUCKET }).load(prefix);
   } finally {
-    if (systemTmp === undefined) delete process.env.TMPDIR;
-    else process.env.TMPDIR = systemTmp;
     conn.closeSync();
     instance.closeSync();
     await rm(tmp, { recursive: true, force: true });
@@ -123,6 +141,6 @@ export async function useLocalApi(page) {
       localDebugAdmin: true,
       insightsEnabled: true,
     };
-  }, INSIGHTS_AWS_URLS.api);
+  }, INSIGHTS_EMULATOR_URLS.api);
   await blankConfigJs(page);
 }

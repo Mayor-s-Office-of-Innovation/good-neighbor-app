@@ -24,6 +24,8 @@
     "offline-shell-tests/**/*.js",
     "offline-shell.config.js",
     "recovery-tests/**/*.js",
-    "recovery.config.js"
+    "recovery.config.js",
+    "insights-emulator-tests/**/*.js",
+    "insights-emulator.config.js"
   ]
 }

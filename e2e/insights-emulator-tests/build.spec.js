@@ -1,5 +1,4 @@
-import { expect, test } from "@playwright/test";
-import { buildFromLakeFiles } from "./lake.js";
+import { buildFromLakeFiles, expect, test } from "./lake.js";
 
 test("the real build reads a lake in S3 and publishes a snapshot readers can load", async () => {
   const { manifest, tables } = await buildFromLakeFiles();

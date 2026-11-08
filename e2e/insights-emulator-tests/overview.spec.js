@@ -1,7 +1,8 @@
-import { expect, test } from "@playwright/test";
 import { t } from "../helpers/i18n.js";
 import {
   deleteLatestProjection,
+  expect,
+  test,
   uploadProjection,
   useLocalApi,
 } from "./lake.js";

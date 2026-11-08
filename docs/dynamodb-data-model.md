@@ -634,7 +634,7 @@ components from the original design are **retired**. See
 An incremental DynamoDB export to S3 runs every 6 hours. It needs point-in-time recovery,
 which is on. The export is converted to Parquet files split by entity, and DuckDB runs SQL
 over them for any set of sites or time grain. The pipeline lives in
-`infra/modules/app/analytics.tf`:
+`infra/modules/app/analytics.tf` and `infra/modules/app/insights.tf`:
 
 | Lambda | Trigger | Role |
 |---|---|---|
