@@ -132,6 +132,15 @@ data "aws_iam_policy_document" "plan" {
   }
 
   statement {
+    # Parameter values and other apps' Lambda environments can hold secrets, and
+    # this module reads neither. Its own Lambdas stay readable for refresh.
+    sid           = "DenyOtherSecretReads"
+    effect        = "Deny"
+    actions       = ["lambda:GetFunction*", "ssm:GetParameter*"]
+    not_resources = ["arn:aws:lambda:*:*:function:${local.name_prefix}-*"]
+  }
+
+  statement {
     # Leaves the state file, which the plan needs.
     sid           = "DenyObjectReads"
     effect        = "Deny"

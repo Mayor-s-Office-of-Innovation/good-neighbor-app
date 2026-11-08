@@ -147,42 +147,43 @@ run "plan_role_is_read_only_and_tied_to_one_github_environment" {
   }
 
   assert {
-    condition = toset(one([
-      for statement in data.aws_iam_policy_document.plan[0].statement : statement.actions if statement.sid == "DenyDataReads"
-      ])) == toset([
-      "cloudtrail:LookupEvents",
-      "cognito-idp:AdminGetDevice",
-      "cognito-idp:AdminGetUser",
-      "cognito-idp:AdminListDevices",
-      "cognito-idp:AdminListGroupsForUser",
-      "cognito-idp:AdminListUserAuthEvents",
-      "cognito-idp:ListUsers",
-      "cognito-idp:ListUsersInGroup",
-      "dynamodb:BatchGetItem",
-      "dynamodb:GetItem",
-      "dynamodb:GetRecords",
-      "dynamodb:PartiQLSelect",
-      "dynamodb:Query",
-      "dynamodb:ReadDataForReplication",
-      "dynamodb:Scan",
-      "logs:FilterLogEvents",
-      "logs:GetLogEvents",
-      "logs:GetLogRecord",
-      "logs:GetQueryResults",
-      "logs:StartLiveTail",
-      "logs:StartQuery",
-      "ses:GetSuppressedDestination",
-      "ses:ListSuppressedDestinations",
-      "sqs:ReceiveMessage",
-      "xray:BatchGetTraces",
+    condition = anytrue([
+      for statement in data.aws_iam_policy_document.plan[0].statement :
+      statement.sid == "DenyDataReads" && statement.effect == "Deny" && toset(statement.actions) == toset([
+        "cloudtrail:LookupEvents",
+        "cognito-idp:AdminGetDevice",
+        "cognito-idp:AdminGetUser",
+        "cognito-idp:AdminListDevices",
+        "cognito-idp:AdminListGroupsForUser",
+        "cognito-idp:AdminListUserAuthEvents",
+        "cognito-idp:ListUsers",
+        "cognito-idp:ListUsersInGroup",
+        "dynamodb:BatchGetItem",
+        "dynamodb:GetItem",
+        "dynamodb:GetRecords",
+        "dynamodb:PartiQLSelect",
+        "dynamodb:Query",
+        "dynamodb:ReadDataForReplication",
+        "dynamodb:Scan",
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:GetLogRecord",
+        "logs:GetQueryResults",
+        "logs:StartLiveTail",
+        "logs:StartQuery",
+        "ses:GetSuppressedDestination",
+        "ses:ListSuppressedDestinations",
+        "sqs:ReceiveMessage",
+        "xray:BatchGetTraces",
+      ])
     ])
     error_message = "A plan never needs these reads, and each returns residents' or staff data."
   }
 
   assert {
-    condition = alltrue([
+    condition = anytrue([
       for statement in data.aws_iam_policy_document.plan[0].statement :
-      statement.sid != "DenyObjectReads" || (statement.effect == "Deny" && statement.not_resources == toset(["arn:aws:s3:::state-bucket/dev/terraform.tfstate"]))
+      statement.sid == "DenyObjectReads" && statement.effect == "Deny" && toset(statement.actions) == toset(["s3:GetObject*"]) && statement.not_resources == toset(["arn:aws:s3:::state-bucket/dev/terraform.tfstate"])
     ])
     error_message = "The plan role may read only the state object out of S3."
   }
@@ -190,7 +191,18 @@ run "plan_role_is_read_only_and_tied_to_one_github_environment" {
   assert {
     condition = anytrue([
       for statement in data.aws_iam_policy_document.plan[0].statement :
-      statement.sid == "ReadLambdaEnvironments" && anytrue([for condition in statement.condition : condition.variable == "kms:ViaService"])
+      statement.sid == "DenyOtherSecretReads" && statement.effect == "Deny" && toset(statement.actions) == toset(["lambda:GetFunction*", "ssm:GetParameter*"]) && statement.not_resources == toset(["arn:aws:lambda:*:*:function:good-neighbor-test-*"])
+    ])
+    error_message = "The plan role must not read parameter values or other apps' Lambda environments."
+  }
+
+  assert {
+    condition = anytrue([
+      for statement in data.aws_iam_policy_document.plan[0].statement :
+      statement.sid == "ReadLambdaEnvironments" && statement.effect == "Allow" && toset(statement.actions) == toset(["kms:Decrypt"]) && anytrue([
+        for condition in statement.condition :
+        condition.test == "StringEquals" && condition.variable == "kms:ViaService" && length(condition.values) == 1 && can(regex("^lambda\\..+\\.amazonaws\\.com$", one(condition.values)))
+      ])
     ])
     error_message = "The app key may decrypt only through Lambda, so the role can't open other data it encrypts."
   }
