@@ -126,6 +126,59 @@ describe("toRow", () => {
     });
   });
 
+  it("keeps an action's text, photos and actor out of the lake", () => {
+    const row = toRow(
+      "task_updates",
+      {
+        pk: "SITE#s1",
+        sk: "TASK#t1#UPDATE#2026-10-28T06:30:00.000Z#u1",
+        entityType: "task_update",
+        taskId: "t1",
+        updateId: "u1",
+        type: "additional_action",
+        label: "Additional action taken",
+        occurredAt: "2026-10-28T06:30:00.000Z",
+        actorId: "synthetic-device",
+        documentationState: "closed",
+        text: "SYNTHETIC: spoke with resident",
+        photoKeys: ["art-1"],
+        addedLater: "any new field",
+      },
+      "t",
+    );
+    const raw = JSON.parse(String(row.raw));
+    expect(raw).toMatchObject({ taskId: "t1", type: "additional_action" });
+    for (const field of ["text", "actorId", "photoKeys", "addedLater"])
+      expect(raw).not.toHaveProperty(field);
+  });
+
+  it("keeps a Program's contact out of the lake", () => {
+    const row = toRow(
+      "programs",
+      {
+        pk: "PROGRAM#p1",
+        sk: "#META",
+        programId: "p1",
+        name: "Synthetic Program",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+        primaryContactUserId: "u1",
+        contact: {
+          name: "Synthetic Person",
+          email: "synthetic@example.test",
+          phone: "415-555-0100",
+        },
+      },
+      "t",
+    );
+    expect(JSON.parse(String(row.raw))).toEqual({
+      pk: "PROGRAM#p1",
+      sk: "#META",
+      programId: "p1",
+      name: "Synthetic Program",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    });
+  });
+
   it("keeps both ends of a duplicate link and of a separation", () => {
     for (const entity of ["duplicate_links", "duplicate_overrides"])
       expect(

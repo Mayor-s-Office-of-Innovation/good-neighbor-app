@@ -971,8 +971,9 @@ rows are `duplicate_links` and `duplicate_overrides`, and `PROGRAM#…/#META` is
 `programs`. Site and compliance manager assignments stay out: they are removed by
 deleting the row, which an incremental export can't see. A `DUP_LINK#` row is deleted
 only in the same transaction that supersedes its task, so a stale link in the lake
-never merges a live Issue. Update notes and City note text are left out of
-`task_updates.raw`. The converter records its format version in
+never merges a live Issue. `task_updates.raw` and `programs.raw` keep only
+listed fields, so update text, notes, photo keys, the actor and Program contacts
+stay out of the lake. The converter records its format version in
 `readings/_converter/state.json` (`FORMAT_VERSION` in `convert.js`). The first
 conversion after the version changes re-converts every `raw/` export still kept
 (30 days), once, oldest first and at each export's own time; a failed backfill, or

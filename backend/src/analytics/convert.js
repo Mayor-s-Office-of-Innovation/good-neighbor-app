@@ -52,7 +52,7 @@ const GRADE_SCORE = {
 };
 
 // Bump when toRow, ENTITY_COLUMNS or key shapes change, so raw exports re-convert.
-export const FORMAT_VERSION = 2;
+export const FORMAT_VERSION = 3;
 
 // Entities recognized by key shape; see classifyItem(). Anything unrecognized
 // (receipts, counters, pointers, PROVIDER_SEARCH, setup-code items) is
@@ -71,7 +71,13 @@ export function toRow(entity, item, exportedAt) {
     siteId: str(item.siteId) ?? siteIdFromPk(item.pk),
     gradeScore: gradeScore(item.grade),
     exportedAt,
-    raw: JSON.stringify(entity === "task_updates" ? withoutNotes(item) : item),
+    raw: JSON.stringify(
+      entity === "task_updates"
+        ? updateOnly(item)
+        : entity === "programs"
+          ? programOnly(item)
+          : item,
+    ),
   };
   switch (entity) {
     case "checks": {
@@ -230,16 +236,41 @@ export function sqlString(value) {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-// Staff notes can describe residents, and the lake keeps rows forever.
-const UPDATE_FREE_TEXT = ["notes", "cityNotePayload"];
+// Staff text, photos and who acted stay out; the lake keeps rows forever.
+const TASK_UPDATE_FIELDS = [
+  "pk",
+  "sk",
+  "siteId",
+  "entityType",
+  "taskId",
+  "updateId",
+  "type",
+  "label",
+  "occurredAt",
+  "documentationState",
+  "presencePeriod",
+];
 
 /**
  * @param {Record<string, unknown>} item
  * @returns {Record<string, unknown>}
  */
-function withoutNotes(item) {
+function updateOnly(item) {
   return Object.fromEntries(
-    Object.entries(item).filter(([k]) => !UPDATE_FREE_TEXT.includes(k)),
+    Object.entries(item).filter(([k]) => TASK_UPDATE_FIELDS.includes(k)),
+  );
+}
+
+// The program contact's name, email and phone stay out; the lake keeps rows forever.
+const PROGRAM_FIELDS = ["pk", "sk", "programId", "name", "updatedAt"];
+
+/**
+ * @param {Record<string, unknown>} item
+ * @returns {Record<string, unknown>}
+ */
+function programOnly(item) {
+  return Object.fromEntries(
+    Object.entries(item).filter(([k]) => PROGRAM_FIELDS.includes(k)),
   );
 }
 
