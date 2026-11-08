@@ -10,7 +10,7 @@
 // Terraform `analytics_routes` list; keep all three in step.
 //
 // It also serves Insights routes and jobs, so reporting load stays off the app
-// api; their gateway routes, queue and bucket come in the infra PR.
+// api.
 
 import {
   listAnalyticsQueries,
