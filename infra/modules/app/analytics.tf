@@ -652,9 +652,10 @@ resource "aws_iam_role" "analytics_query" {
 
 data "aws_iam_policy_document" "analytics_query" {
   statement {
-    # Only the projections, which hold no addresses, people or free text.
+    # Objects only from projections, which hold no addresses, people or free text.
     # ListBucket makes S3 answer a missing latest.json with NoSuchKey, not 403,
-    # so Insights can tell "no data yet" from a broken role.
+    # so Insights can tell "no data yet" from a broken role. It lists key names
+    # across the whole bucket.
     sid       = "ReadProjections"
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:ListBucket"]

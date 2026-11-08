@@ -1,6 +1,4 @@
-# Insights: the projection build and the export jobs behind the admin Insights
-# pages (backend/src/reporting). The routes are in api.tf; analytics.tf holds
-# the query Lambda that serves them, and this file the jobs Lambda.
+# Apart from analytics.tf, so Insights can change without touching the lake export.
 
 # ---- Job files ----------------------------------------------------------------
 
@@ -182,7 +180,8 @@ resource "aws_iam_role" "insights_jobs" {
 
 data "aws_iam_policy_document" "insights_jobs" {
   statement {
-    # ListBucket makes S3 answer a missing file with NoSuchKey, not 403.
+    # ListBucket makes S3 answer a missing file with NoSuchKey, not 403. It lists
+    # key names across the whole bucket; GetObject stays on projections/.
     sid       = "ReadProjections"
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:ListBucket"]
@@ -257,7 +256,7 @@ resource "aws_cloudwatch_log_metric_filter" "insights_jobs_errors" {
 
 resource "aws_cloudwatch_metric_alarm" "insights_jobs_dlq_not_empty" {
   alarm_name          = "${local.name_prefix}-insights-jobs-dlq-not-empty"
-  alarm_description   = "An Insights export or report job failed all its deliveries in ${aws_sqs_queue.insights_jobs_dlq.name}. The requester sees a timeout. Check the insights-jobs logs, then redrive or purge the DLQ."
+  alarm_description   = "An Insights export or report job failed all its deliveries in ${aws_sqs_queue.insights_jobs_dlq.name}. Its requester saw a timeout up to 2 hours earlier, since each failed delivery waits out the 30-minute visibility timeout. Check the insights-jobs logs, then redrive or purge the DLQ."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1
@@ -278,12 +277,13 @@ resource "aws_cloudwatch_metric_alarm" "insights_jobs_dlq_not_empty" {
   tags = var.tags
 }
 
+# One 5-minute period, so it fires at 10-15 minutes, before jobs.js gives up at 15.
 resource "aws_cloudwatch_metric_alarm" "insights_jobs_queue_backlog" {
   alarm_name          = "${local.name_prefix}-insights-jobs-queue-backlog"
   alarm_description   = "The oldest message on ${aws_sqs_queue.insights_jobs.name} has waited more than 10 minutes, and jobs.js gives up on a queued job at 15. Check ${aws_lambda_function.insights_jobs.function_name} error alarms and logs in ${aws_cloudwatch_log_group.insights_jobs.name}."
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  datapoints_to_alarm = 2
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
   threshold           = 600
   period              = 300
   namespace           = "AWS/SQS"
@@ -350,6 +350,14 @@ resource "aws_lambda_function" "analytics_projection" {
   tags = var.tags
 }
 
+# Builds queued behind the one slot would otherwise retry for 6 hours; a later
+# convert queues a fresh build anyway, and the stalled alarm catches a gap.
+resource "aws_lambda_function_event_invoke_config" "analytics_projection" {
+  function_name                = aws_lambda_function.analytics_projection.function_name
+  maximum_event_age_in_seconds = 3600
+  maximum_retry_attempts       = 1
+}
+
 # Runs the build after every successful convert, so a snapshot is never much
 # older than the last export. The convert Lambda's code doesn't need to know about it.
 resource "aws_lambda_function_event_invoke_config" "analytics_convert" {
@@ -370,6 +378,7 @@ resource "aws_iam_role" "analytics_projection" {
 
 data "aws_iam_policy_document" "analytics_projection" {
   statement {
+    # ListBucket lists key names across the whole bucket; GetObject stays on readings/.
     sid       = "ReadParquetLake"
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:ListBucket"]
@@ -427,7 +436,7 @@ resource "aws_cloudwatch_log_metric_filter" "analytics_projection_errors" {
   }
 }
 
-# No published snapshot in 24 h: catches what no error reports, such as convert
+# No published snapshot for 24-36 h: catches what no error reports, such as convert
 # not running at all. Each build logs an InsightsProjectionPublished line.
 resource "aws_cloudwatch_log_metric_filter" "insights_projection_published" {
   name           = "${local.name_prefix}-insights-projection-published"
@@ -444,10 +453,10 @@ resource "aws_cloudwatch_log_metric_filter" "insights_projection_published" {
 
 resource "aws_cloudwatch_metric_alarm" "insights_projection_stalled" {
   alarm_name          = "${local.name_prefix}-insights-projection-stalled"
-  alarm_description   = "No Insights snapshot published in 24 hours (expected every 6). Insights is showing old data. Check the analytics-projection and analytics-convert logs and the export watchdog; infra/README.md has the manual build step."
+  alarm_description   = "No Insights snapshot published by ${aws_lambda_function.analytics_projection.function_name} for 24 to 36 hours (expected every 6). Insights is showing old data. Check its logs, the analytics-convert logs and the export watchdog; infra/README.md has the manual build step. It also fires right after a first deploy, until that step runs."
   comparison_operator = "LessThanThreshold"
   threshold           = 1
-  period              = 43200 # 12h × 2 evaluation periods = 24h of silence alarms
+  period              = 43200 # 2 empty 12h periods: 24-36h after the last publish, by where it fell
   evaluation_periods  = 2
   statistic           = "Sum"
   namespace           = local.error_namespace

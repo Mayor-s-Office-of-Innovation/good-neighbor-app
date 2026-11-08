@@ -143,6 +143,12 @@ run "insights_infra" {
       aws_acm_certificate.sf311_media,
       aws_apigatewayv2_route.analytics,
       aws_apigatewayv2_route.routes,
+      aws_cloudwatch_log_metric_filter.insights_projection_published,
+      aws_cloudwatch_metric_alarm.insights_jobs_dlq_not_empty,
+      aws_cloudwatch_metric_alarm.insights_jobs_queue_backlog,
+      aws_cloudwatch_metric_alarm.insights_projection_stalled,
+      aws_iam_role_policy.analytics_convert,
+      aws_iam_role_policy.analytics_projection,
       aws_iam_role_policy.analytics_query,
       aws_iam_role_policy.insights_jobs,
       aws_lambda_event_source_mapping.insights_jobs,
@@ -150,6 +156,7 @@ run "insights_infra" {
       aws_lambda_function.analytics_query,
       aws_lambda_function.insights_jobs,
       aws_lambda_function_event_invoke_config.analytics_convert,
+      aws_lambda_function_event_invoke_config.analytics_projection,
       aws_s3_bucket_lifecycle_configuration.insights_jobs,
     ]
   }
@@ -285,5 +292,69 @@ run "insights_infra" {
   assert {
     condition     = one(aws_lambda_function_event_invoke_config.analytics_convert.destination_config[0].on_success).destination == aws_lambda_function.analytics_projection.arn
     error_message = "Each successful convert must start a projection build, or Insights goes stale."
+  }
+
+  assert {
+    condition = anytrue([
+      for statement in data.aws_iam_policy_document.analytics_convert.statement :
+      contains(statement.actions, "lambda:InvokeFunction") && contains(statement.resources, aws_lambda_function.analytics_projection.arn)
+    ])
+    error_message = "The convert role must invoke the projection Lambda, or its success destination fails silently."
+  }
+
+  assert {
+    condition = anytrue([
+      for statement in data.aws_iam_policy_document.analytics_projection.statement :
+      contains(statement.actions, "s3:GetObject") && contains(statement.resources, "${aws_s3_bucket.analytics_lake.arn}/readings/*")
+    ])
+    error_message = "The projection build must read the lake's readings, or every build fails."
+  }
+
+  assert {
+    condition = anytrue([
+      for statement in data.aws_iam_policy_document.analytics_projection.statement :
+      contains(statement.actions, "s3:PutObject") && contains(statement.resources, "${aws_s3_bucket.analytics_lake.arn}/projections/*")
+    ])
+    error_message = "The projection build must write projections, or no snapshot is ever published."
+  }
+
+  assert {
+    condition     = aws_lambda_function_event_invoke_config.analytics_projection.maximum_event_age_in_seconds <= 3600
+    error_message = "A build queued behind the one slot must not retry for hours; a later convert queues a fresh one."
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.insights_jobs_queue_backlog.evaluation_periods * aws_cloudwatch_metric_alarm.insights_jobs_queue_backlog.period + aws_cloudwatch_metric_alarm.insights_jobs_queue_backlog.threshold <= 900
+    error_message = "The backlog alarm must fire by 15 minutes, before jobs.js gives up on a queued job."
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.insights_jobs_dlq_not_empty.dimensions["QueueName"] == aws_sqs_queue.insights_jobs_dlq.name
+    error_message = "The DLQ alarm must watch the Insights jobs DLQ."
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.insights_projection_stalled.metric_name == one(aws_cloudwatch_log_metric_filter.insights_projection_published.metric_transformation).name
+      && aws_cloudwatch_metric_alarm.insights_projection_stalled.namespace == one(aws_cloudwatch_log_metric_filter.insights_projection_published.metric_transformation).namespace
+      && aws_cloudwatch_metric_alarm.insights_projection_stalled.treat_missing_data == "breaching"
+    )
+    error_message = "The stalled alarm must count the published marker and treat silence as breaching, or a build that never runs goes unnoticed."
+  }
+}
+
+run "insights_waf" {
+  command = plan
+
+  plan_options {
+    target = [aws_wafv2_web_acl.web]
+  }
+
+  assert {
+    condition = strcontains(jsonencode([
+      for rule in aws_wafv2_web_acl.web.rule : rule
+      if rule.name == "BodySizeRestrictionsOutsideAssessmentEvaluation"
+    ]), "/admin/v1/reports/insights")
+    error_message = "The Insights report POST must be exempt from the 8 KiB body rule, or a report of about 200 Sites is blocked."
   }
 }
