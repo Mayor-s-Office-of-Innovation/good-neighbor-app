@@ -160,7 +160,12 @@ describe("comparisonFor", () => {
       evaluated,
     );
     const c = comparisonFor(current, evaluated);
-    expect([c.days, c.priorDays]).toEqual([30, 28]);
+    // Both sides cover 28 days, so a steady rate shows no change.
+    expect([c.days, c.priorDays]).toEqual([28, 28]);
+    expect(c.current).toMatchObject({
+      startDay: "2026-03-01",
+      endDay: "2026-03-29",
+    });
     expect(c.prior).toMatchObject({
       startDay: "2026-02-01",
       endDay: "2026-03-01",

@@ -188,14 +188,20 @@ export function comparisonFor(current, evaluatedAt) {
     };
   const alignedEnd = addDays(prior.startDay, days);
   const clipped = alignedEnd > prior.endDay;
+  // A shorter prior, e.g. February, cuts the current side too, so totals compare equal days.
+  const compared = clipped
+    ? dayKeysBetween(prior.startDay, prior.endDay).length
+    : days;
   return {
     basis: "elapsed_complete_days",
-    days,
-    // Shorter than days when the prior period is shorter, e.g. February.
-    priorDays: clipped
-      ? dayKeysBetween(prior.startDay, prior.endDay).length
-      : days,
-    current: interval(current.kind, current.startDay, today, evaluatedAt),
+    days: compared,
+    priorDays: compared,
+    current: interval(
+      current.kind,
+      current.startDay,
+      clipped ? addDays(current.startDay, compared) : today,
+      evaluatedAt,
+    ),
     prior: {
       ...interval(
         prior.kind,
