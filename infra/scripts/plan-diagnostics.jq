@@ -27,8 +27,8 @@ def public_range:
 def provider_version:
   strings
   | first(
-      capture("^Installed provider version: (?<p>[a-z0-9-]+/[a-z0-9-]+) (?<v>v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)(?: |$)"),
-      capture("^(?<p>[a-z0-9-]+/[a-z0-9-]+) (?<v>v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?): Using previously-installed provider version$")
+      capture("^Installed provider version: (?<p>[a-z0-9-]+/[a-z0-9-]+) (?<v>v[0-9]+\\.[0-9]+\\.[0-9]+(?:-(?:alpha|beta|rc|dev|pre)[0-9.]{0,10})?)(?: |$)"),
+      capture("^(?<p>[a-z0-9-]+/[a-z0-9-]+) (?<v>v[0-9]+\\.[0-9]+\\.[0-9]+(?:-(?:alpha|beta|rc|dev|pre)[0-9.]{0,10})?): Using previously-installed provider version$")
     )
   | "Provider: \(.p) \(.v)";
 
@@ -79,5 +79,5 @@ foreach ((inputs | {line: .}), {eof: true}) as $in (
   .out[]
 ),
 (if ($ARGS.named.status // "0") != "0" then
-  "Summaries are withheld from this public log. Each error shows its level and error class; a plan error also shows its resource address and file line where Terraform gives them. Config errors reproduce in a local plan with dev credentials. A permission failure shows its denial class but not the action: find the action from the class and the resource address."
+  "Summaries are withheld from this public log. Each error shows its level and error class, plus its resource address and file line where Terraform gives them. Config errors reproduce in a local plan with dev credentials. A permission failure shows its denial class but not the action: find the action from the class and the resource address."
 else empty end)

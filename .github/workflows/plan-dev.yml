@@ -101,10 +101,7 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
 
-      # run-filtered.sh keeps Terraform's text off this public log, since errors can quote state.
-      # Init and plan print only each error or warning's level, address (plan only), relative .tf
-      # file and line, and AWS error class; init adds provider versions, lock file lines and retry lines.
-      # Init retries registry resets but not credential, permission or config errors, which no retry fixes.
+      # run-filtered.sh keeps Terraform's text off this public log, since errors can quote state; infra/README.md lists what prints.
       - name: Init
         run: bash "$GITHUB_WORKSPACE/infra/scripts/run-filtered.sh" "$RUNNER_TEMP/init.log" bash "$GITHUB_WORKSPACE/infra/scripts/tf-init-retry.sh" --backend -input=false -json
 

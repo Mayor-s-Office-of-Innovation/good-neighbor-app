@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const filter = fileURLToPath(new URL("./plan-diagnostics.jq", import.meta.url));
 
 const PRIVATE_LINE =
-  "Summaries are withheld from this public log. Each error shows its level and error class; a plan error also shows its resource address and file line where Terraform gives them. Config errors reproduce in a local plan with dev credentials. A permission failure shows its denial class but not the action: find the action from the class and the resource address.";
+  "Summaries are withheld from this public log. Each error shows its level and error class, plus its resource address and file line where Terraform gives them. Config errors reproduce in a local plan with dev credentials. A permission failure shows its denial class but not the action: find the action from the class and the resource address.";
 
 /**
  * @param {string[]} lines what `terraform init -json` or `terraform plan -json` wrote to stdout and stderr
@@ -247,6 +247,19 @@ test("prints a pre-release provider version", () => {
     "0",
   );
   assert.deepEqual(out, ["Provider: hashicorp/aws v6.0.0-beta1", "Provider: hashicorp/random v3.7.0-rc.2"]);
+});
+
+test("drops a pre-release suffix that isn't alpha, beta, rc, dev or pre", () => {
+  /** @param {string} message */
+  const log = (message) => JSON.stringify({ type: "log", "@message": message });
+  const out = diagnostics(
+    [
+      log("Installed provider version: hashicorp/null v3.2.3-abcDEF.secret-token (signed by HashiCorp)"),
+      log("hashicorp/null v3.2.3-abcDEF.secret-token: Using previously-installed provider version"),
+    ],
+    "0",
+  );
+  assert.deepEqual(out, []);
 });
 
 test("reads the error class from an init -json backend diagnostic", () => {
