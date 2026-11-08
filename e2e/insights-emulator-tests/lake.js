@@ -17,6 +17,7 @@ import { DuckDBInstance } from "@duckdb/node-api";
 import { s3Source } from "../../backend/src/reporting/api/snapshot.js";
 import { LATEST_PROJECTION_KEY } from "../../backend/src/reporting/contract.js";
 import { writeLocalLake } from "../../backend/src/reporting/local-lake.js";
+import { readProjection } from "../../backend/src/reporting/test-build.js";
 import {
   buildLatestProjection,
   publishProjection,
@@ -139,7 +140,18 @@ export async function buildFromLakeFiles() {
       bucket: BUILD_BUCKET,
       now: () => new Date("2026-11-05T07:00:00.000Z"),
     });
-    return await s3Source({ s3: lake, bucket: BUILD_BUCKET }).load(prefix);
+    const loaded = await s3Source({ s3: lake, bucket: BUILD_BUCKET }).load(
+      prefix,
+    );
+    try {
+      // The rows the downloaded files hold, as the reader's views would read them.
+      return {
+        manifest: loaded.manifest,
+        tables: await readProjection(conn, loaded.dir),
+      };
+    } finally {
+      await loaded.cleanup();
+    }
   } finally {
     conn?.closeSync();
     instance?.closeSync();
