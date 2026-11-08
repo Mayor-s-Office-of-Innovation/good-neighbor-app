@@ -6,11 +6,11 @@ import { fileURLToPath } from "node:url";
 const filter = fileURLToPath(new URL("./plan-diagnostics.jq", import.meta.url));
 
 const PRIVATE_LINE =
-  "Summaries are withheld from this public log; the last column names the error class. Config errors such as typos reproduce in a local plan with dev credentials; a permission failure needs the plan role's permissions, and its error class names the denial.";
+  "Summaries are withheld from this public log. Each error shows its level and error class; a plan error also shows its resource address and file line where Terraform gives them. Config errors reproduce in a local plan with dev credentials. A permission failure shows its denial class but not the action: find the action from the class and the resource address.";
 
 /**
- * @param {string[]} lines what `terraform plan -json` wrote to stdout and stderr
- * @param {string} [status] the plan's exit status, as plan-dev.yml passes it
+ * @param {string[]} lines what `terraform init -json` or `terraform plan -json` wrote to stdout and stderr
+ * @param {string} [status] the command's exit status, as run-filtered.sh passes it
  */
 function diagnostics(lines, status = "0") {
   const result = spawnSync("jq", ["-n", "-R", "-r", "--arg", "status", status, "-f", filter], {
@@ -133,33 +133,42 @@ test("prints a fixed line for a malformed diagnostic and keeps the others", () =
 
 const op = "operation error IAM: GetRole, https response error StatusCode: 403, RequestID: 1a2b";
 
-for (const [summary, expected] of [
-  [`reading IAM Role (${SECRET}): ${op}, api error AccessDenied: not authorized`, "AccessDenied"],
-  [`${op}, api error AccessDeniedException: ${SECRET}`, "AccessDeniedException"],
-  [`${op}, api error UnauthorizedOperation: ${SECRET}`, "UnauthorizedOperation"],
-  [`${op}, ResourceNotFoundException: ${SECRET}`, "ResourceNotFoundException"],
-  [`${op}, NoSuchEntity: role ${SECRET}`, "NoSuchEntity"],
-  [`${op}, api error ThrottlingException: Rate exceeded`, "ThrottlingException"],
-  [`${op}, api error ExpiredToken: ${SECRET}`, "ExpiredToken"],
-  [`${op}, api error InvalidClientTokenId: ${SECRET}`, "InvalidClientTokenId"],
-  [`${op}, api error ValidationException: ${SECRET}`, "ValidationException"],
-  [`${op}, api error Forbidden: ${SECRET}`, "Forbidden"],
-  [`${op}, api error AuthorizationError: ${SECRET}`, "AuthorizationError"],
-  [`${op}, api error UnrecognizedClientException: ${SECRET}`, "UnrecognizedClientException"],
-  [`${op}, api error InvalidAccessKeyId: ${SECRET}`, "InvalidAccessKeyId"],
-  [`${op}, api error SignatureDoesNotMatch: ${SECRET}`, "SignatureDoesNotMatch"],
+for (const [name, summary, expected] of [
+  ["a name quoted before the chain", `reading IAM Role (${SECRET}): ${op}, api error AccessDenied: not authorized`, "AccessDenied"],
+  ["an api error", `${op}, api error AccessDeniedException: ${SECRET}`, "AccessDeniedException"],
+  ["an EC2 denial", `${op}, api error UnauthorizedOperation: ${SECRET}`, "UnauthorizedOperation"],
+  ["a code with no api error label", `${op}, ResourceNotFoundException: ${SECRET}`, "ResourceNotFoundException"],
+  ["an IAM code with no label", `${op}, NoSuchEntity: role ${SECRET}`, "NoSuchEntity"],
+  ["throttling", `${op}, api error ThrottlingException: Rate exceeded`, "ThrottlingException"],
+  ["an expired token", `${op}, api error ExpiredToken: ${SECRET}`, "ExpiredToken"],
+  ["an expired token exception", `${op}, api error ExpiredTokenException: ${SECRET}`, "ExpiredTokenException"],
+  ["an invalid token", `${op}, api error InvalidClientTokenId: ${SECRET}`, "InvalidClientTokenId"],
+  ["a validation error", `${op}, api error ValidationException: ${SECRET}`, "ValidationException"],
+  ["a 403 Forbidden", `${op}, api error Forbidden: ${SECRET}`, "Forbidden"],
+  ["an SNS denial", `${op}, api error AuthorizationError: ${SECRET}`, "AuthorizationError"],
+  ["an unrecognised client", `${op}, api error UnrecognizedClientException: ${SECRET}`, "UnrecognizedClientException"],
+  ["an unknown key", `${op}, api error InvalidAccessKeyId: ${SECRET}`, "InvalidAccessKeyId"],
+  ["a bad signature", `${op}, api error SignatureDoesNotMatch: ${SECRET}`, "SignatureDoesNotMatch"],
   [
+    "an S3 chain with a HostID",
     `operation error S3: HeadBucket, https response error StatusCode: 404, RequestID: 1a2b, HostID: c3d4, NoSuchBucket: ${SECRET}`,
     "NoSuchBucket",
   ],
-  [`${op}, api error NotFound: x ${SECRET}: api error AccessDenied: y`, "NotFound"],
-  [`Invalid value for ${SECRET}`, "-"],
-  [`MyAccessDeniedThing ${SECRET}`, "-"],
-  [`AccessDenied: ${SECRET}`, "-"],
-  [`invalid value "x-NotFound-y"`, "-"],
-  [`${op}, invalid value "x-NotFound-y"`, "-"],
+  [
+    "a chain after retries ran out",
+    `operation error CloudWatch Logs: DescribeLogGroups, exceeded maximum number of attempts, 3, https response error StatusCode: 400, RequestID: 1a2b, api error ThrottlingException: ${SECRET}`,
+    "ThrottlingException",
+  ],
+  ["two chains, of which the first wins", `${op}, api error NotFound: x ${SECRET}: api error AccessDenied: y`, "NotFound"],
+  ["no chain", `Invalid value for ${SECRET}`, "-"],
+  ["a class name inside a word", `MyAccessDeniedThing ${SECRET}`, "-"],
+  ["a class name with no chain", `AccessDenied: ${SECRET}`, "-"],
+  ["a class name inside a quoted value", `invalid value "x-NotFound-y"`, "-"],
+  ["a chain followed by a quoted value", `${op}, invalid value "x-NotFound-y"`, "-"],
+  ["an api error label inside a quoted value", `Invalid value "api error Forbidden: "`, "-"],
+  ["an api error label after an unrelated chain prefix", `operation error ${SECRET}, api error Forbidden: x`, "-"],
 ]) {
-  test(`prints ${expected === "-" ? "- for an unmatched" : `only the class ${expected} from a`} summary: ${summary.slice(0, 40)}`, () => {
+  test(`prints the error class ${expected} for ${name}`, () => {
     const out = diagnostics([diagnosticLine({ severity: "error", summary })]);
     assert.deepEqual(out, [`error\t-\t-\t${expected}`, PRIVATE_LINE]);
   });
@@ -171,6 +180,69 @@ test("reads the error class from the detail with the same position rule", () => 
     diagnosticLine({ severity: "error", summary: "x", detail: `value "x-NotFound-y" ${SECRET}` }),
   ]);
   assert.deepEqual(out, ["error\t-\t-\tAccessDenied", "error\t-\t-\t-", PRIVATE_LINE]);
+});
+
+test("reads the error class from a plain-text Error: line, such as an init backend error", () => {
+  const out = diagnostics([
+    `│ Error: Failed to get existing workspaces: Unable to list objects in S3 bucket "${SECRET}": operation error S3: ListObjectsV2, https response error StatusCode: 403, RequestID: 1a2b, HostID: c3d4, api error AccessDenied: Access Denied`,
+    `Warning: ${SECRET} api error AccessDenied: x`,
+  ]);
+  assert.deepEqual(out, ["error\t-\t-\tAccessDenied", "warning\t-\t-\t-", PRIVATE_LINE]);
+});
+
+test("reads the error class from an init -json backend diagnostic", () => {
+  const out = diagnostics(
+    [
+      JSON.stringify({ type: "init_output", message_code: "initializing_backend_message", "@message": "Initializing the backend..." }),
+      diagnosticLine({
+        severity: "error",
+        summary: `validating provider credentials: retrieving caller identity from STS: operation error STS: GetCallerIdentity, https response error StatusCode: 403, RequestID: 2dfa, api error InvalidClientTokenId: ${SECRET}`,
+        detail: "",
+      }),
+    ],
+    "1",
+  );
+  assert.deepEqual(out, ["error\t-\t-\tInvalidClientTokenId", PRIVATE_LINE]);
+});
+
+test("prints installed provider versions and lock file changes from a successful init, without the hint", () => {
+  /** @param {string} type @param {string} message @param {string} [code] */
+  const ui = (type, message, code) => JSON.stringify({ type, "@message": message, message_code: code });
+  const out = diagnostics([
+    JSON.stringify({ type: "version", terraform: "1.9.8" }),
+    ui("init_output", "Initializing provider plugins...", "initializing_provider_plugin_message"),
+    ui("log", "hashicorp/aws: Reusing previous version from the dependency lock file"),
+    ui("log", "Installing provider version: hashicorp/aws v6.71.0..."),
+    ui("log", "Installed provider version: hashicorp/aws v6.71.0 (signed by HashiCorp)"),
+    ui("log", `Installed provider version: hashicorp/archive v2.7.1 ${SECRET}`),
+    ui("log", `Installed provider version: hashicorp/null v3.2.3${SECRET}`),
+    ui("log", "hashicorp/random v3.6.0: Using previously-installed provider version"),
+    ui("log", `hashicorp/random v3.6.0: Using previously-installed provider version ${SECRET}`),
+    ui("log", `Finding matching versions for provider: hashicorp/aws, version_constraint: "${SECRET}"`),
+    ui("init_output", "Terraform has created a lock file .terraform.lock.hcl ...", "lock_info"),
+    ui("init_output", "Terraform has made some changes ...", "dependencies_lock_changes_info"),
+    ui("init_output", `${SECRET}`, "output_init_success_cli_message"),
+    JSON.stringify({ type: "log", "@message": { text: SECRET } }),
+    JSON.stringify({ type: "init_output", "@message": SECRET, message_code: { code: "lock_info" } }),
+  ]);
+  assert.deepEqual(out, [
+    "Provider: hashicorp/aws v6.71.0",
+    "Provider: hashicorp/archive v2.7.1",
+    "Provider: hashicorp/random v3.6.0",
+    "Lock file: created .terraform.lock.hcl",
+    "Lock file: provider selections changed in .terraform.lock.hcl",
+  ]);
+});
+
+test("prints tf-init-retry.sh's retry line, so repeated init errors read as retries", () => {
+  const out = diagnostics(
+    [
+      "Terraform initialization failed; retrying in 10 seconds (attempt 1/3).",
+      `Terraform initialization failed; retrying in 10 seconds (attempt 1/3). ${SECRET}`,
+    ],
+    "0",
+  );
+  assert.deepEqual(out, ["Terraform initialization failed; retrying in 10 seconds (attempt 1/3)."]);
 });
 
 test("strips colour codes before reading an Error: line", () => {
