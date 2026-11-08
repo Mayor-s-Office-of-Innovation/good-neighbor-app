@@ -133,11 +133,20 @@ data "aws_iam_policy_document" "plan" {
 
   statement {
     # Parameter values and other apps' Lambda environments can hold secrets, and
-    # this module reads neither. Its own Lambdas stay readable for refresh.
+    # this module reads neither. Refreshing its own Lambdas calls GetFunction and
+    # ListVersionsByFunction, so those stay readable.
     sid           = "DenyOtherSecretReads"
     effect        = "Deny"
-    actions       = ["lambda:GetFunction*", "ssm:GetParameter*"]
+    actions       = ["lambda:GetFunction*", "lambda:ListVersionsByFunction", "ssm:GetParameter*"]
     not_resources = ["arn:aws:lambda:*:*:function:${local.name_prefix}-*"]
+  }
+
+  statement {
+    # Returns every app's Lambda environment and can't be scoped; refresh never calls it.
+    sid       = "DenyListAllFunctions"
+    effect    = "Deny"
+    actions   = ["lambda:ListFunctions"]
+    resources = ["*"]
   }
 
   statement {

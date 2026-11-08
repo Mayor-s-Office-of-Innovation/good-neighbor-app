@@ -191,9 +191,18 @@ run "plan_role_is_read_only_and_tied_to_one_github_environment" {
   assert {
     condition = anytrue([
       for statement in data.aws_iam_policy_document.plan[0].statement :
-      statement.sid == "DenyOtherSecretReads" && statement.effect == "Deny" && toset(statement.actions) == toset(["lambda:GetFunction*", "ssm:GetParameter*"]) && statement.not_resources == toset(["arn:aws:lambda:*:*:function:good-neighbor-test-*"])
+      statement.sid == "DenyOtherSecretReads" && statement.effect == "Deny" && toset(statement.actions) == toset(["lambda:GetFunction*", "lambda:ListVersionsByFunction", "ssm:GetParameter*"]) && statement.not_resources == toset(["arn:aws:lambda:*:*:function:good-neighbor-test-*"])
     ])
     error_message = "The plan role must not read parameter values or other apps' Lambda environments."
+  }
+
+  assert {
+    # ListFunctions returns every function's environment and has no resource scope; refresh never calls it.
+    condition = anytrue([
+      for statement in data.aws_iam_policy_document.plan[0].statement :
+      statement.sid == "DenyListAllFunctions" && statement.effect == "Deny" && toset(statement.actions) == toset(["lambda:ListFunctions"]) && statement.resources == toset(["*"])
+    ])
+    error_message = "The plan role must not list every app's Lambda environments."
   }
 
   assert {
