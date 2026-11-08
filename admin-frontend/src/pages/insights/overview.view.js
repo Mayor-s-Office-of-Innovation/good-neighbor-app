@@ -334,12 +334,21 @@ class InsightsOverview extends HTMLElement {
    * @param {Partial<import("./insights-query.js").OverviewState>} change
    */
   refine(change) {
+    this.takeSearch();
     Object.assign(this.state, change, { selected: [] });
     this.reload();
   }
 
+  /** A search still in its typing wait would otherwise be wiped from the box. */
+  takeSearch() {
+    this.search.cancel();
+    const input = /** @type {any} */ (this.querySelector("#insights-search"));
+    if (input) this.state.q = String(input.value ?? "").trim();
+  }
+
   /** Every Site is listed, so a new order keeps the picks. A second click on the sorted column flips it. @param {string} sort */
   resort(sort) {
+    this.takeSearch();
     const dir =
       sort === this.state.sort
         ? sortDir(this.state) === "asc"

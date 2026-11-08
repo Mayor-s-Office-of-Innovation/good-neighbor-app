@@ -396,6 +396,28 @@ test("search waits for typing to stop, asks once and keeps focus in the box", as
   assert.ok(focused("#insights-search"));
 });
 
+test("a search typed just before another control is pressed is kept, not lost", async () => {
+  const { api } = await mountAdmin("/insights?show=all", { insights: true });
+  $("#insights-search").focus();
+  await fill("#insights-search", "pier");
+  // Within the search's 300 ms wait; pressing a button moves focus to it.
+  $('[data-show="top"]').focus();
+  await click('[data-show="top"]');
+  await tick(300);
+  assert.equal($("#insights-search").value, "pier");
+  assert.deepEqual(
+    [lastOverviewCall(api).q, lastOverviewCall(api).show],
+    ["pier", "top"],
+  );
+  assert.match(url(), /q=pier/);
+  // A column sort pressed in the wait keeps it too.
+  await fill("#insights-search", "hobb");
+  $('[data-sort-key="checksPerDay"]').focus();
+  await click('[data-sort-key="checksPerDay"]');
+  await tick(300);
+  assert.equal(lastOverviewCall(api).q, "hobb");
+});
+
 test("Next period moves a month on and stops at the running month", async () => {
   const { api } = await mountAdmin("/insights?period=2026-10", {
     insights: true,
