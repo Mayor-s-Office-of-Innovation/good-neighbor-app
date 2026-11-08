@@ -84,7 +84,11 @@ test("prints nothing for a plan with no changes", () => {
 });
 
 for (const [name, address, expected] of [
-  ["a for_each key", `aws_sns_topic_subscription.emails["${SECRET}@example.com"]`, "aws_sns_topic_subscription.emails[…]"],
+  [
+    "a for_each key",
+    `aws_sns_topic_subscription.emails["${SECRET}@example.com"]`,
+    "aws_sns_topic_subscription.emails[…]",
+  ],
   ["a count key", "aws_iam_role.r[2]", "aws_iam_role.r[…]"],
   ["text outside the brackets", `aws_iam_role.r["a"] ${SECRET}`, "-"],
   ["text after a key", `a.b["x"]${SECRET}.c`, "-"],
@@ -93,7 +97,9 @@ for (const [name, address, expected] of [
 ]) {
   test(`cuts ${name} from an address, since keys can hold a value`, () => {
     const out = summarize({
-      resource_changes: [{ address, change: { actions: ["create"], before: null, after: {} } }],
+      resource_changes: [
+        { address, change: { actions: ["create"], before: null, after: {} } },
+      ],
     });
     assert.deepEqual(out, [`create\t${expected}`]);
     assert.ok(!out.join("\n").includes(SECRET));
@@ -109,7 +115,10 @@ test("merges identical cut lines with a count and sorts on the cut address", () 
   const out = summarize({
     resource_changes: [
       instance(`${SECRET}-c`, { name: "n", tags: { a: "1" } }),
-      { address: "aws_iam_role.z", change: { actions: ["create"], before: null, after: {} } },
+      {
+        address: "aws_iam_role.z",
+        change: { actions: ["create"], before: null, after: {} },
+      },
       instance(`${SECRET}-a`, { name: "m", tags: {} }),
       instance(`${SECRET}-b`, { name: "n", tags: { a: "2" } }),
     ],
