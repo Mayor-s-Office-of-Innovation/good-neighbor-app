@@ -46,15 +46,17 @@ window.addEventListener("click", (/** @type {any} */ event) => {
  * @param {Record<string, boolean>} keys
  */
 async function modifiedClick(selector, keys) {
-  const stay = (/** @type {Event} */ event) => event.preventDefault();
+  const sent = new window.MouseEvent("click", {
+    bubbles: true,
+    cancelable: true,
+    ...keys,
+  });
+  // Only this click: a plain click the page forwards must still route, or the test can't fail.
+  const stay = (/** @type {Event} */ event) => {
+    if (event === sent) event.preventDefault();
+  };
   window.addEventListener("click", stay, true);
-  $(selector).dispatchEvent(
-    new window.MouseEvent("click", {
-      bubbles: true,
-      cancelable: true,
-      ...keys,
-    }),
-  );
+  $(selector).dispatchEvent(sent);
   window.removeEventListener("click", stay, true);
   await settle();
 }
@@ -1124,8 +1126,11 @@ test("a ready report with no download link yet fetches one on Download", async (
   await tick(2000);
   linked = true;
   const reads = statusChecks(api);
+  downloads.length = 0;
   await click("#insights-report-download");
   assert.equal(statusChecks(api), reads + 1);
+  assert.equal(downloads.length, 1);
+  assert.match(downloads[0], /^\/mock-downloads\//);
   assert.ok(missing("#insights-report-done"));
 });
 
@@ -1179,7 +1184,9 @@ test("a Site opened in a new tab doesn't pull focus on a later load", async () =
   await mountAdmin("/insights?period=2026-10&show=all", { insights: true });
   await modifiedClick('[data-site-link="s1"]', { metaKey: true });
   assert.equal(url(), "/insights?period=2026-10&show=all");
-  await click('[data-show="top"]');
+  // The same view again, the only one a recorded way back would focus s1 on.
+  await routeTo("/insights?period=2026-10&show=all");
+  assert.equal(rows().length, 4);
   assert.ok(!focused('[data-site-link="s1"]'));
 });
 
@@ -1245,4 +1252,21 @@ test("every column but the open arrow sorts the table", async () => {
     (col) => t(`admin.insights.col.${col}`),
   );
   assert.deepEqual(options, heads);
+});
+
+test("a month the server says hasn't started yet opens the default month instead", async () => {
+  // The browser's day can run ahead of the server's last update, just after midnight on the 1st.
+  const { api } = await mountAdmin("/insights?period=2026-11", {
+    insights: true,
+    setup: (a) =>
+      a.on("GET", /^reporting\/overview/, (/** @type {any} */ r) =>
+        new URLSearchParams(r.search).get("month") === "2026-11"
+          ? { status: 400, json: { error: "future_period" } }
+          : a.reply(r),
+      ),
+  });
+  assert.equal(lastOverviewCall(api).month, undefined);
+  assert.equal(url(), "/insights");
+  assert.deepEqual(rows(), ["s1", "s4"]);
+  assert.ok(missing("[data-insights-failed]"));
 });

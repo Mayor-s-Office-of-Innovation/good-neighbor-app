@@ -23,6 +23,7 @@ import { JobAction } from "./job-action.js";
 import { LatestLoad, superseded } from "./latest-load.js";
 import {
   drawPeriodControl,
+  errorCode,
   failedView,
   failureText,
   freshnessView,
@@ -197,6 +198,12 @@ class InsightsOverview extends HTMLElement {
       );
     } catch (err) {
       if (superseded(err, current)) return;
+      // The server's last update can be a day behind the browser's clock.
+      if (this.period && errorCode(err) === "future_period") {
+        this.period = null;
+        this.periodKind = "month";
+        return this.reload();
+      }
       this.removeAttribute("aria-busy");
       this.reply = null;
       // Without a period from the server, the controls step from this month.

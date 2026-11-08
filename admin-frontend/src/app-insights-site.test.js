@@ -1106,3 +1106,21 @@ test("a finished period has no incomplete mark on the Site page", async () => {
   await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
   assert.ok(missing("[data-period-status] [data-period-incomplete]"));
 });
+
+test("a month the server says hasn't started yet opens the Site's default month instead", async () => {
+  const { api } = await mountAdmin("/insights/sites/s1?period=2026-11", {
+    insights: true,
+    setup: (a) =>
+      a.on("GET", /^reporting\/sites\//, (/** @type {any} */ r) =>
+        new URLSearchParams(r.search).get("month") === "2026-11"
+          ? { status: 400, json: { error: "future_period" } }
+          : a.reply(r),
+      ),
+  });
+  const asked = api
+    .calls("GET", /^reporting\/sites\//)
+    .map((/** @type {any} */ c) => new URLSearchParams(c.search).get("month"));
+  assert.deepEqual(asked, ["2026-11", null]);
+  assert.equal(url(), "/insights/sites/s1");
+  assert.ok(missing("[data-insights-failed]"));
+});

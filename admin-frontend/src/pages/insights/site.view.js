@@ -10,6 +10,7 @@ import {
   drawPeriodControl,
   incompletePill,
   failedView,
+  errorCode,
   failureText,
   freshnessView,
   loadingView,
@@ -217,6 +218,9 @@ class InsightsSite extends HTMLElement {
       reply = await adminApi.reportingSite(this.siteId, params, signal);
     } catch (err) {
       if (superseded(err, current)) return;
+      // The server's last update can be a day behind the browser's clock.
+      if (this.period && errorCode(err) === "future_period")
+        return this.periodPicked(null);
       this.removeAttribute("aria-busy");
       this.reply = null;
       // With no period asked or named, the controls step from this month.
@@ -446,10 +450,10 @@ class InsightsSite extends HTMLElement {
     drawPeriodControl(this, this.periodBody());
   }
 
-  /** @param {Period} period */
+  /** @param {Period | null} period null for the server's default month */
   periodPicked(period) {
     this.period = period;
-    this.periodKind = period.kind;
+    this.periodKind = period?.kind ?? "month";
     this.periodError = "";
     const params = new URLSearchParams(location.search);
     const next = periodSearch(period);

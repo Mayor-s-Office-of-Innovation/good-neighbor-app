@@ -190,6 +190,23 @@ test("a custom period starting after today is refused before it's asked for", ()
   );
 });
 
+test("today is the Pacific day, even when it's already tomorrow in UTC", () => {
+  // Nov 4, 9 PM Pacific: Nov 5 in UTC.
+  const evening = new Date("2026-11-05T05:00:00.000Z");
+  assert.deepEqual(
+    [
+      customPeriodError("2026-11-04", "2026-11-04", evening),
+      customPeriodError("2026-11-05", "2026-11-05", evening),
+      readPeriod("?period=2026-11", evening),
+    ],
+    [
+      "",
+      "admin.insights.error.futurePeriod",
+      { kind: "month", month: "2026-11" },
+    ],
+  );
+});
+
 test("a link to a period that hasn't started opens the default month", () => {
   assert.deepEqual(
     [

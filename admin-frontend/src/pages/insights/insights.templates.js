@@ -471,13 +471,20 @@ export function failedView(message, retryId = "insights-retry") {
   return `<div class="insights__failed" data-insights-failed><p class="error">${escapeHtml(message)}</p><button type="button" class="btn-secondary" id="${retryId}">${escapeHtml(t("common.retry"))}</button></div>`;
 }
 
-/** @param {unknown} err @param {string} lead translated first sentence */
-export function failureText(err, lead) {
+/** @param {unknown} err @returns {string} the API's error code, or "" */
+export function errorCode(err) {
   // A timeout's message is already a sentence, so its code names it.
   const named = /** @type {any} */ (err)?.code;
-  const code =
-    typeof named === "string" ? named : err instanceof Error ? err.message : "";
-  const key = codeKey("admin.insights.error", code);
+  return typeof named === "string"
+    ? named
+    : err instanceof Error
+      ? err.message
+      : "";
+}
+
+/** @param {unknown} err @param {string} lead translated first sentence */
+export function failureText(err, lead) {
+  const key = codeKey("admin.insights.error", errorCode(err));
   const detail = hasKey(key) ? t(key) : t("admin.insights.error.generic");
   return `${lead} ${detail}`;
 }
