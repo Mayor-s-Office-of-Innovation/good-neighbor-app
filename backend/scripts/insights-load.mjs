@@ -151,14 +151,27 @@ export async function runLoad({
  * @param {string} dir the projection folder to read
  * @param {{ dataDir: string, copies: number, rounds: number, parallel: number, maxExportRows?: number }} opts
  */
-async function timeEndpoints(
-  dir,
+async function timeEndpoints(dir, opts) {
+  const snapshots = createSnapshotStore({ source: dirSource(dir) });
+  // Closed so the snapshot's copy in the temp folder goes when the run ends.
+  try {
+    return await timeEndpointsOn(snapshots, opts);
+  } finally {
+    await snapshots.close();
+  }
+}
+
+/**
+ * @param {ReturnType<typeof createSnapshotStore>} snapshots
+ * @param {{ dataDir: string, copies: number, rounds: number, parallel: number, maxExportRows?: number }} opts
+ */
+async function timeEndpointsOn(
+  snapshots,
   { dataDir, copies, rounds, parallel, maxExportRows },
 ) {
   const loadStarted = performance.now();
   /** @type {{ ownerKey: string, jobId: string }[]} */
   const queued = [];
-  const snapshots = createSnapshotStore({ source: dirSource(dir) });
   // Opened now, so the time and heap below include the Sites read into memory.
   const snap = await snapshots.current();
   const loadMs = performance.now() - loadStarted;

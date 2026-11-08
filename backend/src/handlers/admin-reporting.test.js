@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -77,8 +77,16 @@ function setup(opts = {}) {
     now: () => NOW,
     maxExportRows: opts.maxExportRows,
   });
+  opened.push(h);
   return { h, started, jobStore, projection };
 }
+
+// Closed after each test, so no snapshot copy outlives it.
+/** @type {{ close: () => Promise<void> }[]} */
+const opened = [];
+afterEach(async () => {
+  await Promise.all(opened.splice(0).map((h) => h.close()));
+});
 
 // A block body: a returned mock would run as the hook's teardown.
 beforeEach(() => {
@@ -475,6 +483,7 @@ async function handlersOverFolder(env) {
   vi.resetModules();
   const fresh = await import("./admin-reporting.js");
   const h = fresh.reportingHandlers({ INSIGHTS_PROJECTION_DIR: dir, ...env });
+  opened.push(h);
   const manifestPath = join(dir, "manifest.json");
   return {
     snapshotId: async () => json(await h.getOverview(event())).meta.snapshotId,
@@ -823,6 +832,7 @@ describe("export and report jobs", () => {
         INSIGHTS_JOBS_BUCKET: "j",
         INSIGHTS_JOBS_QUEUE_URL: queueUrl,
       });
+      opened.push(h);
       const res = await h.postExport(
         event({ headers: key, body: { dataset: "issues" } }),
       );
@@ -971,6 +981,7 @@ describe("export and report jobs", () => {
         S3_PUBLIC_PRESIGN_ENDPOINT: "http://localhost:9000",
         INSIGHTS_JOBS_BUCKET: "j",
       });
+      opened.push(h);
       const res = await h.getOverview(event());
       expect([res.statusCode, json(res).siteCount]).toEqual([200, 3]);
     } finally {
@@ -992,8 +1003,8 @@ describe("export and report jobs", () => {
        * @param {string} evaluatedAt
        * @returns {any}
        */
-      const handlersOn = (id, evaluatedAt) =>
-        createReportingHandlers({
+      const handlersOn = (id, evaluatedAt) => {
+        const h = createReportingHandlers({
           snapshots: createSnapshotStore({
             source: tablesSource({
               ...projection,
@@ -1004,6 +1015,9 @@ describe("export and report jobs", () => {
           starter: async () => {},
           now: () => NOW,
         });
+        opened.push(h);
+        return h;
+      };
       // 11 pm on Oct 31 in San Francisco, then the next day's snapshot.
       const first = json(
         await handlersOn("snap1", "2026-11-01T06:00:00.000Z")[route](

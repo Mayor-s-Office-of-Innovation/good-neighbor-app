@@ -59,6 +59,13 @@ const reader = () =>
     threads: "1",
     memory_limit: "1GiB",
     parquet_metadata_cache: "true",
+    // A query past the limit spills here; the default sits under Lambda's read-only /var/task.
+    // Per process, since two test workers sharing one folder could clash on its files.
+    temp_directory: join(tmpdir(), `insights-spill-${process.pid}`),
+  }).catch((err) => {
+    // Forgotten, so the next request tries again rather than fail for the sandbox's life.
+    instance = null;
+    throw err;
   }));
 
 let opened = 0;
@@ -118,9 +125,13 @@ function queryOn(conn) {
  * Opens a loaded snapshot's files as views, and reads what every reply needs
  * into memory: the Sites, their contacts and the snapshot's day range.
  * @param {LoadedSnapshot} loaded
+ * @param {{ onError?: (err: unknown) => void }} [opts]
  * @returns {Promise<Snapshot & { release: () => void, adopt: () => void, closing: boolean, disposed: Promise<void> }>}
  */
-export async function openSnapshot({ prefix, manifest, dir, cleanup }) {
+export async function openSnapshot(
+  { prefix, manifest, dir, cleanup },
+  { onError = () => {} } = {},
+) {
   const db = await reader();
   const schema = `insights_${(opened += 1)}`;
   const conn = await db.connect();
@@ -163,12 +174,18 @@ export async function openSnapshot({ prefix, manifest, dir, cleanup }) {
       await setImmediate();
       if (disposing || !released || holds > 0) return;
       disposing = true;
-      const drop = await db.connect();
+      // Caught, since nothing awaits this and a rejection would end the process.
       try {
-        await drop.run(`DROP SCHEMA ${schema} CASCADE`);
+        const drop = await db.connect();
+        try {
+          await drop.run(`DROP SCHEMA ${schema} CASCADE`);
+        } finally {
+          drop.closeSync();
+        }
+      } catch (err) {
+        onError(err);
       } finally {
-        drop.closeSync();
-        await cleanup();
+        await cleanup().catch(onError);
         done();
       }
     };
@@ -392,6 +409,7 @@ export function createSnapshotStore({
   // The snapshot latest.json named when a load found its files expired.
   /** @type {{ key: string, err: unknown } | null} */
   let expired = null;
+  let closed = false;
 
   // Let a snapshot go once neither the held nor the older slot keeps it; it
   // waits for its last read to end.
@@ -424,11 +442,13 @@ export function createSnapshotStore({
           // A rebuilt local folder keeps its path, so a job could read another snapshot's numbers.
           if (String(loaded.manifest.snapshotId) !== snapshotId)
             throw requestError("snapshot_changed", 503);
-          const snap = await openSnapshot(loaded);
+          const snap = await openSnapshot(loaded, { onError });
           open.set(key, snap);
           snap.disposed.then(() => {
             if (open.get(key) === snap) open.delete(key);
           });
+          // One that lands after close() lets its copy go once its reads end.
+          if (closed) snap.release();
           return snap;
         } catch (err) {
           await loaded.cleanup();
@@ -594,6 +614,17 @@ export function createSnapshotStore({
         );
       }
       return /** @type {Promise<Snapshot>} */ (older);
+    },
+    // For tests and scripts: a Lambda never closes, but a process that ends leaves the copies behind.
+    async close() {
+      closed = true;
+      held = null;
+      olderSnap = null;
+      older = null;
+      olderKey = "";
+      const snaps = [...open.values()];
+      for (const snap of snaps) snap.release();
+      await Promise.all(snaps.map((snap) => snap.disposed));
     },
   };
 }

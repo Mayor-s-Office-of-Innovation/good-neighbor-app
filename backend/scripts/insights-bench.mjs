@@ -190,23 +190,30 @@ export async function measure(query, dir, { runs }) {
   const sample = () => {
     peakHeap = Math.max(peakHeap, process.memoryUsage().heapUsed);
   };
-  const snap = await createSnapshotStore({ source: dirSource(dir) }).current();
-  const run = queriesFor(snap, requests(snap.manifest))[query];
-  if (!run) throw new Error(`no query named ${query}`);
-  await run();
-  // performance.now() counts from process start, so this includes imports.
-  const coldMs = performance.now();
-  sample();
+  const store = createSnapshotStore({ source: dirSource(dir) });
   /** @type {number[]} */
   const times = [];
-  const warmRuns = ["export", "report"].includes(query)
-    ? Math.min(runs, JOB_RUNS)
-    : runs;
-  for (let i = 0; i < warmRuns; i += 1) {
-    const started = performance.now();
+  let coldMs = 0;
+  // Closed so each run's snapshot copy in the temp folder goes with it.
+  try {
+    const snap = await store.current();
+    const run = queriesFor(snap, requests(snap.manifest))[query];
+    if (!run) throw new Error(`no query named ${query}`);
     await run();
-    times.push(performance.now() - started);
+    // performance.now() counts from process start, so this includes imports.
+    coldMs = performance.now();
     sample();
+    const warmRuns = ["export", "report"].includes(query)
+      ? Math.min(runs, JOB_RUNS)
+      : runs;
+    for (let i = 0; i < warmRuns; i += 1) {
+      const started = performance.now();
+      await run();
+      times.push(performance.now() - started);
+      sample();
+    }
+  } finally {
+    await store.close();
   }
   times.sort((a, b) => a - b);
   return {

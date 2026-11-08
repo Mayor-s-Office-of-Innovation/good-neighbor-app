@@ -79,16 +79,19 @@ describe("quantile", () => {
 // so each query is held to read-model.js on the same files.
 describe("queriesFor", () => {
   it("answers every query through the shipped reader", async () => {
-    const snap = await createSnapshotStore({
-      source: dirSource(base),
-    }).current();
-    const queries = queriesFor(snap, requests(snap.manifest));
-    expect(Object.keys(queries)).toEqual(QUERIES);
-    const site = /** @type {any} */ (await queries.site());
-    expect(site.site.siteId).toBe(snap.sites[0].siteId);
-    // The CSV and the report are the jobs' own output, measured in characters.
-    expect(await queries.export()).toBeGreaterThan(0);
-    expect(await queries.report()).toBeGreaterThan(0);
+    const store = createSnapshotStore({ source: dirSource(base) });
+    try {
+      const snap = await store.current();
+      const queries = queriesFor(snap, requests(snap.manifest));
+      expect(Object.keys(queries)).toEqual(QUERIES);
+      const site = /** @type {any} */ (await queries.site());
+      expect(site.site.siteId).toBe(snap.sites[0].siteId);
+      // The CSV and the report are the jobs' own output, measured in characters.
+      expect(await queries.export()).toBeGreaterThan(0);
+      expect(await queries.report()).toBeGreaterThan(0);
+    } finally {
+      await store.close();
+    }
   });
 });
 
@@ -112,10 +115,13 @@ describe("buildSize", () => {
     expect(built.snapshotId).toBe(input.snapshotId);
     expect(built.bench).toMatchObject({ sites: 5, years: 2, copies: 2 });
     expect(built.rowCounts.sites).toBe(5);
-    const snap = await createSnapshotStore({
-      source: dirSource(out),
-    }).current();
-    expect(snap.sitesById.has("s1-copy1")).toBe(true);
+    const store = createSnapshotStore({ source: dirSource(out) });
+    try {
+      const snap = await store.current();
+      expect(snap.sitesById.has("s1-copy1")).toBe(true);
+    } finally {
+      await store.close();
+    }
     // Each Site's moved year adds a second copy of every dated row.
     expect(built.rowCounts.checks).toBeGreaterThan(input.rowCounts.checks);
   });

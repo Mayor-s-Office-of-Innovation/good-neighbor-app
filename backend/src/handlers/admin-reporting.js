@@ -509,6 +509,9 @@ export function createReportingHandlers({
     // Kept off the request, so a large file can't hit the gateway's 29 s cap.
     /** @param {{ ownerKey: string, jobId: string }} ref */
     runJob: (ref) => needJobs().run(ref),
+
+    // For tests and scripts, so their snapshot copies don't outlive them.
+    close: () => snapshots.close(),
   };
 }
 

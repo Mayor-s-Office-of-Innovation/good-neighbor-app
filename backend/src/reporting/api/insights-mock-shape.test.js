@@ -2,7 +2,7 @@
 // holds that fake to the real handlers: same routes, same status, same
 // fields and value types, so a changed reply can't leave specs passing.
 import { URLSearchParams } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import {
   insightsReplies,
   insightsReply,
@@ -162,6 +162,7 @@ async function realReplies() {
 }
 
 const replies = await realReplies();
+afterAll(() => handlers.close());
 
 describe("the admin E2E Insights mock", () => {
   it("answers every Insights route the backend serves, and no others", () => {
