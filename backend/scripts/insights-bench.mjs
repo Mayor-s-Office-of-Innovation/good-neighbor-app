@@ -36,6 +36,7 @@ import {
 import { SITE_DAY_METRICS } from "../src/reporting/activity.js";
 import { comparisonFor, previousOf } from "../src/reporting/periods.js";
 import { TABLE_SCHEMAS } from "../src/reporting/projection.js";
+import { ROW_GROUP_SIZE } from "../src/reporting/projection-sql.js";
 import {
   parseListQuery,
   parsePeriodParams,
@@ -50,7 +51,7 @@ const QUERY_LABELS = {
   issues: "Issues, a month",
 };
 // Small enough that a year of 500 Sites spans about ten groups to skip.
-const ROW_GROUP = 16_384;
+
 const NAMES = new Intl.Collator("en", { sensitivity: "base", numeric: true });
 const BENCH_DIR = fileURLToPath(
   new URL("../.local/insights-bench", import.meta.url),
@@ -550,7 +551,7 @@ export async function buildSize(base, out, sites, years) {
            ${dated ? `, range(${years}) AS yr(y)` : ""}
            ORDER BY ${order[name] ?? ("day" in schema ? "day, siteId" : "siteId")})
          TO ${sqlString(join(tmp, `${name}.parquet`))}
-         (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
+         (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP_SIZE})`,
       );
     }
     /** @type {Record<string, number>} */
