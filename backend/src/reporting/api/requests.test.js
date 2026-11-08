@@ -3,11 +3,13 @@ import {
   LIMITS,
   decodeCursor,
   encodeCursor,
+  isRequestError,
   parseIdList,
   parseListQuery,
   parsePeriodParams,
   parseSiteFilter,
   queryHash,
+  requestError,
 } from "./requests.js";
 
 const EVALUATED = "2026-11-04T19:00:00.000Z";
@@ -24,6 +26,25 @@ function errorOf(fn) {
   }
   throw new Error("expected an error");
 }
+
+describe("isRequestError", () => {
+  it("knows its own errors and the period parser's", () => {
+    expect(isRequestError(requestError("bad_thing"))).toBe(true);
+    expect(
+      isRequestError(
+        errorOf(() => parsePeriodParams({ month: "x" }, EVALUATED)),
+      ),
+    ).toBe(true);
+  });
+
+  it("won't show a caller another library's error that has a code and status", () => {
+    const network = Object.assign(new Error("socket hang up"), {
+      code: "ECONNRESET",
+      statusCode: 502,
+    });
+    expect(isRequestError(network)).toBe(false);
+  });
+});
 
 describe("parsePeriodParams", () => {
   it("defaults to the Pacific month even when UTC has moved on", () => {

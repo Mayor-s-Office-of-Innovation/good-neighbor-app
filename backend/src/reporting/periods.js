@@ -31,12 +31,19 @@ import {
  * @property {boolean} [clipped]
  */
 
+// Marks an error whose code a caller may read; other libraries' errors also carry code and statusCode.
+export const REQUEST_ERROR = Symbol("requestError");
+
 /**
  * @param {string} code
  * @returns {Error}
  */
 function periodError(code) {
-  return Object.assign(new Error(code), { code, statusCode: 400 });
+  return Object.assign(new Error(code), {
+    code,
+    statusCode: 400,
+    [REQUEST_ERROR]: true,
+  });
 }
 
 /**

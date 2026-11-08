@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { pacificDateKey } from "../../lib/pacific-dates.js";
 import { RESPONSE_STATES } from "../contract.js";
-import { resolvePeriod } from "../periods.js";
+import { REQUEST_ERROR, resolvePeriod } from "../periods.js";
 
 export const LIMITS = Object.freeze({
   pageSize: 50,
@@ -26,7 +26,11 @@ export const LIMITS = Object.freeze({
  * @returns {Error & { code: string, statusCode: number }}
  */
 export function requestError(code, statusCode = 400) {
-  return Object.assign(new Error(code), { code, statusCode });
+  return Object.assign(new Error(code), {
+    code,
+    statusCode,
+    [REQUEST_ERROR]: true,
+  });
 }
 
 // Only these are safe to show a caller; anything else may carry internals.
@@ -35,8 +39,7 @@ export function requestError(code, statusCode = 400) {
  * @returns {err is Error & { code: string, statusCode: number }}
  */
 export function isRequestError(err) {
-  const e = /** @type {any} */ (err);
-  return typeof e?.code === "string" && Number.isInteger(e?.statusCode);
+  return /** @type {any} */ (err)?.[REQUEST_ERROR] === true;
 }
 
 /**
