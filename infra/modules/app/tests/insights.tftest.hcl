@@ -144,6 +144,8 @@ run "insights_infra" {
       aws_apigatewayv2_route.analytics,
       aws_apigatewayv2_route.routes,
       aws_cloudwatch_log_metric_filter.insights_projection_published,
+      aws_cloudwatch_log_metric_filter.insights_job_failed,
+      aws_cloudwatch_metric_alarm.insights_job_failed,
       aws_cloudwatch_metric_alarm.insights_jobs_dlq_not_empty,
       aws_cloudwatch_metric_alarm.insights_jobs_queue_backlog,
       aws_cloudwatch_metric_alarm.insights_projection_stalled,
@@ -329,6 +331,17 @@ run "insights_infra" {
   }
 
   assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.insights_job_failed.metric_name == one(aws_cloudwatch_log_metric_filter.insights_job_failed.metric_transformation).name
+      && aws_cloudwatch_metric_alarm.insights_job_failed.namespace == one(aws_cloudwatch_log_metric_filter.insights_job_failed.metric_transformation).namespace
+      && aws_cloudwatch_log_metric_filter.insights_job_failed.log_group_name == aws_cloudwatch_log_group.insights_jobs.name
+      && strcontains(aws_cloudwatch_log_metric_filter.insights_job_failed.pattern, "$.jobId")
+      && aws_cloudwatch_metric_alarm.insights_job_failed.threshold == 1
+    )
+    error_message = "One failed job must page someone; run() stores the failure, so the Lambda Errors alarm never sees it."
+  }
+
+  assert {
     condition     = aws_cloudwatch_metric_alarm.insights_jobs_dlq_not_empty.dimensions["QueueName"] == aws_sqs_queue.insights_jobs_dlq.name
     error_message = "The DLQ alarm must watch the Insights jobs DLQ."
   }
@@ -379,12 +392,13 @@ run "insights_waf" {
 
   assert {
     condition = anytrue([
-      for rule in aws_wafv2_web_acl.web.rule : contains([
+      for rule in aws_wafv2_web_acl.web.rule : toset([
         for o in rule.statement[0].managed_rule_group_statement[0].rule_action_override : o.name
-      ], "SizeRestrictions_QUERYSTRING")
+        if length(o.action_to_use[0].count) == 1 && length(o.action_to_use[0].allow) == 0
+      ]) == toset(["SizeRestrictions_BODY", "SizeRestrictions_QUERYSTRING"])
       if rule.name == "AWSManagedRulesCommonRuleSet"
     ])
-    error_message = "The Common Rule Set's 2 KB query-string rule must only count, so the label rule below decides which routes it blocks."
+    error_message = "The Common Rule Set's body and query-string size rules must only count, so the label rules below decide which routes they block; an allow would skip every later rule."
   }
 
   # Long reporting filters pass, but % or .. could disguise another route.

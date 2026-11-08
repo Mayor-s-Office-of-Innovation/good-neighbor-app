@@ -254,6 +254,40 @@ resource "aws_cloudwatch_log_metric_filter" "insights_jobs_errors" {
   }
 }
 
+# run() stores a failed job instead of throwing, so the Lambda Errors alarm never sees it,
+# and the shared ServerError alarm needs more than 5. Jobs are rare, so one is worth a look.
+resource "aws_cloudwatch_log_metric_filter" "insights_job_failed" {
+  name           = "${local.name_prefix}-insights-job-failed"
+  log_group_name = aws_cloudwatch_log_group.insights_jobs.name
+  pattern        = "{ $.level = \"ERROR\" && $.jobId = * }"
+
+  metric_transformation {
+    name          = "InsightsJobFailed"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "insights_job_failed" {
+  alarm_name          = "${local.name_prefix}-insights-job-failed"
+  alarm_description   = "An Insights export or report job failed, and its requester saw an error. Search ${aws_cloudwatch_log_group.insights_jobs.name} for the jobId on the ERROR line."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  threshold           = 1
+  period              = 300
+  namespace           = local.error_namespace
+  metric_name         = "InsightsJobFailed"
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
 resource "aws_cloudwatch_metric_alarm" "insights_jobs_dlq_not_empty" {
   alarm_name          = "${local.name_prefix}-insights-jobs-dlq-not-empty"
   alarm_description   = "An Insights export or report job failed all its deliveries in ${aws_sqs_queue.insights_jobs_dlq.name}. Its requester saw a timeout about 2.5 hours earlier, since each of its 5 deliveries waits out the 30-minute visibility timeout. Check the insights-jobs logs, then redrive or purge the DLQ."
@@ -368,6 +402,10 @@ resource "aws_lambda_function_event_invoke_config" "analytics_convert" {
       destination = aws_lambda_function.analytics_projection.arn
     }
   }
+
+  # Lambda checks the role may invoke the destination when this is set, so the
+  # grant must exist first; otherwise the first apply can fail.
+  depends_on = [aws_iam_role_policy.analytics_convert]
 }
 
 resource "aws_iam_role" "analytics_projection" {
