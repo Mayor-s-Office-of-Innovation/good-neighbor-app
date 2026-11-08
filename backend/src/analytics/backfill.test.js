@@ -6,13 +6,16 @@ const manifest = (/** @type {string} */ id) =>
   `raw/AWSDynamoDB/${id}/manifest-summary.json`;
 
 /**
- * An in-memory lake bucket that answers the three calls the backfill makes.
+ * An in-memory lake bucket that answers the three calls the backfill makes,
+ * and honours IfMatch and IfNoneMatch on the state file as S3 does.
  * @param {Record<string, string>} objects key → LastModified
  * @param {{ state?: object, pageSize?: number, sizes?: Record<string, number> }} [opts]
  */
 function fakeS3(objects, opts = {}) {
   /** @type {string | null} */
   let state = opts.state ? JSON.stringify(opts.state) : null;
+  let version = 1;
+  const etag = () => `"v${version}"`;
   const keys = Object.keys(objects).sort();
   const pageSize = opts.pageSize ?? 1000;
   /** @type {object[]} */
@@ -25,12 +28,20 @@ function fakeS3(objects, opts = {}) {
       if (input.Key !== STATE_KEY || state === null)
         throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
       const body = state;
-      return { Body: { transformToString: async () => body } };
+      return { Body: { transformToString: async () => body }, ETag: etag() };
     }
     if (name === "PutObjectCommand") {
+      if (
+        (input.IfNoneMatch === "*" && state !== null) ||
+        (input.IfMatch && (state === null || input.IfMatch !== etag()))
+      )
+        throw Object.assign(new Error("PreconditionFailed"), {
+          $metadata: { httpStatusCode: 412 },
+        });
       state = input.Body;
+      version += 1;
       writes.push(JSON.parse(input.Body));
-      return {};
+      return { ETag: etag() };
     }
     const start = Number(input.ContinuationToken ?? 0);
     const page = keys.slice(start, start + pageSize);
@@ -48,7 +59,7 @@ function fakeS3(objects, opts = {}) {
   return { send, writes, state: () => (state ? JSON.parse(state) : null) };
 }
 
-/** @param {{ failOn?: string }} [opts] */
+/** @param {{ failOn?: string, onConvert?: (key: string) => Promise<void> }} [opts] */
 function recorder(opts = {}) {
   /** @type {[string, string][]} */
   const calls = [];
@@ -60,6 +71,7 @@ function recorder(opts = {}) {
   const convert = async (_bucket, key, at) => {
     if (key === opts.failOn) throw new Error("timed out");
     calls.push([key, at]);
+    await opts.onConvert?.(key);
   };
   return { calls, convert };
 }
@@ -71,7 +83,7 @@ const FULL = manifest("full1");
 
 /**
  * A fake DynamoDB that starts full exports and answers DescribeExport.
- * @param {{ statuses?: string[], startFails?: boolean }} [opts] statuses in the order DescribeExport returns them
+ * @param {{ statuses?: (string | { ExportStatus: string, EndTime?: Date })[], startFails?: boolean }} [opts] statuses in the order DescribeExport returns them
  */
 function fakeDynamo(opts = {}) {
   /** @type {any[]} */
@@ -94,8 +106,10 @@ function fakeDynamo(opts = {}) {
     }
     if (name === "DescribeExportCommand") {
       described.push(command.input.ExportArn);
+      const status = statuses.shift() ?? "IN_PROGRESS";
       return {
-        ExportDescription: { ExportStatus: statuses.shift() ?? "IN_PROGRESS" },
+        ExportDescription:
+          typeof status === "string" ? { ExportStatus: status } : status,
       };
     }
     throw new Error(`unexpected ${name}`);
@@ -431,10 +445,118 @@ describe("backfillIfFormatChanged full export", () => {
 
   it("waits for a completed export's own conversion instead of starting another", async () => {
     const s3 = fakeS3(LAKE, { state: startedFull() });
-    const dynamo = fakeDynamo({ statuses: ["COMPLETED"] });
-    expect(await run(s3, dynamo)).toMatchObject({ finished: false });
+    const dynamo = fakeDynamo({
+      statuses: [
+        {
+          ExportStatus: "COMPLETED",
+          EndTime: new Date("2026-10-04T05:00:00Z"),
+        },
+      ],
+    });
+    expect(
+      await backfillIfFormatChanged({
+        send: s3.send,
+        ...dynamo.deps,
+        convert: recorder().convert,
+        bucket: BUCKET,
+        formatVersion: 2,
+        now: () => new Date("2026-10-04T06:00:00Z"),
+      }),
+    ).toMatchObject({ finished: false });
     expect(dynamo.starts).toEqual([]);
     expect(s3.state()).toMatchObject({ formatVersion: 1 });
+  });
+
+  it("starts a new export when a completed one's files expired before converting", async () => {
+    const s3 = fakeS3(LAKE, { state: startedFull() });
+    const dynamo = fakeDynamo({
+      statuses: [
+        {
+          ExportStatus: "COMPLETED",
+          EndTime: new Date("2026-09-01T06:00:00Z"),
+        },
+      ],
+    });
+    expect(
+      await backfillIfFormatChanged({
+        send: s3.send,
+        ...dynamo.deps,
+        convert: recorder().convert,
+        bucket: BUCKET,
+        formatVersion: 2,
+        now: () => new Date("2026-10-04T06:00:00Z"),
+      }),
+    ).toMatchObject({ finished: false });
+    expect(dynamo.starts).toEqual([
+      expect.objectContaining({ ClientToken: "format-2-2" }),
+    ]);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("expired before converting"),
+    );
+    expect(s3.state()).toMatchObject({
+      formatVersion: 1,
+      backfill: { fullExport: { exportArn: exportArn("full1"), attempt: 2 } },
+    });
+  });
+
+  it("keeps a version another converter recorded while this one ran", async () => {
+    const s3 = fakeS3(
+      { ...LAKE, [FULL]: "2026-10-04T06:00:00.000Z" },
+      { state: startedFull() },
+    );
+    const other = fakeDynamo();
+    let raced = false;
+    const slow = recorder({
+      failOn: manifest("e3"),
+      // The full export lands and its own run finishes while this run is mid-backfill.
+      onConvert: async () => {
+        if (raced) return;
+        raced = true;
+        await run(s3, other, { skip: [FULL] });
+      },
+    });
+    await backfillIfFormatChanged({
+      send: s3.send,
+      ...fakeDynamo().deps,
+      convert: slow.convert,
+      bucket: BUCKET,
+      formatVersion: 2,
+    });
+    expect(s3.state()).toMatchObject({ formatVersion: 2 });
+    expect(s3.state().backfill).toBeUndefined();
+  });
+
+  it("merges two unfinished runs' progress and keeps the newer export", async () => {
+    const s3 = fakeS3(LAKE, { state: startedFull() });
+    let raced = false;
+    const slow = recorder({
+      // Another run sees the first export failed, starts attempt 2 and converts e2 and e3.
+      onConvert: async () => {
+        if (raced) return;
+        raced = true;
+        await run(s3, fakeDynamo({ statuses: ["FAILED"] }), {
+          skip: [manifest("e1")],
+        });
+      },
+    });
+    await backfillIfFormatChanged({
+      send: s3.send,
+      ...fakeDynamo().deps,
+      convert: slow.convert,
+      bucket: BUCKET,
+      formatVersion: 2,
+      skip: new Set([manifest("e2"), manifest("e3")]),
+    });
+    expect(s3.state()).toMatchObject({
+      formatVersion: 1,
+      backfill: {
+        formatVersion: 2,
+        fullExport: { exportArn: exportArn("full1"), attempt: 2 },
+      },
+    });
+    expect([...s3.state().backfill.done].sort()).toEqual(
+      [manifest("e1"), manifest("e2"), manifest("e3")].sort(),
+    );
   });
 
   it("starts a new export with a new token when the first one fails", async () => {

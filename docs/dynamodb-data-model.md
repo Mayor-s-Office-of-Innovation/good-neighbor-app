@@ -984,8 +984,10 @@ that fails is logged and passed, so later exports still convert; the old version
 until a later run converts it or it expires. A run stops when the next export's
 estimated time, from its data files' size, plus two minutes passes the time left, and
 resumes on the next export. The new version is recorded only once the full export has
-converted and no re-conversion failed; if the full export fails, a later run starts
-another. The backfill runs only when `ANALYTICS_BACKFILL_ENABLED=true`, which waits on
+converted and no re-conversion failed; if the full export fails, or completes but
+`raw/` expires its files before they convert, a later run logs an error and starts
+another. Converters that run at once write the state file with `IfMatch` and merge
+each other's progress, so a recorded version never goes back. The backfill runs only when `ANALYTICS_BACKFILL_ENABLED=true`, which waits on
 the converter role being allowed to list `raw/`, read the state file, and start and
 describe table exports.
 Current ART keys and legacy ART keys

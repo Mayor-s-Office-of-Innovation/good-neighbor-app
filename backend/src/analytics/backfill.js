@@ -2,6 +2,7 @@
 // Raw exports expire after 30 days (analytics.tf), so it also starts one full table export,
 // which brings every item older than that into the lake in the new format.
 // A failed export leaves the version unchanged, and re-converting overwrites, so retries are safe.
+// Converters can run at once, so state.json is written with IfMatch and merged on a lost race.
 
 import {
   DescribeExportCommand,
@@ -51,20 +52,28 @@ const STOP_WITH_MS_LEFT = 120_000;
 const GZIP_BYTES_PER_MS = 1_000;
 // An export estimated longer than a whole run would stop every run, so it is logged and passed.
 const LONGEST_EXPORT_MS = 450_000;
+// A day after an export completes, a missing manifest means the raw/ lifecycle rule deleted it.
+const EXPORT_FILES_GRACE_MS = 24 * 60 * 60 * 1000;
+// Each lost race means another converter wrote, and reserved concurrency caps those at 5.
+const MAX_STATE_WRITES = 6;
 
 /**
  * @param {BackfillDeps} deps
- * @returns {Promise<ConverterState | null>}
+ * @returns {Promise<{ state: ConverterState | null, etag: string | undefined }>}
  */
 async function readState({ send, bucket }) {
   try {
     const res = await send(
       new GetObjectCommand({ Bucket: bucket, Key: STATE_KEY }),
     );
-    return JSON.parse(await res.Body.transformToString("utf8"));
+    return {
+      state: JSON.parse(await res.Body.transformToString("utf8")),
+      etag: res.ETag,
+    };
   } catch (err) {
     // No file yet: the lake has never recorded a version.
-    if (/** @type {any} */ (err)?.name === "NoSuchKey") return null;
+    if (/** @type {any} */ (err)?.name === "NoSuchKey")
+      return { state: null, etag: undefined };
     throw err;
   }
 }
@@ -72,19 +81,32 @@ async function readState({ send, bucket }) {
 /**
  * @param {BackfillDeps} deps
  * @param {ConverterState} state
- * @returns {Promise<void>}
+ * @param {string | undefined} etag the version read; undefined means the file must not exist yet
+ * @returns {Promise<string | undefined>} the new ETag
  */
-async function writeState({ send, bucket, now = () => new Date() }, state) {
-  await send(
+async function writeState(
+  { send, bucket, now = () => new Date() },
+  state,
+  etag,
+) {
+  const res = await send(
     new PutObjectCommand({
       Bucket: bucket,
       Key: STATE_KEY,
       Body: JSON.stringify({ ...state, updatedAt: now().toISOString() }),
       ServerSideEncryption: "aws:kms",
       ContentType: "application/json",
+      ...(etag ? { IfMatch: etag } : { IfNoneMatch: "*" }),
     }),
   );
+  return res?.ETag;
 }
+
+/** @param {unknown} err */
+const lostRace = (err) => {
+  const status = /** @type {any} */ (err)?.$metadata?.httpStatusCode;
+  return status === 412 || status === 409;
+};
 
 /**
  * @param {BackfillDeps} deps
@@ -158,15 +180,31 @@ async function startFullExport(
 }
 
 /**
+ * Why the full export will never convert, or null while it still may.
  * @param {BackfillDeps} deps
  * @param {string} exportArn
- * @returns {Promise<boolean>}
+ * @param {boolean} listed its manifest is under raw/
+ * @returns {Promise<string | null>}
  */
-async function exportFailed({ ddbSend }, exportArn) {
+async function exportLost(
+  { ddbSend, now = () => new Date() },
+  exportArn,
+  listed,
+) {
   const res = await ddbSend(
     new DescribeExportCommand({ ExportArn: exportArn }),
   );
-  return res.ExportDescription?.ExportStatus === "FAILED";
+  const { ExportStatus, EndTime } = res.ExportDescription ?? {};
+  if (ExportStatus === "FAILED") return "full export failed";
+  // Without this, a completed export whose conversion kept failing leaves the backfill waiting forever.
+  if (
+    ExportStatus === "COMPLETED" &&
+    !listed &&
+    EndTime &&
+    now().getTime() - new Date(EndTime).getTime() > EXPORT_FILES_GRACE_MS
+  )
+    return "full export expired before converting";
+  return null;
 }
 
 /**
@@ -174,8 +212,8 @@ async function exportFailed({ ddbSend }, exportArn) {
  * @returns {Promise<{ backfilled: number, failed: number, finished: boolean }>}
  */
 export async function backfillIfFormatChanged(deps) {
-  const state = await readState(deps);
-  if (state?.formatVersion === deps.formatVersion)
+  let { state, etag } = await readState(deps);
+  if ((state?.formatVersion ?? 0) >= deps.formatVersion)
     return { backfilled: 0, failed: 0, finished: true };
   const prior =
     state?.backfill?.formatVersion === deps.formatVersion
@@ -183,15 +221,44 @@ export async function backfillIfFormatChanged(deps) {
       : undefined;
   const done = new Set(prior?.done ?? []);
   let fullExport = prior?.fullExport;
+  /**
+   * Writes the state, merging another converter's writes on a lost race.
+   * @param {(recorded: number | null) => ConverterState} next
+   * @returns {Promise<boolean>} false once another converter recorded this version
+   */
+  const put = async (next) => {
+    for (let tries = 1; ; tries += 1) {
+      if ((state?.formatVersion ?? 0) >= deps.formatVersion) return false;
+      try {
+        etag = await writeState(deps, next(state?.formatVersion ?? null), etag);
+        return true;
+      } catch (err) {
+        if (!lostRace(err) || tries >= MAX_STATE_WRITES) throw err;
+      }
+      ({ state, etag } = await readState(deps));
+      const theirs =
+        state?.backfill?.formatVersion === deps.formatVersion
+          ? state.backfill
+          : undefined;
+      for (const key of theirs?.done ?? []) done.add(key);
+      // A higher attempt replaced ours after it failed, so ours must not come back.
+      if (
+        theirs?.fullExport &&
+        (!fullExport || theirs.fullExport.attempt > fullExport.attempt)
+      )
+        fullExport = theirs.fullExport;
+    }
+  };
   const save = () =>
-    writeState(deps, {
-      formatVersion: state?.formatVersion ?? null,
+    put((recorded) => ({
+      formatVersion: recorded,
       backfill: {
         formatVersion: deps.formatVersion,
         done: [...done],
         fullExport,
       },
-    });
+    }));
+  const stopped = { backfilled: 0, failed: 0, finished: true };
   // DynamoDB writes an export's files under <prefix>/AWSDynamoDB/<the ARN's last segment>/.
   const fullKey = (/** @type {FullExport} */ f) =>
     `${deps.prefix ?? "raw"}/AWSDynamoDB/${f.exportArn.split("/").pop()}/manifest-summary.json`;
@@ -202,23 +269,33 @@ export async function backfillIfFormatChanged(deps) {
     !done.has(fullKey(fullExport))
   ) {
     done.add(fullKey(fullExport));
-    await save();
+    if (!(await save())) return stopped;
   }
 
+  /** @type {Awaited<ReturnType<typeof listExports>> | undefined} */
+  let exports;
   let exportPending = false;
   try {
     if (!fullExport) {
       fullExport = await startFullExport(deps, 1);
-      await save();
+      if (!(await save())) return stopped;
     } else if (!done.has(fullKey(fullExport))) {
-      if (await exportFailed(deps, fullExport.exportArn)) {
+      const current = fullExport;
+      const lost = await exportLost(
+        deps,
+        current.exportArn,
+        (exports ??= await listExports(deps)).some(
+          (e) => e.key === fullKey(current),
+        ),
+      );
+      if (lost) {
         logServerError(
           "analytics-convert backfill",
-          new Error("full export failed; starting another"),
-          { extra: { exportArn: fullExport.exportArn } },
+          new Error(`${lost}; starting another`),
+          { extra: { exportArn: current.exportArn } },
         );
-        fullExport = await startFullExport(deps, fullExport.attempt + 1);
-        await save();
+        fullExport = await startFullExport(deps, current.attempt + 1);
+        if (!(await save())) return stopped;
       }
     }
   } catch (err) {
@@ -230,7 +307,8 @@ export async function backfillIfFormatChanged(deps) {
 
   let backfilled = 0;
   let failed = 0;
-  for (const { key, exportedAt, bytes } of await listExports(deps)) {
+  for (const { key, exportedAt, bytes } of exports ??
+    (await listExports(deps))) {
     if (done.has(key) || deps.skip?.has(key)) continue;
     const needMs = bytes / GZIP_BYTES_PER_MS;
     if (needMs > LONGEST_EXPORT_MS) {
@@ -256,9 +334,9 @@ export async function backfillIfFormatChanged(deps) {
     backfilled += 1;
     if (fullExport && key === fullKey(fullExport)) exportPending = false;
     // Progress after each export, so a timeout doesn't redo the lot.
-    await save();
+    if (!(await save())) return { ...stopped, backfilled };
   }
   if (failed || exportPending) return { backfilled, failed, finished: false };
-  await writeState(deps, { formatVersion: deps.formatVersion });
+  await put(() => ({ formatVersion: deps.formatVersion }));
   return { backfilled, failed, finished: true };
 }
