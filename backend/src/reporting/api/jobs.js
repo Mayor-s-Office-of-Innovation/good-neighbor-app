@@ -347,11 +347,18 @@ export function createJobs({
         await load(ownerKey, jobId),
         (r) => {
           if (r.state === "succeeded") throw requestError("job_finished", 409);
-          // One that timed out while running is rerun on redelivery, so the cancel must stick.
-          const rerunnable = r.timedOutIn === "running";
+          // One that timed out is rerun on redelivery, so the cancel must stick.
+          const rerunnable = Boolean(r.timedOutIn);
           if ((r.state === "failed" && !rerunnable) || r.state === "cancelled")
             return null;
-          return { ...r, state: "cancelled", updatedAt: iso() };
+          // Cleared so the page shows a cancel, not the timeout it replaced.
+          return {
+            ...r,
+            state: "cancelled",
+            error: null,
+            timedOutIn: null,
+            updatedAt: iso(),
+          };
         },
       );
       return view(ownerKey, record);
@@ -361,13 +368,13 @@ export function createJobs({
     async run({ ownerKey, jobId }) {
       const read = await store.read(ownerKey, jobId);
       if (!read) return;
-      // SQS delivers at least once; a live run or a cancel ends it here. Timed out
-      // while running means the last delivery died; rerun it so a job that always
-      // dies reaches the DLQ, rather than have its message deleted.
+      // SQS delivers at least once; a live run or a cancel ends it here. A timeout
+      // means the last delivery died or is late; rerun it so a job that always dies
+      // reaches the DLQ, and a late one still makes its file.
       const claim = await update(ownerKey, read, (r) =>
         r.state === "queued" ||
         (r.state === "running" && isStalled(r)) ||
-        (r.state === "failed" && r.timedOutIn === "running")
+        (r.state === "failed" && Boolean(r.timedOutIn))
           ? {
               ...r,
               state: "running",

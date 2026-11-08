@@ -402,7 +402,30 @@ describe("createJobs", () => {
     });
   });
 
-  it("drops a job that timed out in the queue, since its requester was told it failed", async () => {
+  it("reruns a job that timed out in the queue when its failed first delivery comes back", async () => {
+    const { jobs, store, clock, request } = setup();
+    const { job } = await jobs.create("owner1", {
+      ...request,
+      idempotencyKey: "k1",
+    });
+    const put = store.put;
+    store.put = async () => {
+      throw new Error("S3 is down");
+    };
+    await expect(
+      jobs.run({ ownerKey: "owner1", jobId: job.jobId }),
+    ).rejects.toThrow("S3 is down");
+    store.put = put;
+    clock.now = T0 + JOB_LIMITS.queueWaitMs + 1;
+    expect((await jobs.get("owner1", job.jobId)).error).toBe("job_timed_out");
+    await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
+    expect(await jobs.get("owner1", job.jobId)).toMatchObject({
+      state: "succeeded",
+      error: null,
+    });
+  });
+
+  it("keeps a job cancelled after it timed out in the queue", async () => {
     let renders = 0;
     const { jobs, clock, request } = setup({
       render: async () => {
@@ -415,10 +438,12 @@ describe("createJobs", () => {
       idempotencyKey: "k1",
     });
     clock.now = T0 + JOB_LIMITS.queueWaitMs + 1;
-    expect((await jobs.get("owner1", job.jobId)).error).toBe("job_timed_out");
+    expect(await jobs.cancel("owner1", job.jobId)).toMatchObject({
+      state: "cancelled",
+      error: null,
+    });
     await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
     expect(renders).toBe(0);
-    expect((await jobs.get("owner1", job.jobId)).state).toBe("failed");
   });
 
   it("keeps a timed-out run cancelled, so its redelivery doesn't rerun it", async () => {
@@ -436,7 +461,10 @@ describe("createJobs", () => {
     const record = /** @type {any} */ (await store.get("owner1", job.jobId));
     await store.put("owner1", job.jobId, { ...record, state: "running" });
     clock.now = T0 + JOB_LIMITS.stallMs + 1;
-    expect((await jobs.cancel("owner1", job.jobId)).state).toBe("cancelled");
+    expect(await jobs.cancel("owner1", job.jobId)).toMatchObject({
+      state: "cancelled",
+      error: null,
+    });
     await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
     expect(renders).toBe(0);
     expect((await jobs.get("owner1", job.jobId)).state).toBe("cancelled");
