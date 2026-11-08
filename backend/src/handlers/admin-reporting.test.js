@@ -25,9 +25,8 @@ const { LIMITS, SITE_DIMENSIONS, requestError } = await import(
   "../reporting/api/requests.js"
 );
 
-const { syntheticProjection, writeSyntheticProjection } = await import(
-  "../reporting/api/test-projection.js"
-);
+const { syntheticProjection, tablesSource, writeSyntheticProjection } =
+  await import("../reporting/api/test-projection.js");
 
 const NOW = Date.parse("2026-11-04T20:00:00.000Z");
 
@@ -64,14 +63,7 @@ const escapedJson = (body) => JSON.stringify(body).replaceAll("€", "\\u20ac");
 /** @param {{ source?: any, maxExportRows?: number, jobStore?: any }} [opts] */
 function setup(opts = {}) {
   const projection = syntheticProjection();
-  const source = opts.source ?? {
-    latest: async () => ({ prefix: "p1", snapshotId: "snap1" }),
-    load: async (/** @type {string} */ prefix) => ({
-      prefix,
-      manifest: projection.manifest,
-      tables: projection.tables,
-    }),
-  };
+  const source = opts.source ?? tablesSource(projection);
   /** @type {{ ownerKey: string, jobId: string }[]} */
   const started = [];
   const jobStore =
@@ -221,16 +213,12 @@ describe("reads", () => {
   });
 
   it("logs a 503 that is ours to fix, such as a snapshot of another contract", async () => {
-    const { projection } = setup();
+    const projection = syntheticProjection();
     const { h } = setup({
-      source: {
-        latest: async () => ({ prefix: "p1", snapshotId: "snap1" }),
-        load: async (/** @type {string} */ prefix) => ({
-          prefix,
-          manifest: { ...projection.manifest, contractVersion: "old" },
-          tables: projection.tables,
-        }),
-      },
+      source: tablesSource({
+        ...projection,
+        manifest: { ...projection.manifest, contractVersion: "old" },
+      }),
     });
     const res = await h.getOverview(event());
     expect([res.statusCode, json(res).error]).toEqual([
@@ -1007,18 +995,10 @@ describe("export and report jobs", () => {
       const handlersOn = (id, evaluatedAt) =>
         createReportingHandlers({
           snapshots: createSnapshotStore({
-            source: {
-              latest: async () => ({ prefix: id, snapshotId: id }),
-              load: async (/** @type {string} */ prefix) => ({
-                prefix,
-                manifest: {
-                  ...projection.manifest,
-                  snapshotId: id,
-                  evaluatedAt,
-                },
-                tables: projection.tables,
-              }),
-            },
+            source: tablesSource({
+              ...projection,
+              manifest: { ...projection.manifest, snapshotId: id, evaluatedAt },
+            }),
           }),
           jobStore,
           starter: async () => {},

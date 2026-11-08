@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { SITE_DAY_METRICS } from "../src/reporting/activity.js";
 import * as readModel from "../src/reporting/api/read-model.js";
-import { dirSource, indexSnapshot } from "../src/reporting/api/snapshot.js";
+import {
+  createSnapshotStore,
+  dirSource,
+} from "../src/reporting/api/snapshot.js";
 import { writeSyntheticProjection } from "../src/reporting/api/test-projection.js";
 import {
   QUERIES,
@@ -192,7 +195,9 @@ describe("designB", () => {
 
   it.each(QUERIES)("answers %s as read-model.js does", async (query) => {
     const req = { ...requests(manifestOf(base)), siteId: "s1" };
-    const snap = indexSnapshot(await dirSource(base).load(base));
+    const snap = await createSnapshotStore({
+      source: dirSource(base),
+    }).current();
     const want = {
       overview: () =>
         readModel.overview(snap, {

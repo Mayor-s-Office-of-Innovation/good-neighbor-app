@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import {
   LIST_FILTERS,
   SORTS,
@@ -12,6 +12,7 @@ import {
   exportRowCount,
   exportRows,
   issueDetail,
+  issueMatches,
   listChecks,
   listIssues,
   SITE_ROW_FILTERS,
@@ -21,14 +22,19 @@ import {
   siteDetail,
   trends,
 } from "./read-model.js";
-import { indexSnapshot } from "./snapshot.js";
-import { TEST_EVALUATED_AT, syntheticProjection } from "./test-projection.js";
+import {
+  TEST_EVALUATED_AT,
+  closeTestSnapshots,
+  openTables,
+  syntheticProjection,
+} from "./test-projection.js";
 
 /** @typedef {import("./snapshot.js").Snapshot} Snapshot */
 
 const NOW = Date.parse("2026-11-04T20:00:00.000Z");
 const { manifest, tables } = syntheticProjection();
-const snap = indexSnapshot({ prefix: "p1", manifest, tables });
+const snap = await openTables({ manifest, tables });
+afterAll(closeTestSnapshots);
 const october = parsePeriodParams(
   { period: "month", month: "2026-10" },
   TEST_EVALUATED_AT,
@@ -53,7 +59,7 @@ const list = (kind, params = {}) => parseListQuery(kind, params);
 async function edited(edit) {
   const { tables, manifest } = syntheticProjection();
   edit(/** @type {any} */ (tables), manifest);
-  return indexSnapshot({ prefix: "p1", manifest, tables });
+  return openTables({ manifest, tables });
 }
 
 describe("dataQuality", () => {
@@ -1664,7 +1670,7 @@ describe("exportRows", () => {
       const ids = (/** @type {Record<string, any>[]} */ rows) =>
         rows.map((r) => r.siteId);
       // An export that skipped sorting would write table order, so test a direction that differs.
-      const tableOrder = ids(snap.tables.sites);
+      const tableOrder = ids(snap.sites);
       /** @type {string | undefined} */
       let dir;
       for (const d of ["asc", "desc"]) {
@@ -1761,8 +1767,7 @@ describe("exportRows", () => {
   it("dates a completed Check with no finish time as the list does", async () => {
     // Apart from the start time, so a CSV that read startedAt would fail.
     const placedAt = "2026-10-02T16:55:00.000Z";
-    const changed = indexSnapshot({
-      prefix: "p1",
+    const changed = await openTables({
       manifest,
       tables: {
         ...tables,
@@ -1790,8 +1795,7 @@ describe("exportRows", () => {
   });
 
   it("labels an Issue the Resolved filter keeps as Resolved, even with an empty time", async () => {
-    const changed = indexSnapshot({
-      prefix: "p1",
+    const changed = await openTables({
       manifest,
       tables: {
         ...tables,
@@ -1910,4 +1914,38 @@ describe("reportDataset", () => {
     });
     expect(res.sites[0].severeIssues).toEqual([]);
   });
+});
+
+describe("Issues list filters", () => {
+  const year = parsePeriodParams(
+    { period: "financialYear", startYear: "2026" },
+    TEST_EVALUATED_AT,
+  );
+  const values = Object.entries(LIST_FILTERS.issues).flatMap(([name, list]) =>
+    (list ?? snap.categories).map((value) => [name, value]),
+  );
+
+  // The E2E fake filters with issueMatches, so SQL must keep the same Issues.
+  it.each(values)(
+    "keeps the Issues issueMatches keeps for %s=%s",
+    async (name, value) => {
+      /** @param {Record<string, string>} params */
+      const ids = async (params) =>
+        (
+          await listIssues(snap, {
+            interval: year,
+            filter: {},
+            list: list("issues", { ...params, limit: "100" }),
+            now: NOW,
+          })
+        ).issues;
+      const all = await ids({});
+      const evaluated = Date.parse(TEST_EVALUATED_AT);
+      expect((await ids({ [name]: value })).map((i) => i.issueId)).toEqual(
+        all
+          .filter((i) => issueMatches(i, { [name]: value }, evaluated))
+          .map((i) => i.issueId),
+      );
+    },
+  );
 });

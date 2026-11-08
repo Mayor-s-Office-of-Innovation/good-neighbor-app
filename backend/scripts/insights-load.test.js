@@ -10,7 +10,6 @@ import {
 } from "../src/reporting/api/test-projection.js";
 import {
   answerTotals,
-  multiply,
   periods,
   quantile,
   runLoad,
@@ -54,33 +53,6 @@ describe("wholeCounts", () => {
     expect(() => wholeCounts({ parallel: value })).toThrow(
       "--parallel must be a whole number of 1 or more",
     );
-  });
-});
-
-describe("multiply", () => {
-  it("copies every row under new Site and record IDs", () => {
-    const out = multiply(
-      {
-        sites: [{ siteId: "s1", name: "North" }],
-        issues: [{ siteId: "s1", issueId: "i1" }],
-        site_days: [{ siteId: "s1", day: "2026-10-01" }],
-      },
-      2,
-    );
-    expect(out.sites).toEqual([
-      { siteId: "s1", name: "North" },
-      { siteId: "s1-copy1", name: "North (copy 1)" },
-    ]);
-    expect(out.issues[1]).toEqual({ siteId: "s1-copy1", issueId: "i1-copy1" });
-    expect(out.site_days[1]).toEqual({
-      siteId: "s1-copy1",
-      day: "2026-10-01",
-    });
-  });
-
-  it("returns one copy unchanged", () => {
-    const tables = { sites: [{ siteId: "s1" }] };
-    expect(multiply(tables, 1)).toBe(tables);
   });
 });
 

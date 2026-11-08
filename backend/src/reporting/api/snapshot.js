@@ -1,128 +1,221 @@
 // Reads lake projection files only, never DynamoDB, so Insights traffic can't slow the field app.
 
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
+import { setImmediate, setTimeout as sleep } from "node:timers/promises";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { DuckDBInstance } from "@duckdb/node-api";
-import { sqlString } from "../../analytics/convert.js";
-import { pacificDateKey } from "../../lib/pacific-dates.js";
+import {
+  DuckDBInstance,
+  JSDuckDBValueConverter,
+  LIST,
+  VARCHAR,
+  listValue,
+} from "@duckdb/node-api";
 import { CONTRACT_VERSION, LATEST_PROJECTION_KEY } from "../contract.js";
 import { TABLE_SCHEMAS } from "../projection.js";
+import { CONCERN_RULES, siteNameRanks } from "./read-model.js";
+import { OPEN_FACTS_SQL, SITE_RANK_INSERT, openSql } from "./read-sql.js";
 import { requestError } from "./requests.js";
 
 // Each download holds its whole file in memory, so only this many tables at once.
 const DOWNLOADS_AT_ONCE = 2;
 
 /**
+ * @typedef {((sql: string, params?: Record<string, unknown>) => Promise<Record<string, any>[]>) & {
+ *   each?: (sql: string, params: Record<string, unknown>, onRows: (rows: Record<string, any>[]) => void) => Promise<void>,
+ * }} Query
+ */
+
+/**
  * @typedef {object} Snapshot
  * @property {string} prefix where its files live; jobs reload it by this
  * @property {string} snapshotId
  * @property {Record<string, any>} manifest
- * @property {Record<string, Record<string, any>[]>} tables
+ * @property {Record<string, any>[]} sites in file order
  * @property {Map<string, Record<string, any>>} sitesById
  * @property {Map<string, Record<string, any>>} contactsBySite
- * @property {Map<string, Record<string, any>[]>} issuesById
- * @property {Map<string, Record<string, any>[]>} checksById
- * @property {Map<string, Record<string, any>[]>} daysBySite each Site's site_days by day, for range reads
- * @property {Map<string, Record<string, any>[]>} owedBySite each Site's checks_owed by day
- * @property {Map<string, Record<string, any>[]>} issuesBySite
  * @property {string | null} coverageStart earliest day with any record
  * @property {string[]} categories each Issue category in the data, sorted
  * @property {string[]} dataDays every day with a site_days row, ascending
+ * @property {<T>(read: (query: Query) => Promise<T>) => Promise<T>} hold runs `read` with queries over the snapshot's files, which stay until it ends
  */
+
+/** @typedef {{ prefix: string, manifest: Record<string, any>, dir: string, cleanup: () => Promise<void> }} LoadedSnapshot */
 
 /**
  * @typedef {object} SnapshotSource
  * @property {() => Promise<{ prefix: string, snapshotId: string } | null>} latest
- * @property {(prefix: string) => Promise<{ prefix: string, manifest: Record<string, any>, tables: Record<string, Record<string, any>[]> }>} load
+ * @property {(prefix: string) => Promise<LoadedSnapshot>} load copies the files to a folder of the snapshot's own
  */
 
+/** @type {Promise<DuckDBInstance> | null} */
+let instance = null;
+
+// One per process. One thread and 1 GiB keep a query's buffers well inside the Lambda's 2,048 MiB.
+const reader = () =>
+  (instance ??= DuckDBInstance.create(":memory:", {
+    threads: "1",
+    memory_limit: "1GiB",
+    parquet_metadata_cache: "true",
+  }));
+
+let opened = 0;
+
 /**
- * @param {Record<string, any>[]} rows
- * @param {string} field
- * @returns {Map<string, Record<string, any>[]>}
+ * @param {Record<string, unknown> | undefined} params
+ * @returns {[Record<string, any> | undefined, Record<string, any> | undefined]}
  */
-function groupBy(rows, field) {
-  /** @type {Map<string, Record<string, any>[]>} */
-  const map = new Map();
-  for (const row of rows) {
-    const list = map.get(row[field]);
-    if (list) list.push(row);
-    else map.set(row[field], [row]);
+function bind(params) {
+  if (!params) return [undefined, undefined];
+  /** @type {Record<string, unknown>} */
+  const values = {};
+  /** @type {Record<string, any>} */
+  const types = {};
+  for (const [name, value] of Object.entries(params)) {
+    // Lists go as text, typed, since an empty list has no type to infer; the SQL casts them.
+    if (Array.isArray(value)) {
+      values[name] = listValue(
+        value.map((v) => (v === null ? null : String(v))),
+      );
+      types[name] = LIST(VARCHAR);
+    } else values[name] = value === undefined ? null : value;
   }
-  return map;
+  return [values, types];
 }
 
 /**
- * @param {Record<string, any>} site
- * @returns {string}
+ * @param {any} conn
+ * @returns {Query}
  */
-export function addedDay(site) {
-  // A createdAt that doesn't parse can't say when the Site began.
-  return site.createdAt ? pacificDateKey(site.createdAt) : "";
+function queryOn(conn) {
+  /** @type {Query} */
+  const query = async (sql, params) =>
+    (await conn.runAndReadAll(sql, ...bind(params))).getRowObjectsJS();
+  // A chunk at a time, so a large export never holds all its rows twice.
+  query.each = async (sql, params, onRows) => {
+    const result = await conn.stream(sql, ...bind(params));
+    /** @type {string[]} */
+    const names = result.columnNames();
+    for (
+      let chunk = await result.fetchChunk();
+      chunk?.rowCount;
+      chunk = await result.fetchChunk()
+    )
+      onRows(
+        chunk
+          .convertRows(JSDuckDBValueConverter)
+          .map((/** @type {unknown[]} */ row) =>
+            Object.fromEntries(names.map((n, i) => [n, row[i]])),
+          ),
+      );
+  };
+  return query;
 }
 
 /**
- * @param {{ prefix: string, manifest: Record<string, any>, tables: Record<string, Record<string, any>[]> }} loaded
- * @returns {Snapshot}
+ * Opens a loaded snapshot's files as views, and reads what every reply needs
+ * into memory: the Sites, their contacts and the snapshot's day range.
+ * @param {LoadedSnapshot} loaded
+ * @returns {Promise<Snapshot & { release: () => void, adopt: () => void, closing: boolean, disposed: Promise<void> }>}
  */
-export function indexSnapshot({ prefix, manifest, tables: all }) {
-  /** @param {Record<string, any>[]} rows */
-  const byDay = (rows) =>
-    rows.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
-  let coverageStart = null;
-  for (const name of ["site_days", "checks"])
-    for (const row of all[name] ?? [])
-      if (coverageStart === null || row.day < coverageStart)
-        coverageStart = row.day;
-  for (const row of all.issues ?? [])
-    if (coverageStart === null || row.createdDay < coverageStart)
-      coverageStart = row.createdDay;
-  // Dropped once here, so every total, comparison and list counts the same days.
-  const added = new Map(all.sites.map((s) => [s.siteId, addedDay(s)]));
-  /** @param {Record<string, any>[] | undefined} rows @param {string} field */
-  const sinceAdded = (rows, field) =>
-    (rows ?? []).filter((r) => !(r[field] < (added.get(r.siteId) ?? "")));
-  /** @type {Record<string, Record<string, any>[]>} */
-  const tables = {
-    ...all,
-    site_days: sinceAdded(all.site_days, "day"),
-    checks: sinceAdded(all.checks, "day"),
-    issues: sinceAdded(all.issues, "createdDay"),
-  };
-  return {
-    prefix,
-    snapshotId: String(manifest.snapshotId),
-    manifest,
-    tables,
-    sitesById: new Map(tables.sites.map((s) => [s.siteId, s])),
-    contactsBySite: new Map(tables.site_contacts.map((c) => [c.siteId, c])),
-    // From every row, so a record linked from elsewhere still opens.
-    issuesById: groupBy(all.issues, "issueId"),
-    checksById: groupBy(all.checks, "checkId"),
-    // Grouped once, so a report reads each Site's rows, not the whole table per Site.
-    daysBySite: new Map(
-      [...groupBy(tables.site_days, "siteId")].map(([siteId, rows]) => [
-        siteId,
-        byDay(rows),
-      ]),
-    ),
-    owedBySite: new Map(
-      [...groupBy(tables.checks_owed ?? [], "siteId")].map(([siteId, rows]) => [
-        siteId,
-        byDay(rows),
-      ]),
-    ),
-    issuesBySite: groupBy(tables.issues, "siteId"),
-    coverageStart,
-    categories: [
-      ...new Set((tables.issues ?? []).map((i) => i.category).filter(Boolean)),
-    ].sort((a, b) => a.localeCompare(b)),
-    dataDays: [...new Set(tables.site_days.map((row) => row.day))].sort(),
-  };
+export async function openSnapshot({ prefix, manifest, dir, cleanup }) {
+  const db = await reader();
+  const schema = `insights_${(opened += 1)}`;
+  const conn = await db.connect();
+  try {
+    for (const sql of openSql({
+      schema,
+      pathOf: (table) => join(dir, `${table}.parquet`),
+      evaluatedAt: manifest.evaluatedAt,
+      unresolvedDays: CONCERN_RULES.unresolvedDays,
+    }))
+      await conn.run(sql);
+    const query = queryOn(conn);
+    const sites = await query(OPEN_FACTS_SQL.sites);
+    const contacts = await query(OPEN_FACTS_SQL.contacts);
+    const ranks = siteNameRanks(sites);
+    if (sites.length)
+      await query(SITE_RANK_INSERT, {
+        ids: sites.map((s) => s.siteId),
+        ranks: sites.map((s) => ranks.get(s.siteId) ?? null),
+      });
+    const [{ coverageStart }] = await query(OPEN_FACTS_SQL.coverageStart);
+    const categories = (await query(OPEN_FACTS_SQL.categories))
+      .map((r) => String(r.category))
+      .sort((a, b) => a.localeCompare(b));
+    const dataDays = (await query(OPEN_FACTS_SQL.dataDays)).map((r) =>
+      String(r.day),
+    );
+
+    let holds = 0;
+    let released = false;
+    /** @type {() => void} */
+    let done = () => {};
+    /** @type {Promise<void>} */
+    const disposed = new Promise((resolve) => {
+      done = resolve;
+    });
+    let disposing = false;
+    // Deferred a turn, so a caller handed this snapshot can start its read first.
+    const disposeIfIdle = async () => {
+      await setImmediate();
+      if (disposing || !released || holds > 0) return;
+      disposing = true;
+      const drop = await db.connect();
+      try {
+        await drop.run(`DROP SCHEMA ${schema} CASCADE`);
+      } finally {
+        drop.closeSync();
+        await cleanup();
+        done();
+      }
+    };
+    return {
+      prefix,
+      snapshotId: String(manifest.snapshotId),
+      manifest,
+      sites,
+      sitesById: new Map(sites.map((s) => [s.siteId, s])),
+      contactsBySite: new Map(contacts.map((c) => [c.siteId, c])),
+      coverageStart: coverageStart ?? null,
+      categories,
+      dataDays,
+      // A read holds its snapshot, so a refresh landing mid-read can't delete its files.
+      async hold(read) {
+        holds += 1;
+        try {
+          const own = await db.connect();
+          try {
+            await own.run(`USE ${schema}`);
+            return await read(queryOn(own));
+          } finally {
+            own.closeSync();
+          }
+        } finally {
+          holds -= 1;
+          if (released && !holds) disposeIfIdle();
+        }
+      },
+      release() {
+        released = true;
+        disposeIfIdle();
+      },
+      adopt() {
+        released = false;
+      },
+      get closing() {
+        return disposing;
+      },
+      disposed,
+    };
+  } catch (err) {
+    await conn.run(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
+    throw err;
+  } finally {
+    conn.closeSync();
+  }
 }
 
 /**
@@ -139,33 +232,8 @@ function checkContract(manifest) {
     throw requestError("snapshot_contract_mismatch", 503);
 }
 
-/**
- * @param {(name: string) => string} pathOf local path of each table file
- * @returns {Promise<Record<string, Record<string, any>[]>>}
- */
-async function readTables(pathOf) {
-  const instance = await DuckDBInstance.create(":memory:");
-  const conn = await instance.connect();
-  try {
-    /** @type {Record<string, Record<string, any>[]>} */
-    const tables = {};
-    for (const [name, schema] of Object.entries(TABLE_SCHEMAS)) {
-      const columns = Object.entries(schema)
-        .map(([column, type]) =>
-          type === "DATE" ? `CAST(${column} AS VARCHAR) AS ${column}` : column,
-        )
-        .join(", ");
-      const reader = await conn.runAndReadAll(
-        `SELECT ${columns} FROM read_parquet(${sqlString(pathOf(name))})`,
-      );
-      tables[name] = reader.getRowObjectsJS();
-    }
-    return tables;
-  } finally {
-    conn.closeSync();
-    instance.closeSync();
-  }
-}
+/** @param {string} dir */
+const removeDir = (dir) => () => rm(dir, { recursive: true, force: true });
 
 /**
  * @param {string} dir
@@ -185,10 +253,30 @@ export function dirSource(dir) {
         await readFile(join(prefix, "manifest.json"), "utf8"),
       );
       checkContract(manifest);
-      const tables = await readTables((name) =>
-        join(prefix, `${name}.parquet`),
-      );
-      return { prefix, manifest, tables };
+      // Copied, since a rebuild swaps the folder in place under any open views.
+      const copy = await mkdtemp(join(tmpdir(), "insights-snapshot-"));
+      try {
+        for (const name of [...Object.keys(TABLE_SCHEMAS), "manifest"]) {
+          const file =
+            name === "manifest" ? "manifest.json" : `${name}.parquet`;
+          await copyFile(join(prefix, file), join(copy, file));
+        }
+        const copied = JSON.parse(
+          await readFile(join(copy, "manifest.json"), "utf8"),
+        );
+        // A rebuild mid-copy would mix two snapshots' files.
+        if (String(copied.snapshotId) !== String(manifest.snapshotId))
+          throw requestError("snapshot_changed", 503);
+        return {
+          prefix,
+          manifest: copied,
+          dir: copy,
+          cleanup: removeDir(copy),
+        };
+      } catch (err) {
+        await rm(copy, { recursive: true, force: true });
+        throw err;
+      }
     },
   };
 }
@@ -253,18 +341,16 @@ export function s3Source({ s3, bucket }) {
           throw err;
         }
       };
-      try {
-        // Settle every write before cleanup, so rm can't race a late one.
-        const writes = await Promise.allSettled(
-          Array.from({ length: DOWNLOADS_AT_ONCE }, download),
-        );
-        const failed = writes.find((w) => w.status === "rejected");
-        if (failed) throw /** @type {PromiseRejectedResult} */ (failed).reason;
-        const tables = await readTables((name) => join(dir, `${name}.parquet`));
-        return { prefix, manifest, tables };
-      } finally {
+      // Settle every write before cleanup, so rm can't race a late one.
+      const writes = await Promise.allSettled(
+        Array.from({ length: DOWNLOADS_AT_ONCE }, download),
+      );
+      const failed = writes.find((w) => w.status === "rejected");
+      if (failed) {
         await rm(dir, { recursive: true, force: true });
+        throw /** @type {PromiseRejectedResult} */ (failed).reason;
       }
+      return { prefix, manifest, dir, cleanup: removeDir(dir) };
     },
   };
 }
@@ -282,7 +368,8 @@ export function createSnapshotStore({
   onError = () => {},
   onLoad = () => {},
 }) {
-  /** @type {Snapshot | null} */
+  /** @typedef {Awaited<ReturnType<typeof openSnapshot>>} Opened */
+  /** @type {Opened | null} */
   let held = null;
   // When the refresh that confirmed `held` read latest.json.
   let checkedAt = -Infinity;
@@ -291,34 +378,62 @@ export function createSnapshotStore({
   let inflight = null;
   /** @type {Promise<Snapshot> | null} */
   let queued = null;
-  /** @type {Map<string, Promise<Snapshot>>} */
+  /** @type {Map<string, Promise<Opened>>} */
   const loading = new Map();
+  // Every snapshot open now, so a second ask for one reuses it rather than load a copy.
+  /** @type {Map<string, Opened>} */
+  const open = new Map();
   // Jobs queued before a swap read the snapshot they were asked against.
-  /** @type {Promise<Snapshot> | null} */
+  /** @type {Promise<Opened> | null} */
   let older = null;
   let olderKey = "";
+  /** @type {Opened | null} */
+  let olderSnap = null;
   // The snapshot latest.json named when a load found its files expired.
   /** @type {{ key: string, err: unknown } | null} */
   let expired = null;
+
+  // Let a snapshot go once neither the held nor the older slot keeps it; it
+  // waits for its last read to end.
+  /** @param {Opened | null} snap */
+  const letGo = (snap) => {
+    if (snap && snap !== held && snap !== olderSnap) snap.release();
+  };
 
   // Shared, since two copies of one snapshot would double the Lambda's memory. The ID is in
   // the key because a rebuilt local folder keeps its path.
   /**
    * @param {string} prefix
    * @param {string} snapshotId
+   * @returns {Promise<Opened>}
    */
   const load = (prefix, snapshotId) => {
     const key = JSON.stringify([prefix, snapshotId]);
+    const reuse = open.get(key);
+    if (reuse && !reuse.closing) {
+      reuse.adopt();
+      return Promise.resolve(reuse);
+    }
     let run = loading.get(key);
     if (!run) {
       run = (async () => {
         const loaded = await source.load(prefix);
-        // The built-in sources check first; this covers any other source.
-        checkContract(loaded.manifest);
-        // A rebuilt local folder keeps its path, so a job could read another snapshot's numbers.
-        if (String(loaded.manifest.snapshotId) !== snapshotId)
-          throw requestError("snapshot_changed", 503);
-        return indexSnapshot(loaded);
+        try {
+          // The built-in sources check first; this covers any other source.
+          checkContract(loaded.manifest);
+          // A rebuilt local folder keeps its path, so a job could read another snapshot's numbers.
+          if (String(loaded.manifest.snapshotId) !== snapshotId)
+            throw requestError("snapshot_changed", 503);
+          const snap = await openSnapshot(loaded);
+          open.set(key, snap);
+          snap.disposed.then(() => {
+            if (open.get(key) === snap) open.delete(key);
+          });
+          return snap;
+        } catch (err) {
+          await loaded.cleanup();
+          throw err;
+        }
       })();
       const clear = () => loading.delete(key);
       run.then(clear, clear);
@@ -338,7 +453,9 @@ export function createSnapshotStore({
         });
         // Dropped so a warm Lambda answers like a cold one, not with old numbers.
         if (held) onError(gone);
+        const dropped = held;
         held = null;
+        letGo(dropped);
         throw gone;
       }
       // Followed even back to an older snapshot, so a rollback lands and every
@@ -352,11 +469,13 @@ export function createSnapshotStore({
         // Expired files stay gone, so answer at once rather than download the rest again.
         if (expired?.key === key) throw expired.err;
         try {
-          // The old one isn't kept: two indexed snapshots would double the Lambda's
-          // memory. A job on it reloads it once.
+          // The old one isn't kept once its reads end. A job on it reloads it once.
           const loadStart = now();
-          held = await load(latest.prefix, latest.snapshotId);
-          onLoad({ snapshotId: held.snapshotId, ms: now() - loadStart });
+          const next = await load(latest.prefix, latest.snapshotId);
+          onLoad({ snapshotId: next.snapshotId, ms: now() - loadStart });
+          const dropped = held;
+          held = next;
+          letGo(dropped);
         } catch (err) {
           // Logged once per snapshot, since parallel downloads can fail on a different file each time.
           if (isExpired(err)) {
@@ -460,10 +579,19 @@ export function createSnapshotStore({
       const key = JSON.stringify([prefix, snapshotId]);
       if (olderKey !== key) {
         olderKey = key;
-        older = load(prefix, snapshotId);
-        older.catch(() => {
-          if (olderKey === key) olderKey = "";
-        });
+        const run = load(prefix, snapshotId);
+        older = run;
+        run.then(
+          (snap) => {
+            if (older !== run) return letGo(snap);
+            const dropped = olderSnap;
+            olderSnap = snap;
+            letGo(dropped);
+          },
+          () => {
+            if (olderKey === key) olderKey = "";
+          },
+        );
       }
       return /** @type {Promise<Snapshot>} */ (older);
     },

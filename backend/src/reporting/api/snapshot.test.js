@@ -1,32 +1,59 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { setImmediate } from "node:timers/promises";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { CONTRACT_VERSION } from "../contract.js";
-import {
-  createSnapshotStore,
-  dirSource,
-  indexSnapshot,
-  s3Source,
-} from "./snapshot.js";
+import { readProjection } from "../test-build.js";
+import { createSnapshotStore, dirSource, s3Source } from "./snapshot.js";
 import { overview } from "./read-model.js";
 import { parseListQuery, parsePeriodParams } from "./requests.js";
 import {
+  closeTestSnapshots,
+  openTables,
   syntheticProjection,
   writeSyntheticProjection,
 } from "./test-projection.js";
+
+// The synthetic projection's files, written once; each fake load copies them.
+const base = mkdtempSync(join(tmpdir(), "insights-snapshot-test-"));
+{
+  const instance = await DuckDBInstance.create(":memory:");
+  const conn = await instance.connect();
+  await writeSyntheticProjection(conn, join(base, "projection"));
+  conn.closeSync();
+  instance.closeSync();
+}
+afterAll(async () => {
+  await closeTestSnapshots();
+  rmSync(base, { recursive: true, force: true });
+});
 
 /**
  * @param {Record<string, any>} [manifest]
  * @returns {any}
  */
 function fakeSource(manifest = {}) {
-  const projection = syntheticProjection();
   let latest = { prefix: "p1", snapshotId: "snap1" };
   return {
     loads: 0,
+    /** @type {Record<string, string>} each prefix's last copied folder */
+    dirs: {},
     /** @param {{ prefix: string, snapshotId: string }} next */
     publish(next) {
       latest = next;
@@ -37,33 +64,43 @@ function fakeSource(manifest = {}) {
     /** @param {string} prefix */
     async load(prefix) {
       this.loads += 1;
+      const loaded = await dirSource(join(base, "projection")).load(
+        join(base, "projection"),
+      );
+      this.dirs[prefix] = loaded.dir;
       return {
+        ...loaded,
         prefix,
         // The ID latest() names for this prefix, as a real build writes it.
         manifest: {
-          ...projection.manifest,
+          ...loaded.manifest,
           ...manifest,
           snapshotId:
             latest.prefix === prefix
               ? latest.snapshotId
               : prefix.replace(/^p/, "snap"),
         },
-        tables: projection.tables,
       };
     },
   };
 }
 
-describe("indexSnapshot", () => {
-  it("finds Issues, Checks and Sites by ID", async () => {
-    const { manifest, tables } = syntheticProjection();
-    const snap = indexSnapshot({ prefix: "p", manifest, tables });
-    const issue = tables.issues[0];
-    expect(snap.issuesById.get(issue.issueId)?.[0]).toBe(issue);
-    expect(snap.checksById.get(tables.checks[0].checkId)?.[0]).toBe(
-      tables.checks[0],
-    );
+/** @returns {{ promise: Promise<void>, resolve: () => void }} */
+function deferred() {
+  /** @type {() => void} */
+  let resolve = () => {};
+  const promise = new Promise((r) => {
+    resolve = () => r(undefined);
+  });
+  return { promise, resolve };
+}
+
+describe("openSnapshot", () => {
+  it("reads each Site and its contacts into memory", async () => {
+    const snap = await openTables(syntheticProjection());
     expect(snap.sitesById.get("s1")?.name).toBe("Synthetic Site 1");
+    expect(snap.contactsBySite.get("s1")?.publicEmail).toBe("desk@example.org");
+    expect(snap.sites.map((s) => s.siteId)).toEqual(["s1", "s2", "s3"]);
   });
 
   it("gives the same Overview whatever order the projection's rows come in", async () => {
@@ -71,7 +108,7 @@ describe("indexSnapshot", () => {
     const october = async (reversed) => {
       const { manifest, tables } = syntheticProjection();
       if (reversed) for (const rows of Object.values(tables)) rows.reverse();
-      const snap = indexSnapshot({ prefix: "p", manifest, tables });
+      const snap = await openTables({ manifest, tables });
       return overview(snap, {
         interval: parsePeriodParams(
           { period: "month", month: "2026-10" },
@@ -95,7 +132,7 @@ describe("indexSnapshot", () => {
         day: d > 20 ? `2026-10-${d}` : `2026-11-0${d}`,
       })),
     );
-    const snap = indexSnapshot({ prefix: "p", manifest, tables });
+    const snap = await openTables({ manifest, tables });
     expect(
       parsePeriodParams({}, "2026-11-06T19:00:00.000Z", snap.dataDays),
     ).toMatchObject({ startDay: "2026-11-01" });
@@ -104,8 +141,14 @@ describe("indexSnapshot", () => {
   it("starts coverage on the earliest day with any record", async () => {
     const { manifest, tables } = syntheticProjection();
     const first = tables.site_days.map((d) => d.day).sort()[0];
-    expect(indexSnapshot({ prefix: "p", manifest, tables }).coverageStart).toBe(
-      first,
+    expect((await openTables({ manifest, tables })).coverageStart).toBe(first);
+  });
+
+  it("starts coverage at an Issue's day when it comes before any Site day", async () => {
+    const { manifest, tables } = syntheticProjection();
+    tables.issues[0].createdDay = "2026-08-01";
+    expect((await openTables({ manifest, tables })).coverageStart).toBe(
+      "2026-08-01",
     );
   });
 });
@@ -706,6 +749,88 @@ describe("createSnapshotStore", () => {
   });
 });
 
+describe("snapshot lifetime", () => {
+  /** @param {any} snap */
+  const siteCount = (snap) =>
+    snap.hold(
+      async (/** @type {any} */ q) =>
+        (await q("SELECT count(*)::INTEGER AS n FROM site_days"))[0].n,
+    );
+
+  it("keeps a snapshot's files through a read a refresh lands in, then deletes them", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+    });
+    const first = await store.current();
+    const gate = deferred();
+    const read = first.hold(async (q) => {
+      await gate.promise;
+      return (await q("SELECT count(*)::INTEGER AS n FROM site_days"))[0].n;
+    });
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    now = 1001;
+    await store.current();
+    await vi.waitFor(async () =>
+      expect((await store.current()).prefix).toBe("p2"),
+    );
+    await setImmediate();
+    expect(existsSync(source.dirs.p1)).toBe(true);
+    gate.resolve();
+    expect(await read).toBeGreaterThan(0);
+    await /** @type {any} */ (first).disposed;
+    expect(existsSync(source.dirs.p1)).toBe(false);
+  });
+
+  it("lends a job a snapshot still open from a read, rather than load a copy", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+    });
+    const first = await store.current();
+    const gate = deferred();
+    const read = first.hold(() => gate.promise);
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    now = 1001;
+    await store.current();
+    await vi.waitFor(async () =>
+      expect((await store.current()).prefix).toBe("p2"),
+    );
+    expect(await store.byPrefix("p1", "snap1")).toBe(first);
+    gate.resolve();
+    await read;
+    // Kept for the job, so its files are still there to read.
+    expect(await siteCount(first)).toBeGreaterThan(0);
+    expect(source.loads).toBe(2);
+  });
+
+  it("lets the older snapshot go once a newer job's snapshot replaces it", async () => {
+    const source = fakeSource();
+    const store = createSnapshotStore({ source });
+    await store.current();
+    const older = await store.byPrefix("p0", "snap0");
+    await store.byPrefix("p9", "snap9");
+    await /** @type {any} */ (older).disposed;
+    expect(existsSync(source.dirs.p0)).toBe(false);
+  });
+
+  it("deletes a failed load's folder at once", async () => {
+    const source = fakeSource();
+    const store = createSnapshotStore({ source });
+    await store.current();
+    await expect(store.byPrefix("p1", "snap1-old")).rejects.toMatchObject({
+      code: "snapshot_changed",
+    });
+    expect(existsSync(source.dirs.p1)).toBe(false);
+  });
+});
+
 describe("dirSource", () => {
   /** @type {string} */
   let dir;
@@ -725,8 +850,46 @@ describe("dirSource", () => {
     const latest = await source.latest();
     const loaded = await source.load(/** @type {any} */ (latest).prefix);
     expect(loaded.manifest.contractVersion).toBe(CONTRACT_VERSION);
+    // A copy, so a rebuild swapping the folder in place can't change it.
+    expect(loaded.dir).not.toBe(join(dir, "projection"));
+    rmSync(join(dir, "projection"), { recursive: true });
+    const reader = await DuckDBInstance.create(":memory:");
+    const read = await reader.connect();
     // Every table, so a new one is round-trip checked without a new line.
-    expect(loaded.tables).toEqual(projection.tables);
+    expect(await readProjection(read, loaded.dir)).toEqual(projection.tables);
+    read.closeSync();
+    reader.closeSync();
+    await loaded.cleanup();
+    expect(existsSync(loaded.dir)).toBe(false);
+  });
+
+  it("refuses a folder rebuilt while it was copied", async () => {
+    const out = join(dir, "projection");
+    const instance = await DuckDBInstance.create(":memory:");
+    const conn = await instance.connect();
+    await writeSyntheticProjection(conn, out);
+    conn.closeSync();
+    instance.closeSync();
+    const manifest = JSON.parse(
+      readFileSync(join(out, "manifest.json"), "utf8"),
+    );
+    // The first read of the manifest sees snap1; the copy sees the rebuild's.
+    const source = dirSource(out);
+    const realRead = JSON.parse;
+    let reads = 0;
+    vi.spyOn(JSON, "parse").mockImplementation((text, ...rest) => {
+      const value = realRead(text, ...rest);
+      if (value?.snapshotId === manifest.snapshotId && (reads += 1) === 2)
+        return { ...value, snapshotId: "snap2" };
+      return value;
+    });
+    try {
+      await expect(source.load(out)).rejects.toMatchObject({
+        code: "snapshot_changed",
+      });
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("refuses another contract before reading any table", async () => {
@@ -807,7 +970,14 @@ describe("s3Source", () => {
       snapshotId: "snap1",
     });
     const loaded = await source.load("p1");
-    expect(loaded.tables.checks).toEqual(projection.tables.checks);
+    const reader = await DuckDBInstance.create(":memory:");
+    const read = await reader.connect();
+    expect((await readProjection(read, loaded.dir)).checks).toEqual(
+      projection.tables.checks,
+    );
+    read.closeSync();
+    reader.closeSync();
+    await loaded.cleanup();
   });
 
   it("reports no snapshot when the build hasn't written a pointer", async () => {

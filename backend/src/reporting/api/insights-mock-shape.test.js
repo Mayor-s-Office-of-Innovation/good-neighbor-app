@@ -15,7 +15,7 @@ import { CONCERN_RULES as ADMIN_CONCERN_RULES } from "../../../../admin-frontend
 import { memoryJobStore } from "./jobs.js";
 import { CONCERN_RULES } from "./read-model.js";
 import { createSnapshotStore } from "./snapshot.js";
-import { syntheticProjection } from "./test-projection.js";
+import { syntheticProjection, tablesSource } from "./test-projection.js";
 
 /**
  * Values differ between fixtures; names and types are what pages rely on.
@@ -104,14 +104,7 @@ async function realReplies() {
   const started = [];
   const h = createReportingHandlers({
     snapshots: createSnapshotStore({
-      source: {
-        latest: async () => ({ prefix: "p1", snapshotId: "snap1" }),
-        load: async (prefix) => ({
-          prefix,
-          manifest: projection.manifest,
-          tables: projection.tables,
-        }),
-      },
+      source: tablesSource(projection),
     }),
     jobStore: memoryJobStore(),
     starter: async (ref) => {
