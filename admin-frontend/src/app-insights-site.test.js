@@ -1359,6 +1359,22 @@ test("Back from Open in Raw data keeps a list with every tile turned off", async
   assert.ok(focused('[data-list="severity"] [data-issue-row="t1"] a'));
 });
 
+test("Back from Open in Raw data keeps a concern's list and lands on its Issue", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
+  await click('[data-concern="slowResponse"] a');
+  await click('[data-list="response"] [data-issue-row="t1"] a');
+  await click("#insights-panel-full");
+  window.history.back();
+  await settle();
+  assert.deepEqual(pressed(), []);
+  assert.equal(
+    text('[data-concern-list="slowResponse"]'),
+    t("admin.insights.concernList.slowResponse", { days: 14 }),
+  );
+  assert.deepEqual(listed(), ["t2", "t1"]);
+  assert.ok(focused('[data-list="response"] [data-issue-row="t1"] a'));
+});
+
 test("an Issue row without its Site opens the full record instead of the panel", async () => {
   await mountAdmin("/insights/sites/s1?period=2026-10", {
     insights: true,

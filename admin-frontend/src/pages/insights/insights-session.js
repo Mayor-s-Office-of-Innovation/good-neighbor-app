@@ -104,10 +104,10 @@ export function createInsightsSession(catalog = createAdminCatalog()) {
     returning: "",
     /**
      * The Issue a Site page opened before it was left for Raw data, the
-     * list it was in, and each list's tiles.
-     * @type {{ path: string, issueId: string, list: string, tiles: Record<string, string> }}
+     * list it was in, and each list's tiles and concern.
+     * @type {{ path: string, issueId: string, list: string, tiles: Record<string, string>, concerns: Record<string, string> }}
      */
-    siteFocus: { path: "", issueId: "", list: "", tiles: {} },
+    siteFocus: { path: "", issueId: "", list: "", tiles: {}, concerns: {} },
     /**
      * For the way back. `alsoPath` is that Overview at the Site's period;
      * `selected` holds its picks, which are too long for the URL.

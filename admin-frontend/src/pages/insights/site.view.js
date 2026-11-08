@@ -129,11 +129,14 @@ class InsightsSite extends HTMLElement {
           tiles: Object.fromEntries(
             LISTS.map((list) => [list, this.lists[list].tile]),
           ),
+          concerns: Object.fromEntries(
+            LISTS.map((list) => [list, this.lists[list].concern]),
+          ),
         };
       },
     });
     const focus = this.session.siteFocus;
-    /** @type {{ issueId: string, list: string, tiles: Record<string, string> } | null} the row to land on, coming back */
+    /** @type {{ issueId: string, list: string, tiles: Record<string, string>, concerns: Record<string, string> } | null} the row to land on, coming back */
     this.returnTo =
       cameBack(this.session, this.here()) && focus.path === this.here()
         ? focus
@@ -281,12 +284,18 @@ class InsightsSite extends HTMLElement {
     this.returnTo = null;
     // Used once, so a later Back by another way starts with the default tiles.
     if (back)
-      this.session.siteFocus = { path: "", issueId: "", list: "", tiles: {} };
+      this.session.siteFocus = {
+        path: "",
+        issueId: "",
+        list: "",
+        tiles: {},
+        concerns: {},
+      };
     for (const list of LISTS) {
       // "" is a pick too: every tile in the list turned off.
       this.lists[list].tile =
         back && list in back.tiles ? back.tiles[list] : SITE_LISTS[list].first;
-      this.lists[list].concern = "";
+      this.lists[list].concern = back?.concerns[list] ?? "";
     }
     this.drawHead();
     this.region("freshness").innerHTML = freshnessView(reply.meta);
