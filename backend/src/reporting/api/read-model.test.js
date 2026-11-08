@@ -505,20 +505,46 @@ describe("overview", () => {
         list: list("sites"),
         now: NOW,
       }).sites[0];
-    const busy = issuesInTenDays(31);
+    // Records begin Sep 15; s1 also logs 2 Issues on that partial first day.
+    const busy = edited((t) => {
+      t.site_days.find(
+        (d) => d.siteId === "s1" && d.day === "2026-10-02",
+      ).issuesCreated = 30;
+      t.site_days.push({ siteId: "s1", day: "2026-09-15", issuesCreated: 2 });
+    });
     const addedSep25 = edited((t) => {
       t.site_days.find(
         (d) => d.siteId === "s1" && d.day === "2026-10-02",
       ).issuesCreated = 30;
+      t.site_days.push({ siteId: "s1", day: "2026-09-25", issuesCreated: 2 });
       t.sites[0].createdAt = "2026-09-25T20:00:00.000Z";
     });
     const [fromRecords, fromSite] = [row(busy), row(addedSep25)];
-    // Records begin Sep 15: Sep 15 to Nov 4 is 51 days, not the 127 since Jul 1.
-    // Added Sep 25: Sep 25 to Nov 4 is 41 days.
+    // The Checks average's start, the day after: Sep 16 to Nov 4 is 50 days,
+    // not the 127 since Jul 1. Added Sep 25: Sep 26 to Nov 4 is 40 days.
+    // Neither counts the 2 Issues on its partial first day.
     expect([fromRecords.issuesPer30Days, fromSite.issuesPer30Days]).toEqual([
-      Math.round((fromRecords.activity.issuesCreated * 300) / 51) / 10,
-      Math.round((fromSite.activity.issuesCreated * 300) / 41) / 10,
+      Math.round(((fromRecords.activity.issuesCreated - 2) * 300) / 50) / 10,
+      Math.round(((fromSite.activity.issuesCreated - 2) * 300) / 40) / 10,
     ]);
+  });
+
+  it("leaves activity from before a Site was added out of its totals", () => {
+    const early = edited((t) => {
+      t.sites[0].createdAt = "2026-10-15T20:00:00.000Z";
+    });
+    const row = overview(early, {
+      interval: october,
+      filter: { siteIds: ["s1"] },
+      list: list("sites"),
+      now: NOW,
+    }).sites[0];
+    // Of s1's October Issues, only t3 (Oct 20, Severe) comes after Oct 15.
+    expect([
+      row.activity.issuesCreated,
+      row.activity.severeIssues,
+      row.maxSeverity,
+    ]).toEqual([1, 1, 5]);
   });
 
   it("can flag Many Issues on a period's first day, before any whole day", () => {

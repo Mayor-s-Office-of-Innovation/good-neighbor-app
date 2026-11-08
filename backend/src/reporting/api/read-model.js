@@ -409,34 +409,47 @@ const earlierDay = (a, b) => (b < a ? b : a);
  * @returns {{ startDay: string, endDay: string } | null}
  */
 function wholeDays(snap, site, interval, today) {
-  if (snap.coverageStart === null) return null;
-  // A createdAt that doesn't parse can't say when the Site began.
-  const added = site.createdAt ? pacificDateKey(site.createdAt) : "";
-  const begun = laterDay(snap.coverageStart, added);
-  const first = laterDay(interval.startDay, addDays(begun, 1));
+  const first = firstWholeDay(snap, site, interval);
+  if (first === null) return null;
   const end = earlierDay(interval.endDay, today);
   return first < end ? { startDay: first, endDay: end } : null;
 }
 
 /**
- * The days a Site's Issues per 30 days spreads them over: from the records'
- * or the Site's first day, as the Checks average starts, to the update. The
- * first and last days count, since their Issues do.
+ * @param {Snapshot} snap
+ * @param {Record<string, any>} site
+ * @param {Interval} interval
+ * @returns {string | null}
+ */
+function firstWholeDay(snap, site, interval) {
+  if (snap.coverageStart === null) return null;
+  const begun = laterDay(snap.coverageStart, addedDay(site));
+  return laterDay(interval.startDay, addDays(begun, 1));
+}
+
+/**
+ * @param {Record<string, any>} site
+ * @returns {string}
+ */
+function addedDay(site) {
+  // A createdAt that doesn't parse can't say when the Site began.
+  return site.createdAt ? pacificDateKey(site.createdAt) : "";
+}
+
+/**
+ * The days a Site's Issues per 30 days spreads them over: from the Checks
+ * average's first day to the update. Today counts, since its Issues do.
  * @param {Snapshot} snap
  * @param {Record<string, any>} site
  * @param {Interval} interval
  * @param {string} today Pacific day key
- * @returns {number}
+ * @returns {{ startDay: string, endDay: string } | null}
  */
-function issueDaysOf(snap, site, interval, today) {
-  if (snap.coverageStart === null) return 0;
-  const added = site.createdAt ? pacificDateKey(site.createdAt) : "";
-  const first = laterDay(
-    interval.startDay,
-    laterDay(snap.coverageStart, added),
-  );
+function issueSpanOf(snap, site, interval, today) {
+  const first = firstWholeDay(snap, site, interval);
+  if (first === null) return null;
   const end = earlierDay(interval.endDay, addDays(today, 1));
-  return dayCountBetween(first, end);
+  return first < end ? { startDay: first, endDay: end } : null;
 }
 
 /**
@@ -481,13 +494,19 @@ function siteFacts(snap, site, interval) {
   const today = pacificDateKey(snap.manifest.evaluatedAt);
   const range = wholeDays(snap, site, interval, today);
   const days = range ? dayKeysBetween(range.startDay, range.endDay).length : 0;
-  const issueDays = issueDaysOf(snap, site, interval, today);
+  const issueSpan = issueSpanOf(snap, site, interval, today);
+  const issueDays = issueSpan
+    ? dayCountBetween(issueSpan.startDay, issueSpan.endDay)
+    : 0;
+  // Rows from before the Site was added aren't the Site's activity.
+  const start = laterDay(interval.startDay, addedDay(site));
   // One pass over the Site's days; the whole days sit inside the period.
   const sum = Object.fromEntries(SITE_DAY_METRICS.map((m) => [m, 0]));
   let checks = 0;
+  let spanIssues = 0;
   const own = snap.daysBySite.get(site.siteId) ?? [];
   for (
-    let i = firstOnOrAfter(own, interval.startDay);
+    let i = firstOnOrAfter(own, start);
     i < own.length && own[i].day < interval.endDay;
     i++
   ) {
@@ -495,6 +514,8 @@ function siteFacts(snap, site, interval) {
     for (const m of SITE_DAY_METRICS) sum[m] += row[m] ?? 0;
     if (range && row.day >= range.startDay && row.day < range.endDay)
       checks += row.completedPerimeterChecks ?? 0;
+    if (issueSpan && row.day >= issueSpan.startDay)
+      spanIssues += row.issuesCreated ?? 0;
   }
   const totals = split(sum);
   // No perimeter means nothing owed, so no target.
@@ -507,10 +528,7 @@ function siteFacts(snap, site, interval) {
   /** @type {Record<string, number>} */
   const severity = Object.fromEntries(SEVERITY_BANDS.map((b) => [b, 0]));
   for (const issue of snap.issuesBySite.get(site.siteId) ?? []) {
-    if (
-      issue.createdDay < interval.startDay ||
-      issue.createdDay >= interval.endDay
-    )
+    if (issue.createdDay < start || issue.createdDay >= interval.endDay)
       continue;
     severity[issue.severityBand] += 1;
     if (issue.severity > (maxSeverity ?? 0)) maxSeverity = issue.severity;
@@ -534,7 +552,7 @@ function siteFacts(snap, site, interval) {
     checksPerOwedDay < checksOwedPerDay;
   // Short periods count as 30 days, so a quiet week isn't flagged for 2 Issues.
   const issuesPer30Days = issueDays
-    ? oneDecimal((totals.activity.issuesCreated * 30) / Math.max(issueDays, 30))
+    ? oneDecimal((spanIssues * 30) / Math.max(issueDays, 30))
     : null;
   const facts = {
     totals,
@@ -699,10 +717,9 @@ export function overview(snap, { interval, filter, list, now }) {
  */
 function coveredDays(snap, interval, site) {
   if (snap.coverageStart === null) return [];
-  const added = site.createdAt ? pacificDateKey(site.createdAt) : "";
   const start = laterDay(
     interval.startDay,
-    laterDay(snap.coverageStart, added),
+    laterDay(snap.coverageStart, addedDay(site)),
   );
   const today = addDays(pacificDateKey(snap.manifest.evaluatedAt), 1);
   const end = earlierDay(interval.endDay, today);
