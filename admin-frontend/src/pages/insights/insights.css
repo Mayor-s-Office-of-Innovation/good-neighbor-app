@@ -571,6 +571,17 @@
   gap: 0 8px;
 }
 
+/* The section's width, not the window's, decides whether three 7-day calendars fit side by side. */
+.insights__group:has(> .insights__charts) {
+  container-type: inline-size;
+}
+
+@container (max-width: 879px) {
+  .insights__charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .insights__cals {
   display: flex;
   flex-wrap: wrap;

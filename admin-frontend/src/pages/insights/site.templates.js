@@ -288,8 +288,8 @@ function activityView(reply) {
       return tile(key, rate, label, help, total);
     }).join("")}</div>
     <div class="insights__charts" data-charts>
-      <div><h3>${escapeHtml(t(`admin.insights.chart.checks.${unit}`))}</h3>${activityChart(interval, points("completedPerimeterChecks"), "checks")}</div>
-      <div><h3>${escapeHtml(t(`admin.insights.chart.issues.${unit}`))}</h3>${activityChart(interval, points("issuesCreated"), "issues")}</div>
+      <div data-chart-panel="checks"><h3>${escapeHtml(t(`admin.insights.chart.checks.${unit}`))}</h3>${activityChart(interval, points("completedPerimeterChecks"), "checks")}</div>
+      <div data-chart-panel="issues"><h3>${escapeHtml(t(`admin.insights.chart.issues.${unit}`))}</h3>${activityChart(interval, points("issuesCreated"), "issues")}</div>
     </div>
     ${
       days.length

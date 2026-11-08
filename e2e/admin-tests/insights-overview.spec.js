@@ -109,7 +109,9 @@ test("a Site's financial year draws the months before its records as no data, no
   await mockAdmin(page, { insights: true });
   // The fake's records begin Jan 1, 2026, so Jul–Dec 2025 have no data.
   await page.goto("/insights/sites/s1?period=fy2025");
-  const none = page.locator('[data-chart="checks"] [data-bar="none"] i');
+  const none = page.locator(
+    '[data-chart="checks"] [data-bar="none"] [data-bar-fill]',
+  );
   await expect(none).toHaveCount(6);
   // Only the browser's cascade shows whether the hatch or the series colour wins.
   const fills = await none.evaluateAll((bars) =>
@@ -120,7 +122,7 @@ test("a Site's financial year draws the months before its records as no data, no
   );
 });
 
-test("at 1280px, Overview column heads keep their spaces and a Site's month labels don't overlap", async ({
+test("at 1280px, Overview column heads keep their spaces and a Site's month labels don't overlap; narrower, its day calendars stay in their columns", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -136,7 +138,7 @@ test("at 1280px, Overview column heads keep their spaces and a Site's month labe
         words.selectNodeContents(/** @type {Node} */ (head.firstChild));
         const before = [...words.getClientRects()].at(-1);
         const last = /** @type {Element} */ (
-          head.querySelector(":scope > span")
+          head.querySelector("[data-sort-last]")
         ).getBoundingClientRect();
         return last.top > (before?.top ?? 0) + 1
           ? 4
@@ -149,7 +151,7 @@ test("at 1280px, Overview column heads keep their spaces and a Site's month labe
   await expect(page.locator("[data-bar-label]").first()).toBeAttached();
   // Each month's label must end before the next one starts.
   const overlaps = await page
-    .locator("[data-charts] > div:first-child [data-bar-label]")
+    .locator('[data-chart-panel="checks"] [data-bar-label]')
     .evaluateAll((spans) => {
       const drawn = spans
         .filter((s) => s.textContent?.trim())
@@ -165,4 +167,25 @@ test("at 1280px, Overview column heads keep their spaces and a Site's month labe
       return drawn.filter((d, i) => i && d.left < drawn[i - 1].right).length;
     });
   expect(overlaps).toBe(0);
+  // Three 7-day calendars need about 870px; narrower sections must stack them.
+  for (const width of [900, 1100]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/insights/sites/s1?period=2026-10");
+    await expect(page.locator("[data-cal]").first()).toBeAttached();
+    const spill = await page
+      .locator("[data-chart-panel]")
+      .evaluateAll((panels) =>
+        panels.map((panel) => {
+          const cal = /** @type {Element} */ (panel.querySelector("table"));
+          return Math.max(
+            0,
+            Math.round(
+              cal.getBoundingClientRect().right -
+                panel.getBoundingClientRect().right,
+            ),
+          );
+        }),
+      );
+    expect(spill).toEqual([0, 0]);
+  }
 });

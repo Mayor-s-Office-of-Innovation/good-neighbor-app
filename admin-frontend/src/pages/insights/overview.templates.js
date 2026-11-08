@@ -117,10 +117,7 @@ function lateCount(row, most) {
   return `<span class="insights__meter-n" data-late-count>${escapeHtml(count)}</span><span class="insights__meter" role="img" aria-label="${escapeHtml(t("admin.insights.lateMeter", { count, most }))}"><span style="inline-size:${Math.round(full * 100)}%"></span></span>`;
 }
 
-/**
- * The Site page's average too, with a bar full at the Site's own daily number.
- * @param {SiteRow} row
- */
+/** The Site page's Checks a day, so the two pages never disagree. @param {SiteRow} row */
 function checksMeter(row) {
   const perDay = row.checksPerDay;
   if (perDay === null || perDay === undefined)
@@ -252,7 +249,7 @@ function columnHead(key, num, state) {
   const sortKey = Object.keys(SORT_COLUMN).find((s) => SORT_COLUMN[s] === key);
   if (!sortKey)
     // The "?" stays on the line with the last word instead of wrapping alone.
-    return `<th role="columnheader" scope="col" ${cls}>${escapeHtml(words.join(" "))} <span class="insights__nowrap">${escapeHtml(last ?? "")}${tip}</span></th>`;
+    return `<th role="columnheader" scope="col" ${cls}>${escapeHtml(words.join(" "))} <span class="insights__nowrap" data-sort-last>${escapeHtml(last ?? "")}${tip}</span></th>`;
   const sorted = state.sort === sortKey;
   const dir = sortDir(state);
   const ariaSort = sorted
@@ -261,7 +258,7 @@ function columnHead(key, num, state) {
       : "descending"
     : "none";
   const arrow = sorted ? (dir === "asc" ? "↑" : "↓") : "↕";
-  return `<th role="columnheader" scope="col" ${cls} aria-sort="${ariaSort}"><button type="button" class="btn-plain insights__sort${sorted ? " is-sorted" : ""}" data-sort-key="${sortKey}">${escapeHtml(words.join(" "))} <span class="insights__nowrap">${escapeHtml(last ?? "")}<span class="insights__sort-arrow" aria-hidden="true">${arrow}</span></span></button>${tip}</th>`;
+  return `<th role="columnheader" scope="col" ${cls} aria-sort="${ariaSort}"><button type="button" class="btn-plain insights__sort${sorted ? " is-sorted" : ""}" data-sort-key="${sortKey}">${escapeHtml(words.join(" "))} <span class="insights__nowrap" data-sort-last>${escapeHtml(last ?? "")}<span class="insights__sort-arrow" aria-hidden="true">${arrow}</span></span></button>${tip}</th>`;
 }
 
 /**

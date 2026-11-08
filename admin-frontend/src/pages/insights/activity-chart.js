@@ -165,7 +165,7 @@ function bars(span, points, unit, kind) {
         return `<div class="insights__bar" data-bar="future"><b></b><span class="insights__bar-track"></span></div>`;
       const state = b.value === null ? "none" : b.partial ? "partial" : "full";
       const height = b.value === null ? 100 : Math.round((b.value / max) * 100);
-      return `<div class="insights__bar${state === "full" ? "" : ` insights__bar--${state}`}" data-bar="${state}"${state === "partial" ? ` title="${escapeHtml(partial)}"` : ""}><b>${b.value ? b.value : ""}</b><span class="insights__bar-track"><i style="height:${height}%"></i></span></div>`;
+      return `<div class="insights__bar${state === "full" ? "" : ` insights__bar--${state}`}" data-bar="${state}"${state === "partial" ? ` title="${escapeHtml(partial)}"` : ""}><b>${b.value ? b.value : ""}</b><span class="insights__bar-track"><i data-bar-fill style="height:${height}%"></i></span></div>`;
     })
     .join("")}</div><div class="insights__bar-x">${list
     // Weekly bars name each month once, at its first week.
