@@ -130,16 +130,21 @@ async function issueTasks(siteId, root) {
   const separated = new Set(overrides.map((o) => String(o.taskId)));
   /** @type {Map<string, string[]>} original task → its duplicates */
   const duplicates = new Map();
+  /** @type {Map<string, string>} duplicate → its original */
+  const originalOf = new Map();
   for (const link of links) {
     const id = String(link.taskId);
     if (separated.has(id)) continue;
     const original = String(link.originalTaskId);
+    originalOf.set(id, original);
     const list = duplicates.get(original);
     if (list) list.push(id);
     else duplicates.set(original, [id]);
   }
   const members = [root];
   const seen = new Set([String(root.taskId)]);
+  // Tasks whose duplicates belong to this Issue.
+  const joined = new Set([String(root.taskId)]);
   for (let wave = [root]; wave.length; ) {
     const conditions = await Promise.all(
       wave.map((t) =>
@@ -152,12 +157,23 @@ async function issueTasks(siteId, root) {
       ...wave.flatMap((t) => duplicates.get(String(t.taskId)) ?? []),
       ...conditions.flatMap((c) => (c?.taskIds ?? []).map(String)),
     ].filter((id) => !seen.has(id) && seen.add(id));
-    const tasks = await Promise.all(next.map((id) => get(taskKey(siteId, id))));
-    // A replaced sighting's own duplicates still join, as on the Issue list.
-    wave = /** @type {Record<string, any>[]} */ (
-      tasks.filter((t) => t !== undefined)
+    const found = /** @type {Record<string, any>[]} */ (
+      (await Promise.all(next.map((id) => get(taskKey(siteId, id))))).filter(
+        (t) => t !== undefined,
+      )
     );
-    members.push(...wave.filter((t) => !DEAD_STATUSES.has(t.status)));
+    const live = found.filter((t) => !DEAD_STATUSES.has(t.status));
+    for (const t of live) joined.add(String(t.taskId));
+    // As on the Issue list, a replaced sighting passes its duplicates on only
+    // when it links into this Issue itself.
+    const dead = found.filter(
+      (t) =>
+        DEAD_STATUSES.has(t.status) &&
+        joined.has(originalOf.get(String(t.taskId)) ?? ""),
+    );
+    for (const t of dead) joined.add(String(t.taskId));
+    members.push(...live);
+    wave = [...live, ...dead];
   }
   return members;
 }

@@ -322,6 +322,55 @@ describe("getRecordPhotos", () => {
     );
   });
 
+  it("leaves out a duplicate of a replaced sighting that links nowhere, as the Issue list does", async () => {
+    /** @param {string} sk @param {Record<string, unknown>} row */
+    const put = (sk, row) =>
+      rows.set(`SITE#s1|${sk}`, { pk: "SITE#s1", sk, ...row });
+    // t1's condition still lists t8, which was replaced and kept no link of its own.
+    put("ASSESSMENT#a1#COND#k1", { taskIds: ["t1", "t4", "t5", "t8"] });
+    put("TASK#t8", { taskId: "t8", checkId: "c2", status: "superseded" });
+    put("TASK#t9", {
+      taskId: "t9",
+      checkId: "c2",
+      sourceArtifactIds: ["art-8"],
+    });
+    put("DUP_LINK#t9", { taskId: "t9", originalTaskId: "t8" });
+    put("TASK#t9#UPDATE#2026-10-07T17:00:00.000Z#u1", {
+      notes: ["Other Issue's note"],
+      occurredAt: "2026-10-07T17:00:00.000Z",
+    });
+    put("CHECK#c2#ART#art-8", {
+      artifactId: "art-8",
+      s3Key: "checks/s1/c2/art-8",
+    });
+    const { body } = await call(event({ issueId: "t1" }));
+    expect(ids(body.photos)).not.toContainEqual(["art-8", "check"]);
+    expect(body.notes.map((/** @type {any} */ n) => n.text)).not.toContain(
+      "Other Issue's note",
+    );
+  });
+
+  it("keeps a duplicate of a replaced sighting the condition lists when that sighting links into the Issue", async () => {
+    /** @param {string} sk @param {Record<string, unknown>} row */
+    const put = (sk, row) =>
+      rows.set(`SITE#s1|${sk}`, { pk: "SITE#s1", sk, ...row });
+    put("ASSESSMENT#a1#COND#k1", { taskIds: ["t1", "t4", "t5", "t8"] });
+    put("TASK#t8", { taskId: "t8", checkId: "c2", status: "superseded" });
+    put("DUP_LINK#t8", { taskId: "t8", originalTaskId: "t4" });
+    put("TASK#t9", {
+      taskId: "t9",
+      checkId: "c2",
+      sourceArtifactIds: ["art-8"],
+    });
+    put("DUP_LINK#t9", { taskId: "t9", originalTaskId: "t8" });
+    put("CHECK#c2#ART#art-8", {
+      artifactId: "art-8",
+      s3Key: "checks/s1/c2/art-8",
+    });
+    const { body } = await call(event({ issueId: "t1" }));
+    expect(ids(body.photos)).toContainEqual(["art-8", "check"]);
+  });
+
   it("finds a sighting's photo saved under the older key with a place segment", async () => {
     rows.delete("SITE#s1|CHECK#c2#ART#art-9");
     rows.set("SITE#s1|CHECK#c2#ART#place-1#art-9", {
