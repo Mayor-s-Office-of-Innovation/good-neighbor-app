@@ -1036,6 +1036,10 @@ describe("siteDetail", () => {
       t.checks_owed = t.checks_owed.filter(
         (r) => r.siteId !== "s1" || r.day !== "2026-10-12",
       );
+      // 17 Checks: 17 / 30 owed days rounds to 0.6, 17 / 31 days to 0.5.
+      t.site_days.find(
+        (d) => d.siteId === "s1" && d.day === "2026-10-02",
+      ).completedPerimeterChecks += 15;
     });
     const rows = overview(walkedSnap, {
       interval: october,
@@ -1062,7 +1066,7 @@ describe("siteDetail", () => {
       ),
     ).toEqual(rows.map(pick));
     expect(report.map(pick)).toEqual(rows.map(pick));
-    expect(rows.map((r) => r.checksPerDay)).toEqual([0.1, 0, 0]);
+    expect(rows.map((r) => r.checksPerDay)).toEqual([0.6, 0, 0]);
   });
 
   it("shows the Site's posted public contact, but not its Site manager's", () => {
