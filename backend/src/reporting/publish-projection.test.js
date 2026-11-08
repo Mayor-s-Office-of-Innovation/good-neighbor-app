@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createViews } from "../analytics/lake-views.js";
-import { LATEST_PROJECTION_KEY } from "./contract.js";
+import { LATEST_PROJECTION_KEY, S3_TIMEOUTS } from "./contract.js";
 import { createLocalViews, writeLocalLake } from "./local-lake.js";
 import { TABLE_SCHEMAS } from "./projection.js";
 import {
@@ -178,7 +178,7 @@ describe("buildLatestProjection", () => {
     expect(usable).not.toContain(true);
   });
 
-  it("uploads the tables together, and latest.json only once all have landed", async () => {
+  it("uploads two tables at a time, so only two are held in memory, and latest.json once all have landed", async () => {
     let inFlight = 0;
     let most = 0;
     /** @type {number[]} */
@@ -193,7 +193,7 @@ describe("buildLatestProjection", () => {
       inFlight -= 1;
     });
     await build();
-    expect(most).toBeGreaterThan(1);
+    expect(most).toBe(2);
     expect(atLatest).toEqual([0]);
   });
 
@@ -280,6 +280,10 @@ describe("buildLatestProjection", () => {
       buildLatestProjection({ bucket: "lake", endpoint, now: () => NOW }),
     ).rejects.toThrow("stop before upload");
     expect(Boolean(client.config.forcePathStyle)).toBe(pathStyle);
+    // A hung PUT fails, rather than hold the build until its 600 s timeout.
+    expect(await client.config.requestHandler.configProvider).toMatchObject(
+      S3_TIMEOUTS,
+    );
   });
 });
 

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { createViews } from "../analytics/lake-views.js";
-import { LATEST_PROJECTION_KEY } from "./contract.js";
+import { LATEST_PROJECTION_KEY, S3_TIMEOUTS } from "./contract.js";
 import { buildProjection } from "./projection.js";
 
 /** @typedef {import("./api/job-store.js").Sender} Sender */
@@ -17,6 +17,8 @@ const BUILD_FOLDER_PREFIX = "insights-projection-";
 // extensions and the finished files. Neither size has been measured on real data.
 const DUCKDB_MEMORY_LIMIT = "1536MB";
 const DUCKDB_SPILL_LIMIT = "1GiB";
+// Each upload holds its whole file in memory, so only this many tables at once.
+const UPLOADS_AT_ONCE = 2;
 
 /**
  * S3 keys and folder names hold this ID, so it carries no colons or dots.
@@ -47,19 +49,31 @@ export async function publishProjection({
 }) {
   const snapshotId = String(manifest.snapshotId);
   const prefix = `projections/${manifest.contractVersion}/${snapshotId}`;
-  // Buffers, not streams: the AWS SDK won't retry a streamed body after a 503.
-  await Promise.all(
-    written.map(async (name) =>
-      s3.send(
-        new PutObjectCommand({
-          Bucket: bucket,
-          Key: `${prefix}/${name}`,
-          Body: await readFile(join(dir, name)),
-          ServerSideEncryption: "aws:kms",
-        }),
-      ),
-    ),
+  const queue = [...written];
+  const upload = async () => {
+    try {
+      for (let name = queue.shift(); name; name = queue.shift())
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: `${prefix}/${name}`,
+            // Buffers, not streams: the AWS SDK won't retry a streamed body after a 503.
+            Body: await readFile(join(dir, name)),
+            ServerSideEncryption: "aws:kms",
+          }),
+        );
+    } catch (err) {
+      // The build has failed, so the other upload stops after its current file.
+      queue.length = 0;
+      throw err;
+    }
+  };
+  // Settled first, so the caller's cleanup can't delete a file mid-upload.
+  const uploads = await Promise.allSettled(
+    Array.from({ length: UPLOADS_AT_ONCE }, upload),
   );
+  const failed = uploads.find((u) => u.status === "rejected");
+  if (failed) throw /** @type {PromiseRejectedResult} */ (failed).reason;
   await s3.send(
     new PutObjectCommand({
       Bucket: bucket,
@@ -79,7 +93,10 @@ export async function publishProjection({
  */
 export async function buildLatestProjection({
   endpoint = process.env.AWS_ENDPOINT_URL_S3,
-  s3 = new S3Client(endpoint ? { forcePathStyle: true } : {}),
+  s3 = new S3Client({
+    ...(endpoint ? { forcePathStyle: true } : {}),
+    requestHandler: S3_TIMEOUTS,
+  }),
   bucket = process.env.LAKE_BUCKET,
   now = () => new Date(),
   prepare,
