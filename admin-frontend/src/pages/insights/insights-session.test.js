@@ -202,6 +202,31 @@ test("every Site's name comes sorted, from the same read as the filters", async 
   assert.deepEqual(calls.scope.mock.calls, [[{ include: "sites" }]]);
 });
 
+test("a reply from a newer snapshot reads the Sites and filter groups again", async () => {
+  let snapshotId = "snap-1";
+  const calls = fakeDirectory({
+    scope: async () => ({
+      meta: { snapshotId },
+      groups: {},
+      sites: [{ siteId: snapshotId === "snap-1" ? "s1" : "s2" }],
+    }),
+  });
+  const session = createInsightsSession();
+  await session.siteOptions();
+  assert.equal(session.sawSnapshot("snap-1"), false);
+  assert.deepEqual(
+    (await session.siteOptions()).map((o) => o.value),
+    ["s1"],
+  );
+  snapshotId = "snap-2";
+  assert.equal(session.sawSnapshot("snap-2"), true);
+  assert.deepEqual(
+    (await session.siteOptions()).map((o) => o.value),
+    ["s2"],
+  );
+  assert.equal(calls.scope.mock.calls.length, 2);
+});
+
 test("a failed Site list is asked for again", async () => {
   let fail = true;
   const calls = fakeDirectory({

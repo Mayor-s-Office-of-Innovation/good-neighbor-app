@@ -1131,6 +1131,22 @@ test("a manager known only by a single name shows that name", async () => {
   assert.ok(cell("s1", "th").includes("Named pm1"));
 });
 
+test("names that couldn't be read are asked for again on the next load", async () => {
+  let fail = true;
+  await mountAdmin("/insights?period=2026-10&show=all", {
+    insights: true,
+    setup: (a) =>
+      a.on("GET", /^program-managers$/, (/** @type {any} */ r) => {
+        if (fail) return { status: 500, json: { error: "internal_error" } };
+        return a.reply(r);
+      }),
+  });
+  assert.equal(text('[data-site-row="s1"] [data-manager]'), "pm1");
+  fail = false;
+  await click('[data-show="top"]');
+  assert.equal(text('[data-site-row="s1"] [data-manager]'), "Casey Manager");
+});
+
 test("a ready report with no download link yet fetches one on Download", async () => {
   let linked = false;
   const { api } = await mountAdmin("/insights?period=2026-10", {

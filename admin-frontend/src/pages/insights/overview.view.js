@@ -77,6 +77,8 @@ class InsightsOverview extends HTMLElement {
     this.fallback = null;
     this.periodKind = this.period?.kind ?? "month";
     this.periodError = "";
+    /** Whether the filter options or names need reading again. */
+    this.optionsStale = false;
     const back = this.session.overview;
     const { selected, returning } = arrival(back, this.currentPath());
     this.state.selected = selected;
@@ -141,9 +143,10 @@ class InsightsOverview extends HTMLElement {
 
   async loadOptions() {
     try {
-      const { options, names } = await this.session.filterOptions();
+      const { options, names, complete } = await this.session.filterOptions();
       if (!this.isConnected) return;
       this.names = names;
+      this.optionsStale = !complete;
       for (const name of ["managerId", "providerId", "department"]) {
         const select = /** @type {any} */ (
           this.querySelector(`wa-select[data-filter="${name}"]`)
@@ -167,6 +170,7 @@ class InsightsOverview extends HTMLElement {
     } catch (err) {
       reportSignInError(this, err);
       // The table still works; filters then list only what a link chose.
+      this.optionsStale = true;
     }
   }
 
@@ -224,6 +228,13 @@ class InsightsOverview extends HTMLElement {
     if (!current()) return;
     this.removeAttribute("aria-busy");
     this.reply = reply;
+    // A failed name read, or a newer snapshot's Sites and groups, are read again.
+    const newScope = this.session.sawSnapshot(reply.meta?.snapshotId);
+    if (newScope) void this.loadSiteTotal();
+    if (newScope || this.optionsStale) {
+      this.optionsStale = false;
+      void this.loadOptions();
+    }
     this.state.selected = keptSelection(this.state.selected, this.listedIds());
     this.keepSelection();
     this.shown = rowsToShow(

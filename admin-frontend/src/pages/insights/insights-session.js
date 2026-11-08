@@ -56,14 +56,20 @@ export function createInsightsSession(catalog = createAdminCatalog()) {
   let scope = null;
   /** @type {Promise<Option[]> | null} */
   let sites = null;
+  // The snapshot the cached scope came from; "" until it answers.
+  let scopeSnapshot = "";
   // One read gives both the filter groups and every Site, so Overview asks once.
   const scopeRead = () => {
-    scope ??= adminApi
-      .reportingScopeOptions({ include: "sites" })
-      .catch((err) => {
+    scope ??= adminApi.reportingScopeOptions({ include: "sites" }).then(
+      (reply) => {
+        scopeSnapshot = reply.meta?.snapshotId ?? "";
+        return reply;
+      },
+      (err) => {
         scope = null;
         throw err;
-      });
+      },
+    );
     return scope;
   };
   const session = {
@@ -74,6 +80,20 @@ export function createInsightsSession(catalog = createAdminCatalog()) {
      * @type {{ path: string, siteId: string, selected: string[], alsoPath: string }}
      */
     overview: { path: "", siteId: "", selected: [], alsoPath: "" },
+    /**
+     * Sites and groups come from the snapshot, so a page's reply from a newer
+     * one means the cached ones are out of date.
+     * @param {string | undefined} snapshotId
+     * @returns {boolean} whether the cached scope was dropped
+     */
+    sawSnapshot(snapshotId) {
+      if (!snapshotId || !scopeSnapshot || snapshotId === scopeSnapshot)
+        return false;
+      scope = null;
+      sites = null;
+      scopeSnapshot = "";
+      return true;
+    },
     /** @returns {Promise<Names>} */
     names() {
       return readNames(catalog).then(({ names: found }) => found);
@@ -81,15 +101,16 @@ export function createInsightsSession(catalog = createAdminCatalog()) {
     namesRead() {
       return readNames(catalog);
     },
-    /** Labels are rebuilt each time, so renamed Providers and managers show. @returns {Promise<{ options: FilterOptions, names: Names }>} */
+    /** Labels are rebuilt each time, so renamed Providers and managers show. @returns {Promise<{ options: FilterOptions, names: Names, complete: boolean }>} */
     async filterOptions() {
-      const [reply, { names: found }] = await Promise.all([
+      const [reply, { names: found, complete }] = await Promise.all([
         scopeRead(),
         readNames(catalog),
       ]);
       const groups = reply.groups ?? {};
       return {
         names: found,
+        complete,
         options: {
           managerId: optionsFor(found.managerId, groups.managerId ?? []),
           providerId: optionsFor(found.providerId, groups.providerId ?? []),
