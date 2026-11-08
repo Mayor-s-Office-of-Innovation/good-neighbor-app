@@ -220,6 +220,22 @@ describe("buildProjection over a lake written like an export", () => {
     expect(tables.issues[0]).toMatchObject(expected);
   });
 
+  it("reads a fractional severity as unknown, as the in-memory path does", async () => {
+    const changed = items.map((i) =>
+      i.sk === "TASK#t1" ? { ...i, severity: 4.5 } : i,
+    );
+    await writeLocalLake(conn, dir, changed, {
+      exportedAt: "2026-10-19T18:00:00.000Z",
+      exportId: "e1",
+    });
+    await createLocalViews(conn, dir);
+    const { tables } = await build();
+    expect(tables.issues[0]).toMatchObject({
+      severity: null,
+      severityBand: "unknown",
+    });
+  });
+
   it("reads task times, IDs and condition order from the raw item", async () => {
     const at = (/** @type {string} */ time) => `2026-10-${time}:00.000Z`;
     const task = {

@@ -21,15 +21,16 @@ import { RULES_SQL, TABLE_ORDER, snapshotMacrosSql } from "./projection-sql.js";
 // once into temp tables, since the rules read some inputs more than once.
 /** @type {Record<string, string>} */
 const LAKE_INPUT_SQL = {
-  in_tasks: `SELECT siteId, taskId, taskStatus AS status, createdAt, category,
-    TRY_CAST(CASE WHEN severity = floor(severity) THEN severity END AS INTEGER)
-      AS severity, kind, type,
+  // The severity column is BIGINT, which cuts 4.5 to 4; raw keeps the stored number.
+  in_tasks: `WITH t AS (SELECT *, TRY_CAST(raw->>'$.severity' AS DOUBLE) AS s FROM tasks)
+    SELECT siteId, taskId, taskStatus AS status, createdAt, category,
+    TRY_CAST(CASE WHEN s = floor(s) THEN s END AS INTEGER) AS severity, kind, type,
     raw->>'$.checkId' AS checkId, raw->>'$.assessmentId' AS assessmentId,
     raw->>'$.conditionId' AS conditionId, raw->>'$.inProgressAt' AS inProgressAt,
     raw->>'$.completedAt' AS completedAt, resolvedAt, raw->>'$.updatedAt' AS updatedAt,
     raw->>'$.ruleId' AS ruleId,
     TRY_CAST(raw->>'$.maxAcceptableResponseHours' AS DOUBLE) AS maxAcceptableResponseHours
-    FROM tasks`,
+    FROM t`,
   in_conditions: `SELECT siteId, assessmentId, conditionId,
     CASE WHEN json_type(raw->'$.taskIds') = 'ARRAY'
       THEN from_json(raw->'$.taskIds', '["VARCHAR"]') END AS taskIds
