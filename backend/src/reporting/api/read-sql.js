@@ -206,8 +206,16 @@ export function owedSums(ids, starts, ends) {
       FROM checks_owed o
       JOIN w ON w.siteId = o.siteId AND o.day >= w.ws AND o.day < w.we
       LEFT JOIN site_days d ON d.siteId = o.siteId AND d.day = o.day
+        AND ${within("d", "day", "first", "last")}
       GROUP BY o.siteId`,
-    params: { ids, starts, ends },
+    // Fixed bounds DuckDB can push into the scan, so it skips site_days' row groups outside every window.
+    params: {
+      ids,
+      starts,
+      ends,
+      first: starts.reduce((a, b) => (b < a ? b : a), starts[0]),
+      last: ends.reduce((a, b) => (b > a ? b : a), ends[0]),
+    },
   };
 }
 

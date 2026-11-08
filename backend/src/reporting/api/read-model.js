@@ -524,6 +524,8 @@ const oneDecimal = (n) => Math.round(n * 10) / 10;
  * @param {Interval} interval
  */
 async function siteFactsMany(q, snap, sites, interval) {
+  // A repeated Site would join its window twice and double its sums.
+  sites = [...new Map(sites.map((s) => [s.siteId, s])).values()];
   const today = pacificDateKey(snap.manifest.evaluatedAt);
   const ranges = sites.map((site) => wholeDays(snap, site, interval, today));
   const spans = sites.map((site) => issueSpanOf(snap, site, interval, today));
@@ -1429,8 +1431,10 @@ export function exportRows(snap, { dataset, interval, filter, list }) {
  * @param {Snapshot} snap
  * @param {{ siteIds: string[], interval: Interval, now: number }} req
  */
-export function reportDataset(snap, { siteIds, interval, now }) {
+export function reportDataset(snap, { siteIds: asked, interval, now }) {
   return snap.hold(async (q) => {
+    // The API already drops repeats; a direct caller's would list a Site twice.
+    const siteIds = [...new Set(asked)];
     const sites = siteIds.map((siteId) => siteOr404(snap, siteId));
     const facts = await siteFactsMany(q, snap, sites, interval);
     const cmp = comparisonFor(interval, snap.manifest.evaluatedAt);

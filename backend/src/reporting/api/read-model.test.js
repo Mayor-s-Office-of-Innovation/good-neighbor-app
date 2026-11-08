@@ -1868,6 +1868,13 @@ describe("exportRows", () => {
 });
 
 describe("reportDataset", () => {
+  it("reads a repeated Site once, so its totals aren't doubled", async () => {
+    const ask = { interval: october, now: NOW };
+    const twice = await reportDataset(snap, { ...ask, siteIds: ["s1", "s1"] });
+    const once = await reportDataset(snap, { ...ask, siteIds: ["s1"] });
+    expect(twice.sites).toEqual(once.sites);
+  });
+
   it("lists every Severe Issue created in the period for each Site", async () => {
     const res = await reportDataset(snap, {
       siteIds: ["s1"],
