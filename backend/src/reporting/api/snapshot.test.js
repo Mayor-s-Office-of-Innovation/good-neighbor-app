@@ -383,6 +383,56 @@ describe("createSnapshotStore", () => {
     expect((await store.current()).prefix).toBe("p3");
   });
 
+  it.each([
+    ["finds latest.json gone", null],
+    ["throws", new Error("s3 down")],
+  ])(
+    "keeps the newer snapshot and its window when an abandoned refresh %s",
+    async (_, outcome) => {
+      const source = fakeSource();
+      let now = 0;
+      const store = createSnapshotStore({
+        source,
+        now: () => now,
+        refreshMs: 1000,
+        refreshLimitMs: 5000,
+      });
+      await store.current();
+      const latest = source.latest;
+      /** @type {() => void} */
+      let finishHung = () => {};
+      source.latest = () =>
+        new Promise((resolve, reject) => {
+          finishHung = () =>
+            outcome ? reject(outcome) : resolve(/** @type {any} */ (null));
+        });
+      now = 1001;
+      await store.current();
+      let checks = 0;
+      source.latest = () => {
+        checks += 1;
+        return latest();
+      };
+      source.publish({ prefix: "p2", snapshotId: "snap2" });
+      now = 6002;
+      await store.current();
+      await vi.waitFor(async () =>
+        expect((await store.current()).prefix).toBe("p2"),
+      );
+      const settled = checks;
+      now = 6500;
+      finishHung();
+      await setImmediate();
+      await setImmediate();
+      expect((await store.current()).prefix).toBe("p2");
+      expect(checks).toBe(settled);
+      // Due by the newer refresh's time, not the abandoned one's.
+      now = 7100;
+      await store.current();
+      expect(checks).toBe(settled + 1);
+    },
+  );
+
   it("stops the wait timer once the refresh wins", async () => {
     const source = fakeSource();
     let now = 0;
