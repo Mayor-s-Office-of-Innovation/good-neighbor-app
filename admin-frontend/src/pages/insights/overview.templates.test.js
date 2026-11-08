@@ -78,6 +78,18 @@ test("a Site that owes Checks gets a bar against its own daily number", () => {
   );
 });
 
+test("Overdue or late says how many Issues have an unknown response, so 0 isn't read as all on time", () => {
+  const box = table([row({ response: { overdue: 0, late: 0, unknown: 5 } })]);
+  assert.equal(box.querySelector("[data-late-count]")?.textContent, "0");
+  assert.equal(
+    box.querySelector("[data-response-unknown]")?.textContent,
+    "5 unknown",
+  );
+  assert.ok(
+    !table([row({})]).querySelector("[data-response-unknown]"),
+  );
+});
+
 test("a manager's line carries their ID, so a late name fills in place", () => {
   const box = table([row({ managerId: "pm1" })]);
   assert.equal(box.querySelector('[data-manager="pm1"]')?.textContent, "pm1");

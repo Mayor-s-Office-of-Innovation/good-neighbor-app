@@ -426,6 +426,8 @@
   "admin.insights.responseHelp.overdue": "No first response within its rule's response time.",
   "admin.insights.responseHelp.unknown": "The response history is missing or unreliable.",
   "admin.insights.responseTime": "Issue Response Time",
+  "admin.insights.responseUnknownCount.one": "{count} unknown",
+  "admin.insights.responseUnknownCount.other": "{count} unknown",
   "admin.insights.search": "Search Site name",
   "admin.insights.seeActivity": "See Activity",
   "admin.insights.seeResponseTime": "See Issue Response Time",

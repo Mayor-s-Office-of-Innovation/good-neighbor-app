@@ -117,6 +117,14 @@ function lateCount(row, most) {
   return `<span class="insights__meter-n" data-late-count>${escapeHtml(count)}</span><span class="insights__meter" role="img" aria-label="${escapeHtml(t("admin.insights.lateMeter", { count, most }))}"><span style="inline-size:${Math.round(full * 100)}%"></span></span>`;
 }
 
+/** Issues with no reliable response history could be late too. @param {SiteRow} row */
+function unknownResponses(row) {
+  const count = row.response.unknown ?? 0;
+  return count > 0
+    ? `<div class="insights__unknown" data-response-unknown>${escapeHtml(t("admin.insights.responseUnknownCount", { count }))}</div>`
+    : "";
+}
+
 /** The Site page's Checks a day, so the two pages never disagree. @param {SiteRow} row */
 function checksMeter(row) {
   const perDay = row.checksPerDay;
@@ -180,7 +188,7 @@ function siteRow(row, { selected, noData, siteHref, names, most }) {
     <td role="cell" class="insights__num" ${label("checks")} data-checks>${
       noData ? unavailable() : checksMeter(row)
     }</td>
-    <td role="cell" class="insights__num" ${label("response")} data-response-cell>${noData ? unavailable() : lateCount(row, most.late)}</td>
+    <td role="cell" class="insights__num" ${label("response")} data-response-cell>${noData ? unavailable() : `${lateCount(row, most.late)}${unknownResponses(row)}`}</td>
     <td role="cell" ${label("severity")} data-issues>${
       noData
         ? unavailable()
