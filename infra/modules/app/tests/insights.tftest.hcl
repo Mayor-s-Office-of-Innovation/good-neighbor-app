@@ -365,4 +365,25 @@ run "insights_waf" {
     ]), "/admin/v1/reporting/trends")
     error_message = "The Insights trends POST must be exempt from the 8 KiB body rule, or a chart of 50 Sites and their groups is blocked."
   }
+
+  assert {
+    condition = anytrue([
+      for rule in aws_wafv2_web_acl.web.rule : contains([
+        for o in rule.statement[0].managed_rule_group_statement[0].rule_action_override : o.name
+      ], "SizeRestrictions_QUERYSTRING")
+      if rule.name == "AWSManagedRulesCommonRuleSet"
+    ])
+    error_message = "The Common Rule Set's 2 KB query-string rule must only count, so the label rule below decides which routes it blocks."
+  }
+
+  assert {
+    condition = alltrue([
+      for s in ["SizeRestrictions_QueryString", "/admin/v1/reporting/", "NORMALIZE_PATH", "\"GET\""] :
+      strcontains(jsonencode([
+        for rule in aws_wafv2_web_acl.web.rule : rule
+        if rule.name == "QueryStringSizeRestrictionsOutsideInsightsReads"
+      ]), s)
+    ])
+    error_message = "The Insights GET read routes must be exempt from the 2 KB query-string rule, or a filter of 100 Sites is blocked."
+  }
 }

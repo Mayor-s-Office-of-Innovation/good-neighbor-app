@@ -1435,6 +1435,12 @@ resource "aws_wafv2_web_acl" "web" {
             count {}
           }
         }
+        rule_action_override {
+          name = "SizeRestrictions_QUERYSTRING"
+          action_to_use {
+            count {}
+          }
+        }
       }
     }
 
@@ -1614,6 +1620,77 @@ resource "aws_wafv2_web_acl" "web" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "${local.name_prefix}-body-size-outside-evaluation"
+      sampled_requests_enabled   = false
+    }
+  }
+
+  # 100 Site IDs can pass 2 KB; requests.js caps every param these GET routes read.
+  rule {
+    name     = "QueryStringSizeRestrictionsOutsideInsightsReads"
+    priority = 11
+
+    action {
+      block {
+        custom_response {
+          response_code            = 413
+          custom_response_body_key = "request-too-large"
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
+    }
+
+    statement {
+      and_statement {
+        statement {
+          label_match_statement {
+            scope = "LABEL"
+            key   = "awswaf:managed:aws:core-rule-set:SizeRestrictions_QueryString"
+          }
+        }
+        statement {
+          not_statement {
+            statement {
+              and_statement {
+                statement {
+                  byte_match_statement {
+                    # Normalized, so /admin/v1/reporting/../ can't reach another route unchecked.
+                    positional_constraint = "STARTS_WITH"
+                    search_string         = "/admin/v1/reporting/"
+                    field_to_match {
+                      uri_path {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NORMALIZE_PATH"
+                    }
+                  }
+                }
+                statement {
+                  byte_match_statement {
+                    positional_constraint = "EXACTLY"
+                    search_string         = "GET"
+                    field_to_match {
+                      method {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-query-size-outside-insights"
       sampled_requests_enabled   = false
     }
   }
