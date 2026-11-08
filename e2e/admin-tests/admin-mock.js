@@ -3,19 +3,8 @@
 import { test as base, expect } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
+import { blankConfigJs, collectPageErrors } from "../helpers/admin-page.js";
 import { insightsReply, recordPhotosReply } from "./insights-mock.js";
-
-/**
- * The checked-in config.js would overwrite the settings an init script gave the page.
- * @param {import("@playwright/test").Page} page
- */
-export function blankConfigJs(page) {
-  return page.route(/\/config\.js$/, (route) =>
-    new URL(route.request().url()).pathname === "/config.js"
-      ? route.fulfill({ contentType: "application/javascript", body: "" })
-      : route.fallback(),
-  );
-}
 
 /**
  * @typedef {{ method: string, path: string, search: string, body: any, headers: Record<string, string> }} AdminRequest
@@ -30,12 +19,7 @@ const mockFailuresByPage = new WeakMap();
 
 export const test = base.extend({
   page: async ({ page }, use, testInfo) => {
-    /** @type {string[]} */
-    const pageErrors = [];
-    // The URL names the route that threw, when one test visits several.
-    page.on("pageerror", (error) =>
-      pageErrors.push(`${page.url()}: ${error.message}`),
-    );
+    const pageErrors = collectPageErrors(page);
     await (coverageDir
       ? withCoverage(coverageDir, page, use, testInfo)
       : use(page));

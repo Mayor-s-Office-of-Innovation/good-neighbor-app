@@ -26,8 +26,9 @@ const env = {
   LOCAL_MQ_PORT: String(INSIGHTS_EMULATOR_PORTS.mq),
   LOCAL_MINIO_API_PORT: String(INSIGHTS_EMULATOR_PORTS.minio),
   LOCAL_MINIO_CONSOLE_PORT: String(INSIGHTS_EMULATOR_PORTS.minioConsole),
+  // Outside backend/.local, which CI caches, so no run restores another's lake.
   LOCAL_MINIO_DATA_DIR: fileURLToPath(
-    new URL("../backend/.local/minio-data-insights-e2e", import.meta.url),
+    new URL("./test-results/insights-emulator-minio", import.meta.url),
   ),
   AWS_ENDPOINT_URL_DYNAMODB: INSIGHTS_EMULATOR_URLS.ddb,
   DYNAMO_ENDPOINT: INSIGHTS_EMULATOR_URLS.ddb,

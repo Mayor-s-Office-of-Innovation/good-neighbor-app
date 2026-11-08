@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { EXPORT_COLUMNS } from "../../backend/src/reporting/api/read-model.js";
 import { t } from "../helpers/i18n.js";
 import { expect, test, uploadProjection, useLocalApi } from "./lake.js";
 
@@ -30,7 +29,21 @@ test("a supervisor exports the Issues as CSV and downloads the file", async ({
     .replace(/^\uFEFF/, "")
     .trim()
     .split(/\r\n/);
-  expect(header.split(",")).toEqual(EXPORT_COLUMNS.issues);
+  // Written out, so a column renamed or dropped in read-model.js fails here.
+  expect(header.split(",")).toEqual([
+    "Issue ID",
+    "Site",
+    "Site ID",
+    "Category",
+    "Severity (1-5)",
+    "State",
+    "Created",
+    "Response deadline",
+    "First response",
+    "Response state",
+    "Resolved",
+    "Parent check",
+  ]);
   expect(lines.map((line) => line.split(",")[0]).sort()).toEqual([
     "t1",
     "t2",

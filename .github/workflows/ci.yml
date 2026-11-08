@@ -264,11 +264,12 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      # Its own key, so its DuckDB files never land in e2e-main's cache.
       - name: Cache local harness binaries
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: backend/.local
-          key: local-harness-${{ runner.os }}-${{ hashFiles('backend/scripts/local-minio.mjs', 'backend/scripts/local-mq.mjs') }}
+          key: local-harness-insights-${{ runner.os }}-${{ hashFiles('backend/scripts/local-minio.mjs', 'backend/scripts/local-mq.mjs') }}
 
       # Keyed on the lockfile, which pins DuckDB, so the extensions download once per version.
       - name: Cache DuckDB extensions

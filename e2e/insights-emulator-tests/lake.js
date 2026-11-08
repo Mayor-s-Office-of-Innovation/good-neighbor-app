@@ -7,32 +7,27 @@ import { join } from "node:path";
 import {
   CreateBucketCommand,
   DeleteObjectCommand,
-  ListObjectsV2Command,
+  DeleteObjectsCommand,
   PutObjectCommand,
   S3Client,
+  paginateListObjectsV2,
 } from "@aws-sdk/client-s3";
 import { test as base, expect } from "@playwright/test";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { s3Source } from "../../backend/src/reporting/api/snapshot.js";
-import { writeSyntheticProjection } from "../../backend/src/reporting/api/test-projection.js";
 import { LATEST_PROJECTION_KEY } from "../../backend/src/reporting/contract.js";
 import { writeLocalLake } from "../../backend/src/reporting/local-lake.js";
 import {
   buildLatestProjection,
   publishProjection,
 } from "../../backend/src/reporting/publish-projection.js";
-import { blankConfigJs } from "../admin-tests/admin-mock.js";
+import { blankConfigJs, collectPageErrors } from "../helpers/admin-page.js";
 import { INSIGHTS_EMULATOR_URLS } from "../helpers/ports.js";
 
 export const test = base.extend({
   page: async ({ page }, use) => {
-    /** @type {string[]} */
-    const pageErrors = [];
-    page.on("pageerror", (error) =>
-      pageErrors.push(`${page.url()}: ${error.message}`),
-    );
+    const pageErrors = collectPageErrors(page);
     await use(page);
-    // A render that throws can leave the page a test expects empty, so absence checks would pass.
     expect(pageErrors, "uncaught page errors").toEqual([]);
   },
 });
@@ -58,10 +53,18 @@ const LAKE_ITEMS = [
 ];
 
 export async function uploadProjection() {
-  const instance = await DuckDBInstance.create(":memory:");
-  const conn = await instance.connect();
+  // Imported here: it builds a projection in DuckDB when loaded, which most specs never use.
+  const { writeSyntheticProjection } = await import(
+    "../../backend/src/reporting/api/test-projection.js"
+  );
   const tmp = await mkdtemp(join(tmpdir(), "insights-emulator-"));
+  /** @type {DuckDBInstance | undefined} */
+  let instance;
+  /** @type {import("@duckdb/node-api").DuckDBConnection | undefined} */
+  let conn;
   try {
+    instance = await DuckDBInstance.create(":memory:");
+    conn = await instance.connect();
     const dir = join(tmp, "projection");
     const { manifest, written } = await writeSyntheticProjection(conn, dir);
     await publishProjection({
@@ -72,8 +75,8 @@ export async function uploadProjection() {
       written,
     });
   } finally {
-    conn.closeSync();
-    instance.closeSync();
+    conn?.closeSync();
+    instance?.closeSync();
     await rm(tmp, { recursive: true, force: true });
   }
 }
@@ -86,11 +89,19 @@ async function uploadLakeFiles(dir) {
       if (err.name !== "BucketAlreadyOwnedByYou") throw err;
     });
   // MinIO's data folder outlives a run, so an older run's partitions would add rows.
-  const old = await lake.send(
-    new ListObjectsV2Command({ Bucket: BUILD_BUCKET, Prefix: "readings/" }),
-  );
-  for (const { Key } of old.Contents ?? [])
-    await lake.send(new DeleteObjectCommand({ Bucket: BUILD_BUCKET, Key }));
+  for await (const page of paginateListObjectsV2(
+    { client: lake },
+    { Bucket: BUILD_BUCKET, Prefix: "readings/" },
+  )) {
+    const keys = (page.Contents ?? []).map(({ Key }) => ({ Key }));
+    if (keys.length)
+      await lake.send(
+        new DeleteObjectsCommand({
+          Bucket: BUILD_BUCKET,
+          Delete: { Objects: keys },
+        }),
+      );
+  }
   const files = await readdir(dir, { recursive: true, withFileTypes: true });
   for (const file of files.filter((f) => f.isFile())) {
     const path = join(file.parentPath, file.name);
@@ -107,19 +118,26 @@ async function uploadLakeFiles(dir) {
 /** Unit tests fake S3, so only this proves the build can read Parquet over httpfs. */
 export async function buildFromLakeFiles() {
   const tmp = await mkdtemp(join(tmpdir(), "insights-emulator-build-"));
-  const instance = await DuckDBInstance.create(":memory:");
-  const conn = await instance.connect();
+  /** @type {DuckDBInstance | undefined} */
+  let instance;
+  /** @type {import("@duckdb/node-api").DuckDBConnection | undefined} */
+  let conn;
   try {
+    instance = await DuckDBInstance.create(":memory:");
+    conn = await instance.connect();
     await writeLocalLake(conn, join(tmp, "lake"), LAKE_ITEMS, {
       exportedAt: "2026-11-05T06:00:00.000Z",
       exportId: "e1",
     });
     await uploadLakeFiles(join(tmp, "lake"));
-    const { prefix } = await buildLatestProjection({ bucket: BUILD_BUCKET });
+    const { prefix } = await buildLatestProjection({
+      bucket: BUILD_BUCKET,
+      now: () => new Date("2026-11-05T07:00:00.000Z"),
+    });
     return await s3Source({ s3: lake, bucket: BUILD_BUCKET }).load(prefix);
   } finally {
-    conn.closeSync();
-    instance.closeSync();
+    conn?.closeSync();
+    instance?.closeSync();
     await rm(tmp, { recursive: true, force: true });
   }
 }
