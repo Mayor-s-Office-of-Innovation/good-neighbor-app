@@ -259,7 +259,8 @@ resource "aws_cloudwatch_log_metric_filter" "insights_jobs_errors" {
 resource "aws_cloudwatch_log_metric_filter" "insights_job_failed" {
   name           = "${local.name_prefix}-insights-job-failed"
   log_group_name = aws_cloudwatch_log_group.insights_jobs.name
-  pattern        = "{ $.level = \"ERROR\" && $.jobId = * }"
+  # A regex any jobId matches; CloudWatch documents NOT EXISTS but not EXISTS.
+  pattern = "{ $.level = \"ERROR\" && $.jobId = %.% }"
 
   metric_transformation {
     name          = "InsightsJobFailed"

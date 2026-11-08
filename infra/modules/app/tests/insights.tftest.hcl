@@ -335,7 +335,7 @@ run "insights_infra" {
       aws_cloudwatch_metric_alarm.insights_job_failed.metric_name == one(aws_cloudwatch_log_metric_filter.insights_job_failed.metric_transformation).name
       && aws_cloudwatch_metric_alarm.insights_job_failed.namespace == one(aws_cloudwatch_log_metric_filter.insights_job_failed.metric_transformation).namespace
       && aws_cloudwatch_log_metric_filter.insights_job_failed.log_group_name == aws_cloudwatch_log_group.insights_jobs.name
-      && strcontains(aws_cloudwatch_log_metric_filter.insights_job_failed.pattern, "$.jobId")
+      && aws_cloudwatch_log_metric_filter.insights_job_failed.pattern == "{ $.level = \"ERROR\" && $.jobId = %.% }"
       && aws_cloudwatch_metric_alarm.insights_job_failed.threshold == 1
     )
     error_message = "One failed job must page someone; run() stores the failure, so the Lambda Errors alarm never sees it."
