@@ -14,9 +14,11 @@ const { ddbSend, logServerError } = vi.hoisted(() => ({
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../lib/log-server-error.js", () => ({ logServerError }));
 
-const { MAX_TRENDS_BODY_BYTES, createReportingHandlers } = await import(
-  "./admin-reporting.js"
-);
+const {
+  MAX_REPORT_BODY_BYTES,
+  MAX_TRENDS_BODY_BYTES,
+  createReportingHandlers,
+} = await import("./admin-reporting.js");
 const { createSnapshotStore } = await import("../reporting/api/snapshot.js");
 const { memoryJobStore } = await import("../reporting/api/jobs.js");
 const { LIMITS, SITE_DIMENSIONS } = await import(
@@ -54,6 +56,10 @@ function event({
 
 /** @param {any} res */
 const json = (res) => JSON.parse(res.body);
+
+// The widest a client can write a character: a \u20ac escape is 6 bytes.
+/** @param {unknown} body */
+const escapedJson = (body) => JSON.stringify(body).replaceAll("€", "\\u20ac");
 
 /** @param {{ source?: any, maxExportRows?: number, jobStore?: any }} [opts] */
 function setup(opts = {}) {
@@ -331,9 +337,8 @@ describe("reads", () => {
     expect(res.statusCode).toBe(413);
   });
 
-  it("takes the largest Trends body LIMITS allow, in three-byte characters", async () => {
+  it("takes the largest Trends body LIMITS allow, in six-byte JSON escapes", async () => {
     const { h } = setup();
-    // The widest UTF-8 a value can use without JSON escapes.
     const value = (/** @type {number} */ i) =>
       `${i}`.padEnd(LIMITS.maxFilterLength, "€");
     const values = Array.from({ length: LIMITS.maxGroupValues }, (_, i) =>
@@ -351,7 +356,10 @@ describe("reads", () => {
         groups: Object.fromEntries(SITE_DIMENSIONS.map((dim) => [dim, values])),
       },
     };
-    const res = await h.postTrends(event({ body }));
+    const res = await h.postTrends({
+      ...event(),
+      body: escapedJson(body),
+    });
     // Past the byte limit and JSON.parse, to the check that the Sites exist.
     expect(json(res).error).toBe("unknown_site");
   });
@@ -606,6 +614,31 @@ describe("export and report jobs", () => {
       "invalid_site_ids",
       "too_many_sites",
     ]);
+  });
+
+  it("refuses a report body over its byte limit before parsing it, since the WAF lets it through", async () => {
+    const { h } = setup();
+    const res = await h.postReport({
+      ...event({ headers: key }),
+      body: `{${" ".repeat(MAX_REPORT_BODY_BYTES)}`,
+    });
+    expect([res.statusCode, json(res).error]).toEqual([
+      413,
+      "request_too_large",
+    ]);
+  });
+
+  it("takes the largest report body LIMITS allow, in six-byte JSON escapes", async () => {
+    const { h } = setup();
+    const siteIds = Array.from({ length: LIMITS.maxReportSites }, (_, i) =>
+      `${i}`.padEnd(LIMITS.maxFilterLength, "€"),
+    );
+    const res = await h.postReport({
+      ...event({ headers: key }),
+      body: escapedJson({ siteIds, period: "quarter", year: 2026, quarter: 4 }),
+    });
+    // Past the byte limit and JSON.parse, to the check that the Sites exist.
+    expect(json(res).error).toBe("unknown_site");
   });
 
   it("refuses a report for a Site the snapshot doesn't have", async () => {

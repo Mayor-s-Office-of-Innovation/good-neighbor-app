@@ -47,6 +47,18 @@ import {
 import { S3_TIMEOUTS } from "../reporting/contract.js";
 
 /** @typedef {import("aws-lambda").APIGatewayProxyEventV2} Event */
+
+// Counted from the base64 length, so a large body isn't decoded just to be refused.
+/**
+ * @param {Event} event
+ * @returns {number}
+ */
+function bodyBytes(event) {
+  const body = event.body ?? "";
+  if (!event.isBase64Encoded) return Buffer.byteLength(body, "utf8");
+  const padding = body.endsWith("==") ? 2 : body.endsWith("=") ? 1 : 0;
+  return Math.floor((body.length * 3) / 4) - padding;
+}
 /** @typedef {import("../reporting/api/snapshot.js").Snapshot} Snapshot */
 
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,128}$/;
@@ -57,8 +69,11 @@ const FRESH_ONLY_REFRESH_WAIT_MS = 20_000;
 // A Lambda's first load answers 503 past this, leaving the report time inside 29 s.
 const LAMBDA_FIRST_LOAD_WAIT_MS = 20_000;
 const EXPORT_DATASETS = ["issues", "checks", "sites"];
-// The WAF skips this route. Fits 50 Sites and 6 groups of 50 values at 200 three-byte characters.
-export const MAX_TRENDS_BODY_BYTES = 256 * 1024;
+// The WAF skips these routes. Sized for LIMITS' most values at 200 characters,
+// each written as a 6-byte \u escape: 50 Sites and 6 groups of 50 for Trends.
+export const MAX_TRENDS_BODY_BYTES = 512 * 1024;
+// 2,000 Site IDs for a report.
+export const MAX_REPORT_BODY_BYTES = 2560 * 1024;
 // Params a request may carry; anything else is dropped before it's stored.
 const PERIOD_PARAMS = [
   "period",
@@ -229,10 +244,8 @@ export function createReportingHandlers({
       let params = { ...(event.queryStringParameters ?? {}) };
       if (event.body) {
         // Decoded bytes, checked before JSON.parse, like the assessment route.
-        const bytes = event.isBase64Encoded
-          ? Buffer.from(event.body, "base64").length
-          : Buffer.byteLength(event.body, "utf8");
-        if (bytes > maxBodyBytes) throw requestError("request_too_large", 413);
+        if (Number.isFinite(maxBodyBytes) && bodyBytes(event) > maxBodyBytes)
+          throw requestError("request_too_large", 413);
         let body;
         try {
           body = readJsonBody(event);
@@ -265,6 +278,8 @@ export function createReportingHandlers({
     }
   };
   const guarded = guardedUpTo(Infinity);
+  const guardedTrends = guardedUpTo(MAX_TRENDS_BODY_BYTES);
+  const guardedReport = guardedUpTo(MAX_REPORT_BODY_BYTES);
 
   /**
    * @param {Event} event
@@ -375,7 +390,7 @@ export function createReportingHandlers({
 
     /** @param {Event} event */
     postTrends: (event) =>
-      guardedUpTo(MAX_TRENDS_BODY_BYTES)(event, async ({ params }) => {
+      guardedTrends(event, async ({ params }) => {
         const snap = await snapshots.current();
         const raw = /** @type {Record<string, any>} */ (params.scope ?? {});
         if (typeof raw !== "object" || Array.isArray(raw))
@@ -444,7 +459,7 @@ export function createReportingHandlers({
 
     /** @param {Event} event */
     postReport: (event) =>
-      guarded(event, async ({ params, ownerKey }) => {
+      guardedReport(event, async ({ params, ownerKey }) => {
         const queue = needJobs();
         const key = idempotencyKey(event);
         const stored = pick(params, ["siteIds", ...PERIOD_PARAMS]);
