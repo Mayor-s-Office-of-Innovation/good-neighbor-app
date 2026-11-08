@@ -87,7 +87,8 @@ resource address and file line; run the plan locally for the detail. It uses the
 role can read the dev state file, which holds secrets such as the support origin token, and Lambda
 environment values. Any run of a job in `dev-plan` can assume it, from any branch, and a branch can
 edit the workflow or add Terraform that runs its own code in that job. So a maintainer approving
-each run, after checking the branch, is the only gate. `npm ci` and the Lambda build run in a job
+each run, after checking the branch, is the only gate. Turn on **Prevent self-review** too, so
+whoever started a run can't approve it. `npm ci` and the Lambda build run in a job
 with no `id-token` permission, which stops a package script from taking the role, but not a
 branch's own changes.
 
