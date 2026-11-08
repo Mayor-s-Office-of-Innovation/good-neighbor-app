@@ -74,7 +74,7 @@ const site = (siteId, extra) => ({
 });
 
 /** @returns {import("../projection.js").ProjectionInputs} */
-function syntheticInputs() {
+export function syntheticInputs() {
   const checks = [
     check("s1", "c1", "2026-10-02T17:00:00.000Z"),
     check("s1", "c2", "2026-10-10T17:00:00.000Z"),
