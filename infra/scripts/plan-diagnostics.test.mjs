@@ -92,3 +92,16 @@ test("cuts quoted keys from an address, since for_each keys can hold a value", (
     'error\treading SSM Parameter\tmodule.app.aws_ssm_parameter.token["…"]\t-',
   ]);
 });
+
+test("cuts a quoted value whole when it holds an escaped quote", () => {
+  const out = diagnostics([
+    JSON.stringify({
+      type: "diagnostic",
+      diagnostic: {
+        severity: "error",
+        summary: `bad value "a\\"${SECRET}" and 'b\\'${SECRET}'`,
+      },
+    }),
+  ]);
+  assert.deepEqual(out, ["error\tbad value \"…\" and '…'\t-\t-"]);
+});
