@@ -5,7 +5,6 @@ import { setImmediate } from "node:timers/promises";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { CONTRACT_VERSION } from "../contract.js";
-import { TABLE_SCHEMAS } from "../projection.js";
 import {
   createSnapshotStore,
   dirSource,
@@ -207,7 +206,7 @@ describe("createSnapshotStore", () => {
     const source = fakeSource();
     const store = createSnapshotStore({ source });
     await store.current();
-    expect((await store.byPrefix("p0")).prefix).toBe("p0");
+    expect((await store.byPrefix("p0", "snap0")).prefix).toBe("p0");
   });
 
   it("picks up a rebuilt local folder, which keeps its path", async () => {
@@ -356,7 +355,7 @@ describe("createSnapshotStore", () => {
           finish = () => resolve(load(prefix));
         }),
     );
-    const job = store.byPrefix("p2");
+    const job = store.byPrefix("p2", "snap2");
     source.publish({ prefix: "p2", snapshotId: "snap2" });
     now = 1001;
     await store.current();
@@ -369,7 +368,7 @@ describe("createSnapshotStore", () => {
     expect(source.load).toHaveBeenCalledOnce();
   });
 
-  it("keeps the newer snapshot when latest.json points back to an older one", async () => {
+  it("follows latest.json back to an older snapshot, so a rollback lands on every Lambda", async () => {
     const source = fakeSource();
     let now = 0;
     const store = createSnapshotStore({
@@ -383,7 +382,71 @@ describe("createSnapshotStore", () => {
     await store.current();
     source.publish({ prefix: "p2", snapshotId: "snap2" });
     now = 1001;
+    expect((await store.current()).prefix).toBe("p2");
+  });
+
+  it("never lets a refresh that started earlier replace one that started later", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+    });
+    await store.current();
+    const load = source.load.bind(source);
+    /** @type {() => void} */
+    let finishP2 = () => {};
+    let p2Started = false;
+    source.load = (/** @type {string} */ prefix) =>
+      prefix === "p2"
+        ? new Promise((resolve) => {
+            p2Started = true;
+            finishP2 = () => resolve(load(prefix));
+          })
+        : load(prefix);
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    now = 1001;
+    await store.current();
+    await vi.waitFor(() => expect(p2Started).toBe(true));
+    source.publish({ prefix: "p3", snapshotId: "snap3" });
+    now = 2002;
+    const later = store.current();
+    finishP2();
+    await later;
+    await vi.waitFor(async () =>
+      expect((await store.current()).prefix).toBe("p3"),
+    );
+    now = 2500;
     expect((await store.current()).prefix).toBe("p3");
+  });
+
+  it("loads a rebuilt folder afresh rather than join a job still loading its old build", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+    });
+    await store.current();
+    const load = source.load.bind(source);
+    /** @type {(() => void)[]} */
+    const finish = [];
+    source.load = vi.fn(
+      (/** @type {string} */ prefix) =>
+        new Promise((resolve) => {
+          finish.push(() => resolve(load(prefix)));
+        }),
+    );
+    const job = store.byPrefix("p2", "snap2-old");
+    source.publish({ prefix: "p2", snapshotId: "snap2-new" });
+    now = 1001;
+    await store.current();
+    await setImmediate();
+    expect(source.load).toHaveBeenCalledTimes(2);
+    for (const done of finish) done();
+    await job;
   });
 
   it("with refreshMs 0, checks latest.json again rather than join a check that read it earlier", async () => {
@@ -507,12 +570,30 @@ describe("createSnapshotStore", () => {
     expect((await store.current()).prefix).toBe("p1");
   });
 
+  it("reports an expired snapshot file once, however many requests hit it", async () => {
+    const source = fakeSource();
+    const onError = vi.fn();
+    source.load = async () => {
+      throw Object.assign(new Error("snapshot_unavailable"), {
+        code: "snapshot_unavailable",
+        statusCode: 503,
+        expiredKey: "p1/issues.parquet",
+      });
+    };
+    const store = createSnapshotStore({ source, refreshMs: 0, onError });
+    for (let i = 0; i < 3; i += 1)
+      await expect(store.current()).rejects.toMatchObject({
+        code: "snapshot_unavailable",
+      });
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
   it("loads an older snapshot once for all the jobs that read it", async () => {
     const source = fakeSource();
     const store = createSnapshotStore({ source });
     await store.current();
-    await store.byPrefix("p0");
-    await store.byPrefix("p0");
+    await store.byPrefix("p0", "snap0");
+    await store.byPrefix("p0", "snap0");
     expect(source.loads).toBe(2);
   });
 });
@@ -648,7 +729,47 @@ describe("s3Source", () => {
     },
   );
 
-  it("passes on any other read error, having asked for every table", async () => {
+  it("downloads at most two table files at once, so the Lambda holds few in memory", async () => {
+    const instance = await DuckDBInstance.create(":memory:");
+    const conn = await instance.connect();
+    await writeSyntheticProjection(conn, join(dir, "p1"));
+    conn.closeSync();
+    instance.closeSync();
+    const s3 = fakeS3({ prefix: "p1", snapshotId: "snap1" });
+    const send = s3.send.bind(s3);
+    let open = 0;
+    let most = 0;
+    s3.send = async (/** @type {any} */ cmd) => {
+      open += 1;
+      most = Math.max(most, open);
+      try {
+        await setImmediate();
+        return await send(cmd);
+      } finally {
+        open -= 1;
+      }
+    };
+    await s3Source({ s3, bucket: "lake" }).load("p1");
+    expect(most).toBe(2);
+  });
+
+  it("names the expired file in its error, for the one log line it gets", async () => {
+    const instance = await DuckDBInstance.create(":memory:");
+    const conn = await instance.connect();
+    await writeSyntheticProjection(conn, join(dir, "p1"));
+    conn.closeSync();
+    instance.closeSync();
+    rmSync(join(dir, "p1", "issues.parquet"));
+    const s3 = fakeS3({ prefix: "p1", snapshotId: "snap1" });
+    await expect(
+      s3Source({ s3, bucket: "lake" }).load("p1"),
+    ).rejects.toMatchObject({
+      code: "snapshot_unavailable",
+      expiredKey: "p1/issues.parquet",
+    });
+  });
+
+  it("passes on any other read error", async () => {
     const instance = await DuckDBInstance.create(":memory:");
     const conn = await instance.connect();
     await writeSyntheticProjection(conn, join(dir, "p1"));
@@ -666,8 +787,5 @@ describe("s3Source", () => {
     await expect(
       s3Source({ s3, bucket: "lake" }).load("p1"),
     ).rejects.toMatchObject({ name: "AccessDenied" });
-    expect(s3.keys.filter((k) => k.endsWith(".parquet"))).toHaveLength(
-      Object.keys(TABLE_SCHEMAS).length,
-    );
   });
 });

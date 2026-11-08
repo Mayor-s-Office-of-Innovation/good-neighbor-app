@@ -116,7 +116,7 @@ export function memoryJobStore() {
 /**
  * @param {{
  *   store: JobStore,
- *   snapshots: { current: () => Promise<import("./snapshot.js").Snapshot>, byPrefix: (prefix: string) => Promise<import("./snapshot.js").Snapshot> },
+ *   snapshots: { current: () => Promise<import("./snapshot.js").Snapshot>, byPrefix: (prefix: string, snapshotId: string) => Promise<import("./snapshot.js").Snapshot> },
  *   render: (kind: JobRecord["kind"], params: Record<string, any>, snap: import("./snapshot.js").Snapshot) => Promise<JobOutput>,
  *   starter: (ref: { ownerKey: string, jobId: string }) => Promise<void>,
  *   now?: () => number,
@@ -382,7 +382,10 @@ export function createJobs({
       /** @type {VersionedJob} */
       let latest = claim;
       try {
-        const snap = await snapshots.byPrefix(record.snapshotPrefix);
+        const snap = await snapshots.byPrefix(
+          record.snapshotPrefix,
+          record.snapshotId,
+        );
         const out = await render(record.kind, record.params, snap);
         await store.putResult(ownerKey, jobId, out.body, out.contentType);
         latest = await update(ownerKey, claim, (r) =>

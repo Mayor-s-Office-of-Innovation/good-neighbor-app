@@ -18,11 +18,12 @@ function setup(opts = {}) {
     snapshotId: "snap1",
     manifest: { evaluatedAt: "2026-11-04T19:00:00.000Z" },
   };
+  const byPrefix = vi.fn(async () => /** @type {any} */ (snapshot));
   const jobs = createJobs({
     store,
     snapshots: {
       current: opts.current ?? (async () => /** @type {any} */ (snapshot)),
-      byPrefix: async () => /** @type {any} */ (snapshot),
+      byPrefix,
     },
     render:
       opts.render ??
@@ -47,7 +48,7 @@ function setup(opts = {}) {
     kind: /** @type {const} */ ("export"),
     params: { dataset: "issues" },
   };
-  return { clock, store, jobs, started, request };
+  return { clock, store, jobs, started, request, byPrefix };
 }
 
 describe("createJobs", () => {
@@ -110,7 +111,7 @@ describe("createJobs", () => {
   });
 
   it("runs a job to a file the requester gets a short-lived link to", async () => {
-    const { jobs, request } = setup();
+    const { jobs, request, byPrefix } = setup();
     const { job } = await jobs.create("owner1", {
       ...request,
       idempotencyKey: "k1",
@@ -123,6 +124,8 @@ describe("createJobs", () => {
     });
     expect(done.downloadUrl).toMatch(/^memory:\/\//);
     expect(done.downloadSeconds).toBe(JOB_LIMITS.downloadSeconds);
+    // With the ID, so a rebuilt folder at the same path isn't mistaken for it.
+    expect(byPrefix).toHaveBeenCalledWith("p1", "snap1");
   });
 
   it("marks a job failed with a reason, and offers no file", async () => {

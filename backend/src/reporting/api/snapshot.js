@@ -13,6 +13,9 @@ import { CONTRACT_VERSION, LATEST_PROJECTION_KEY } from "../contract.js";
 import { TABLE_SCHEMAS } from "../projection.js";
 import { requestError } from "./requests.js";
 
+// Each download holds its whole file in memory, so only this many tables at once.
+const DOWNLOADS_AT_ONCE = 2;
+
 /**
  * @typedef {object} Snapshot
  * @property {string} prefix where its files live; jobs reload it by this
@@ -201,7 +204,10 @@ export function s3Source({ s3, bucket }) {
   const readSnapshotFile = (key) =>
     read(key).catch((err) => {
       if (err?.name === "NoSuchKey")
-        throw requestError("snapshot_unavailable", 503);
+        throw Object.assign(requestError("snapshot_unavailable", 503), {
+          message: `snapshot_unavailable: ${key} has expired`,
+          expiredKey: key,
+        });
       throw err;
     });
   return {
@@ -226,15 +232,24 @@ export function s3Source({ s3, bucket }) {
       checkContract(manifest);
       // DuckDB reads local files without the httpfs extension or a secret.
       const dir = await mkdtemp(join(tmpdir(), "insights-snapshot-"));
+      const queue = Object.keys(TABLE_SCHEMAS);
+      const download = async () => {
+        try {
+          for (let name = queue.shift(); name; name = queue.shift())
+            await writeFile(
+              join(dir, `${name}.parquet`),
+              await readSnapshotFile(`${prefix}/${name}.parquet`),
+            );
+        } catch (err) {
+          // The load has failed, so the other download stops after its current file.
+          queue.length = 0;
+          throw err;
+        }
+      };
       try {
         // Settle every write before cleanup, so rm can't race a late one.
         const writes = await Promise.allSettled(
-          Object.keys(TABLE_SCHEMAS).map(async (name) =>
-            writeFile(
-              join(dir, `${name}.parquet`),
-              await readSnapshotFile(`${prefix}/${name}.parquet`),
-            ),
-          ),
+          Array.from({ length: DOWNLOADS_AT_ONCE }, download),
         );
         const failed = writes.find((w) => w.status === "rejected");
         if (failed) throw /** @type {PromiseRejectedResult} */ (failed).reason;
@@ -273,12 +288,18 @@ export function createSnapshotStore({
   // Jobs queued before a swap read the snapshot they were asked against.
   /** @type {Promise<Snapshot> | null} */
   let older = null;
-  let olderPrefix = "";
+  let olderKey = "";
+  let reportedExpiry = "";
 
-  // Shared per prefix, since two copies of one snapshot would double the Lambda's memory.
-  /** @param {string} prefix */
-  const load = (prefix) => {
-    let run = loading.get(prefix);
+  // Shared, since two copies of one snapshot would double the Lambda's memory. The ID is in
+  // the key because a rebuilt local folder keeps its path.
+  /**
+   * @param {string} prefix
+   * @param {string} snapshotId
+   */
+  const load = (prefix, snapshotId) => {
+    const key = JSON.stringify([prefix, snapshotId]);
+    let run = loading.get(key);
     if (!run) {
       run = (async () => {
         const loaded = await source.load(prefix);
@@ -286,11 +307,21 @@ export function createSnapshotStore({
         checkContract(loaded.manifest);
         return indexSnapshot(loaded);
       })();
-      const clear = () => loading.delete(prefix);
+      const clear = () => loading.delete(key);
       run.then(clear, clear);
-      loading.set(prefix, run);
+      loading.set(key, run);
     }
     return run;
+  };
+
+  // An expired file stays expired, so its key is logged once, not on every request.
+  /** @param {unknown} err */
+  const report = (err) => {
+    const key = /** @type {any} */ (err)?.expiredKey;
+    if (key === undefined) return onError(err);
+    if (key === reportedExpiry) return;
+    reportedExpiry = key;
+    onError(err);
   };
 
   /** @param {number} startedAt */
@@ -304,25 +335,23 @@ export function createSnapshotStore({
         held = null;
         throw gone;
       }
-      let next = held;
-      // A local folder keeps its path when rebuilt, so compare IDs too.
+      // Followed even back to an older snapshot, so a rollback lands and every
+      // Lambda serves the same one. Refreshes run one at a time, so none lands late.
       if (
-        !next ||
-        next.prefix !== latest.prefix ||
-        next.snapshotId !== latest.snapshotId
+        !held ||
+        held.prefix !== latest.prefix ||
+        held.snapshotId !== latest.snapshotId
       ) {
         // The old one isn't kept: two indexed snapshots would double the Lambda's
         // memory. A job on it reloads it once.
-        next = await load(latest.prefix);
+        held = await load(latest.prefix, latest.snapshotId);
       }
-      // IDs sort by build time; a build that finished late can point latest.json back.
-      if (!held || next.snapshotId >= held.snapshotId) held = next;
       checkedAt = startedAt;
       return held;
     } catch (err) {
+      // Stale data still serves, but someone needs to hear about it.
+      if (held || /** @type {any} */ (err)?.expiredKey) report(err);
       if (held) {
-        // Stale data still serves, but someone needs to hear about it.
-        onError(err);
         checkedAt = startedAt;
         return held;
       }
@@ -389,15 +418,18 @@ export function createSnapshotStore({
     },
     /**
      * @param {string} prefix
+     * @param {string} snapshotId
      * @returns {Promise<Snapshot>}
      */
-    async byPrefix(prefix) {
-      if (held?.prefix === prefix) return held;
-      if (olderPrefix !== prefix) {
-        olderPrefix = prefix;
-        older = load(prefix);
+    async byPrefix(prefix, snapshotId) {
+      if (held?.prefix === prefix && held.snapshotId === snapshotId)
+        return held;
+      const key = JSON.stringify([prefix, snapshotId]);
+      if (olderKey !== key) {
+        olderKey = key;
+        older = load(prefix, snapshotId);
         older.catch(() => {
-          if (olderPrefix === prefix) olderPrefix = "";
+          if (olderKey === key) olderKey = "";
         });
       }
       return /** @type {Promise<Snapshot>} */ (older);
