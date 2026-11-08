@@ -42,7 +42,7 @@ jobs:
       - name: Build Lambda bundles
         run: npm run build:lambdas -w @good-neighbor/backend
 
-      # A tarball keeps file modes and symlinks, which the bundle hashes depend on.
+      # A tarball keeps file modes, which the bundle hashes depend on.
       - name: Pack Lambda bundles
         run: tar -czf lambda-dist.tgz backend/dist
 
@@ -79,15 +79,16 @@ jobs:
             exit 1
           fi
 
+      # npm code shaped this artifact, so it lands outside the checkout, and the
+      # script copies in only regular files under backend/dist.
       - name: Download Lambda bundles
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: lambda-dist
-          path: ${{ github.workspace }}
+          path: ${{ runner.temp }}/lambda-dist
 
       - name: Unpack Lambda bundles
-        working-directory: ${{ github.workspace }}
-        run: tar -xzf lambda-dist.tgz && rm lambda-dist.tgz
+        run: bash "$GITHUB_WORKSPACE/infra/scripts/unpack-lambda-dist.sh" "$RUNNER_TEMP/lambda-dist/lambda-dist.tgz" "$GITHUB_WORKSPACE"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
