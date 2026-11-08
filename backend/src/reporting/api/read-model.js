@@ -3,6 +3,7 @@
 import {
   addDays,
   addMonthsToFirst,
+  dayCountBetween,
   dayKeysBetween,
   pacificDateKey,
 } from "../../lib/pacific-dates.js";
@@ -418,6 +419,27 @@ function wholeDays(snap, site, interval, today) {
 }
 
 /**
+ * The days a Site's Issues per 30 days spreads them over: from the records'
+ * or the Site's first day, as the Checks average starts, to the update. The
+ * first and last days count, since their Issues do.
+ * @param {Snapshot} snap
+ * @param {Record<string, any>} site
+ * @param {Interval} interval
+ * @param {string} today Pacific day key
+ * @returns {number}
+ */
+function issueDaysOf(snap, site, interval, today) {
+  if (snap.coverageStart === null) return 0;
+  const added = site.createdAt ? pacificDateKey(site.createdAt) : "";
+  const first = laterDay(
+    interval.startDay,
+    laterDay(snap.coverageStart, added),
+  );
+  const end = earlierDay(interval.endDay, addDays(today, 1));
+  return dayCountBetween(first, end);
+}
+
+/**
  * The days in range the Site owed Checks, what it owed and what it completed
  * on them. Days it owed nothing don't pull its average down.
  * @param {Snapshot} snap
@@ -459,11 +481,7 @@ function siteFacts(snap, site, interval) {
   const today = pacificDateKey(snap.manifest.evaluatedAt);
   const range = wholeDays(snap, site, interval, today);
   const days = range ? dayKeysBetween(range.startDay, range.endDay).length : 0;
-  // Issues are counted to the update, today included, so their rate spans the same days.
-  const issueDays = dayKeysBetween(
-    interval.startDay,
-    earlierDay(interval.endDay, addDays(today, 1)),
-  ).length;
+  const issueDays = issueDaysOf(snap, site, interval, today);
   // One pass over the Site's days; the whole days sit inside the period.
   const sum = Object.fromEntries(SITE_DAY_METRICS.map((m) => [m, 0]));
   let checks = 0;

@@ -435,6 +435,36 @@ describe("overview", () => {
     ]);
   });
 
+  it("spreads Issues per 30 days over the days since the records or the Site began, not the whole year", () => {
+    const fy = parsePeriodParams(
+      { period: "financialYear", startYear: "2026" },
+      TEST_EVALUATED_AT,
+      snap.dataDays,
+    );
+    /** @param {Snapshot} from */
+    const row = (from) =>
+      overview(from, {
+        interval: fy,
+        filter: { siteIds: ["s1"] },
+        list: list("sites"),
+        now: NOW,
+      }).sites[0];
+    const busy = issuesInTenDays(31);
+    const addedSep25 = edited((t) => {
+      t.site_days.find(
+        (d) => d.siteId === "s1" && d.day === "2026-10-02",
+      ).issuesCreated = 30;
+      t.sites[0].createdAt = "2026-09-25T20:00:00.000Z";
+    });
+    const [fromRecords, fromSite] = [row(busy), row(addedSep25)];
+    // Records begin Sep 15: Sep 15 to Nov 4 is 51 days, not the 127 since Jul 1.
+    // Added Sep 25: Sep 25 to Nov 4 is 41 days.
+    expect([fromRecords.issuesPer30Days, fromSite.issuesPer30Days]).toEqual([
+      Math.round((fromRecords.activity.issuesCreated * 300) / 51) / 10,
+      Math.round((fromSite.activity.issuesCreated * 300) / 41) / 10,
+    ]);
+  });
+
   it("can flag Many Issues on a period's first day, before any whole day", () => {
     const firstDay = edited((t, m) => {
       m.evaluatedAt = "2026-11-01T17:00:00.000Z";
