@@ -202,14 +202,14 @@ export const periodName = (interval) =>
   interval ? periodLabel(interval) : t("common.loading");
 
 /**
- * Whether a step would pass the years the server takes, so the arrow does nothing.
+ * Whether Previous would pass the first year the server takes. Next needs no
+ * check: a period in the last year is still running, which already turns it off.
  * @param {Interval | null} interval
- * @param {1 | -1} step
  */
-const atEdge = (interval, step) => {
+const atEarliest = (interval) => {
   if (!interval || interval.kind === "custom") return false;
   const period = periodOf(interval);
-  return samePeriod(stepPeriod(period, step), period);
+  return samePeriod(stepPeriod(period, -1), period);
 };
 
 /**
@@ -246,9 +246,9 @@ export function periodView({ interval, kind, draft, error, dataTime = null }) {
           <button type="button" class="btn-secondary" id="insights-period-apply">${escapeHtml(t("admin.insights.period.apply"))}</button>
         </div>`
       : `<div class="insights__stepper">
-          <button type="button" class="btn-icon" data-period-step="-1" aria-label="${escapeHtml(t("admin.insights.period.previous"))}" ${!interval || atEdge(interval, -1) ? "disabled" : ""}><wa-icon name="chevron-left" aria-hidden="true"></wa-icon></button>
+          <button type="button" class="btn-icon" data-period-step="-1" aria-label="${escapeHtml(t("admin.insights.period.previous"))}" ${!interval || atEarliest(interval) ? "disabled" : ""}><wa-icon name="chevron-left" aria-hidden="true"></wa-icon></button>
           <span class="insights__period-label" data-period-label>${escapeHtml(periodName(interval))}</span>
-          <button type="button" class="btn-icon" data-period-step="1" aria-label="${escapeHtml(t("admin.insights.period.next"))}" ${!interval || interval.incomplete || atEdge(interval, 1) ? "disabled" : ""}><wa-icon name="chevron-right" aria-hidden="true"></wa-icon></button>
+          <button type="button" class="btn-icon" data-period-step="1" aria-label="${escapeHtml(t("admin.insights.period.next"))}" ${!interval || interval.incomplete ? "disabled" : ""}><wa-icon name="chevron-right" aria-hidden="true"></wa-icon></button>
         </div>`;
   const pill = incompletePill(interval, dataTime);
   return `<div class="insights__period" role="group" aria-label="${escapeHtml(t("admin.insights.period.label"))}">
@@ -467,8 +467,7 @@ export const severityWord = (severity) =>
 
 /** @param {string} message already translated @param {string} [retryId] */
 export function failedView(message, retryId = "insights-retry") {
-  // The dashboard makes each .error an alert; a second one would repeat it.
-  return `<div class="insights__failed" data-insights-failed><p class="error">${escapeHtml(message)}</p><button type="button" class="btn-secondary" id="${retryId}">${escapeHtml(t("common.retry"))}</button></div>`;
+  return `<div class="insights__failed" data-insights-failed><p class="error" role="alert">${escapeHtml(message)}</p><button type="button" class="btn-secondary" id="${retryId}">${escapeHtml(t("common.retry"))}</button></div>`;
 }
 
 /** @param {unknown} err @returns {string} the API's error code, or "" */

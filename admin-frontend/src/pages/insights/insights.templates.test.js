@@ -343,7 +343,7 @@ test("a running period is marked on its control; Next stays off", () => {
   assert.match(html, /data-period-step="1"[^>]*disabled/);
 });
 
-test("the period arrows turn off where a step would pass the years the server takes", () => {
+test("Previous turns off where a step would pass the first year the server takes", () => {
   /** @param {import("./insights-query.js").Period} period */
   const arrows = (period) => {
     const box = document.createElement("div");
@@ -362,7 +362,6 @@ test("the period arrows turn off where a step would pass the years the server ta
   };
   assert.deepEqual(arrows({ kind: "month", month: "2000-01" }), [true, false]);
   assert.deepEqual(arrows({ kind: "month", month: "2000-02" }), [false, false]);
-  assert.deepEqual(arrows({ kind: "year", year: 2999 }), [false, true]);
 });
 
 test("the footer's data time is short: no minutes on the hour, no space before AM", () => {
@@ -428,6 +427,15 @@ test("the fallback month is the one holding today in Pacific time", () => {
     kind: "month",
     month: "2026-10",
   });
+});
+
+test("a failed load is announced, since it replaces the page's results", () => {
+  const box = document.createElement("div");
+  box.innerHTML = failedView("Couldn't load.");
+  assert.equal(
+    box.querySelector('[role="alert"]')?.textContent,
+    "Couldn't load.",
+  );
 });
 
 test("Retry after a failure shows the spinner, not the old error dimmed", () => {
