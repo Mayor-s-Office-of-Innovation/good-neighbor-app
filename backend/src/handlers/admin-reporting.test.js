@@ -736,6 +736,11 @@ describe("export and report jobs", () => {
       // Past the store's 5-minute check interval.
       vi.setSystemTime(Date.now() + 6 * 60_000);
       expect(await folder.snapshotId()).toBe(expected);
+      // A refresh still loading when cleanup deletes the folder would log into a later test.
+      await vi.waitFor(
+        async () => expect(await folder.snapshotId()).toBe("snap2"),
+        { timeout: 10_000 },
+      );
     } finally {
       vi.useRealTimers();
       folder.cleanup();
