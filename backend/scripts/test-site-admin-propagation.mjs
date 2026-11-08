@@ -178,6 +178,14 @@ await test("Site details propagate through canonical local records", async (t) =
       },
       contactPerson: { phone: "415-555-0199" },
       perimeter: "Old perimeter",
+      primaryContactUserId: "manager",
+      primaryContact: {
+        firstName: "Test",
+        lastName: "Manager",
+        email: "manager@example.test",
+        phone: "415-555-0100",
+        phoneExtension: "",
+      },
     });
     await put(assignment);
     await put(membership);
@@ -288,6 +296,10 @@ await test("Site details propagate through canonical local records", async (t) =
         );
         assert.equal(
           (await get(assignment.pk, assignment.sk)).phone,
+          "415-555-0106",
+        );
+        assert.equal(
+          (await get("SITE#site", "#META")).primaryContact.phone,
           "415-555-0106",
         );
         assert.equal((await get(membership.pk, membership.sk)).generation, 7);
