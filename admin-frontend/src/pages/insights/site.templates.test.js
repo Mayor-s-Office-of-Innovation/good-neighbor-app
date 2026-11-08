@@ -34,6 +34,7 @@ function drawn(change, page = {}, more = "") {
     failed: "",
     tile: "onTime",
     more,
+    issueHref: (/** @type {any} */ i) => `/insights/raw/issues/${i.issueId}`,
   });
   return box;
 }
