@@ -227,6 +227,7 @@ describe("getRecordPhotos", () => {
         source: "check",
         url: `https://example.test/${S1}/art-1`,
         thumbnailUrl: `https://example.test/${S1}/art-1.thumb.webp`,
+        urlSeconds: 300,
       }),
     ]);
     expect(body.notes).toEqual([

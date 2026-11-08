@@ -24,7 +24,7 @@ const URL_SECONDS = 300;
 // Insights drops these tasks from every Issue, so their photos don't belong.
 const DEAD_STATUSES = new Set(["superseded", "deleted"]);
 
-/** @typedef {{ artifactId: string, source: "check" | "update", takenAt: string | null, thumbnailUrl: string, url: string, urlExpiresAt: string }} Photo */
+/** @typedef {{ artifactId: string, source: "check" | "update", takenAt: string | null, thumbnailUrl: string, url: string, urlExpiresAt: string, urlSeconds: number }} Photo */
 /** @typedef {{ source: "check" | "update", at: string | null, text: string }} Note */
 
 /** @param {{ pk: string, sk: string }} key */
@@ -93,6 +93,8 @@ async function photo(item, source, siteId, checkId) {
     thumbnailUrl,
     url,
     urlExpiresAt: new Date(Date.now() + URL_SECONDS * 1000).toISOString(),
+    // A link's lifetime, unlike its end time, holds when the viewer's clock is wrong.
+    urlSeconds: URL_SECONDS,
   };
 }
 

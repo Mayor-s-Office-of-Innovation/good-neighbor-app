@@ -569,6 +569,7 @@ const photo = (artifactId, source, takenAt) => ({
   thumbnailUrl: PIXEL,
   url: PIXEL,
   urlExpiresAt: "2026-11-04T19:05:00.000Z",
+  urlSeconds: 300,
 });
 const CHECK_PHOTO = photo("art-1", "check", "2026-10-02T17:01:00.000Z");
 

@@ -20,6 +20,7 @@ const photo = (url, readAt) => ({
   thumbnailUrl: `${url}-thumb`,
   url,
   urlExpiresAt: new Date(readAt + 300_000).toISOString(),
+  urlSeconds: 300,
 });
 
 async function flush() {
@@ -180,4 +181,43 @@ test("a thumbnail that fails after its link ran out loads with a new link", asyn
   at.querySelector("img")?.dispatchEvent(new window.Event("error"));
   await flush();
   assert.equal(read.mock.calls.length, 2);
+});
+
+test("a photo link runs out by its own length, so a slow clock here still asks for a new one", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(NOW);
+  // The server's clock is 5 minutes ahead, so its expiry time reads 10 minutes off here.
+  const ahead = { ...photo("first", NOW + 300_000) };
+  const read = vi
+    .spyOn(adminApi, "recordPhotos")
+    .mockResolvedValueOnce({ photos: [ahead], notes: [] })
+    .mockResolvedValue({ photos: [photo("second", NOW)], notes: [] });
+  const at = region();
+  await show(at);
+  vi.setSystemTime(NOW + 300_000);
+  /** @type {HTMLElement} */ (at.querySelector("[data-photo-open]")).click();
+  await flush();
+  assert.equal(read.mock.calls.length, 2);
+  assert.equal(
+    at.querySelector("#insights-photo-viewer img")?.getAttribute("src"),
+    "second",
+  );
+});
+
+test("when a run-out link can't be renewed, the photo says so instead of opening a dead link", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(NOW);
+  vi.spyOn(adminApi, "recordPhotos")
+    .mockResolvedValueOnce({ photos: [photo("first", NOW)], notes: [] })
+    .mockRejectedValue(new Error("reporting_failed"));
+  const at = region();
+  await show(at);
+  vi.setSystemTime(NOW + 300_000);
+  /** @type {HTMLElement} */ (at.querySelector("[data-photo-open]")).click();
+  await flush();
+  assert.equal(at.querySelector("#insights-photo-viewer") === null, true);
+  assert.equal(
+    at.querySelector('[role="alert"]')?.textContent,
+    t("admin.insights.record.photoRenewFailed"),
+  );
 });

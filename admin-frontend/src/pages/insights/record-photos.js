@@ -12,7 +12,7 @@ import {
 } from "./insights.templates.js";
 import { closeOnBackdrop } from "./modal-backdrop.js";
 
-/** @typedef {{ artifactId: string, source: "check" | "update", takenAt: string | null, thumbnailUrl: string, url: string, urlExpiresAt?: string }} Photo */
+/** @typedef {{ artifactId: string, source: "check" | "update", takenAt: string | null, thumbnailUrl: string, url: string, urlExpiresAt?: string, urlSeconds?: number }} Photo */
 /** @typedef {{ source: "check" | "update", at: string | null, text: string }} Note */
 /** @typedef {{ photos: Photo[], notes: Note[] }} PhotosReply */
 /** @typedef {{ first: Promise<PhotosReply>, read: () => Promise<PhotosReply> }} PhotosRead */
@@ -78,11 +78,16 @@ export function readRecordPhotos(from, record, signal) {
   return { first: read(), read };
 }
 
-// Links run out five minutes after the read. Asking at most once a minute keeps a fast clock from asking over and over.
-/** @param {Photo} photo @param {number} readAt */
+// A length, not the server's time, so a wrong clock here can't keep an expired link.
+const PHOTO_LINK_MS = 300_000;
+
+/** A minute early, so a click never opens a link that runs out as it loads. @param {Photo} photo @param {number} readAt */
 const linkRunningOut = (photo, readAt) =>
-  Date.now() - readAt >= 60_000 &&
-  Date.parse(photo.urlExpiresAt ?? "") <= Date.now() + 60_000;
+  Date.now() - readAt >=
+  (typeof photo.urlSeconds === "number"
+    ? photo.urlSeconds * 1000
+    : PHOTO_LINK_MS) -
+    60_000;
 
 /** @param {HTMLElement} region @param {string} id */
 const photoButton = (region, id) =>
@@ -151,20 +156,22 @@ export async function showRecordPhotos(region, photos, { level, signal }) {
     if (focusedId) photoButton(region, focusedId)?.focus();
   };
   draw();
-  /** @type {Promise<void> | null} */
+  /** @type {Promise<boolean> | null} */
   let renewing = null;
+  // Resolves false when no new link came, so a click can say so.
   const renew = () =>
     (renewing ??= photos
       .read()
       .then(
         (next) => {
-          if (signal.aborted) return;
+          if (signal.aborted) return false;
           reply = next;
           readAt = Date.now();
           // Redrawing would take the open photo away; it redraws on close instead.
           if (!region.querySelector("#insights-photo-viewer")) draw();
+          return true;
         },
-        () => {},
+        () => false,
       )
       .finally(() => {
         renewing = null;
@@ -190,7 +197,18 @@ export async function showRecordPhotos(region, photos, { level, signal }) {
     if (!id) return;
     const before = shown.photos.find((p) => p.artifactId === id);
     if (!before) return;
-    if (linkRunningOut(before, readAt)) await renew();
+    region.querySelector("[data-photo-error]")?.remove();
+    if (linkRunningOut(before, readAt) && !(await renew())) {
+      if (signal.aborted) return;
+      // The old link has run out, so opening it would show a broken image.
+      region
+        .querySelector("[data-photo-strip]")
+        ?.insertAdjacentHTML(
+          "afterend",
+          `<p class="error" role="alert" data-photo-error>${escapeHtml(t("admin.insights.record.photoRenewFailed"))}</p>`,
+        );
+      return;
+    }
     const photo = shown.photos.find((p) => p.artifactId === id);
     const opener = photoButton(region, id);
     if (!photo || !opener || signal.aborted) return;

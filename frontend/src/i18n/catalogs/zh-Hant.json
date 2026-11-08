@@ -527,6 +527,7 @@
   "admin.insights.record.photoOpen.update": "Open the update photo added {time}",
   "admin.insights.record.photoOpenUndated.check": "Open the Check photo",
   "admin.insights.record.photoOpenUndated.update": "Open the update photo",
+  "admin.insights.record.photoRenewFailed": "This photo's link ran out and a new one didn't load. Try again.",
   "admin.insights.record.photoViewer": "Photo",
   "admin.insights.record.photos": "Photos and notes",
   "admin.insights.record.photosFailed": "Photos and notes didn't load.",
