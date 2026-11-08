@@ -20,7 +20,7 @@ vi.mock(import("../analytics/lake-views.js"), async (importOriginal) => ({
 
 const NOW = new Date("2026-11-05T12:00:00.000Z");
 const SNAPSHOT_ID = "2026-11-05T12-00-00-000Z";
-// One Site with one finished Check, stored as the app stores them.
+// The smallest lake that still gives the build a Site and a Check to join.
 const LAKE_ITEMS = [
   { pk: "SITE#s1", sk: "#META", siteId: "s1", status: "active" },
   {

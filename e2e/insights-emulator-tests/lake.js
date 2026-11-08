@@ -42,7 +42,7 @@ const lake = new S3Client({ forcePathStyle: true });
 const bucket = () => /** @type {string} */ (process.env.LAKE_BUCKET);
 // Its own bucket, so this build can't replace the snapshot the page specs read.
 const BUILD_BUCKET = "gnp-local-insights-e2e-build";
-// One Site with one finished Check, stored as the app stores them.
+// The smallest lake that still gives the build a Site and a Check to join.
 const LAKE_ITEMS = [
   { pk: "SITE#s1", sk: "#META", siteId: "s1", status: "active" },
   {
@@ -131,7 +131,7 @@ export async function deleteLatestProjection() {
 }
 
 /**
- * Sends the page's API calls to the local API, signed in as the local supervisor.
+ * The emulator stack has no Cognito, so the page signs in as the local debug admin.
  * @param {import("@playwright/test").Page} page
  */
 export async function useLocalApi(page) {
