@@ -303,6 +303,27 @@ describe("createSnapshotStore", () => {
     expect(waits).toEqual([100]);
   });
 
+  it("waits however long the refresh takes when refreshWaitMs is Infinity", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = createSnapshotStore({
+      source,
+      now: () => now,
+      refreshMs: 0,
+      refreshWaitMs: Infinity,
+      wait: async () => {},
+    });
+    await store.current();
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    const load = source.load.bind(source);
+    source.load = async (/** @type {string} */ prefix) => {
+      await setImmediate();
+      return load(prefix);
+    };
+    now = 1;
+    expect((await store.current()).prefix).toBe("p2");
+  });
+
   it("starts a new refresh once one has hung past the limit", async () => {
     const source = fakeSource();
     let now = 0;

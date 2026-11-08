@@ -514,12 +514,18 @@ export function reportingHandlers(env = process.env) {
     ? Number(env.INSIGHTS_REFRESH_MS)
     : NaN;
   const freshOnly = Number.isFinite(refreshMs);
+  // At 0 a request waits out the whole reload, since a slow CI runner can take over 3 s.
+  const waitMs =
+    refreshMs === 0
+      ? Infinity
+      : env.AWS_LAMBDA_FUNCTION_NAME || freshOnly
+        ? LAMBDA_REFRESH_WAIT_MS
+        : 0;
   handlers = createReportingHandlers({
     snapshots: createSnapshotStore({
       source,
       refreshMs: freshOnly ? refreshMs : undefined,
-      refreshWaitMs:
-        env.AWS_LAMBDA_FUNCTION_NAME || freshOnly ? LAMBDA_REFRESH_WAIT_MS : 0,
+      refreshWaitMs: waitMs,
       onError: (err) =>
         logServerError("admin-reporting", /** @type {Error} */ (err), {
           extra: { step: "snapshot-refresh" },
