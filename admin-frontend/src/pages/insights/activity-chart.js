@@ -129,11 +129,11 @@ function calendars(span, points, kind) {
         );
       else if (day === today)
         cells.push(
-          `<td class="insights__cal-${level(value, max)} insights__cal--partial" data-cal="${value}" data-cal-partial title="${partial}"><span>${n}</span>${value}</td>`,
+          `<td class="insights__cal-${level(value, max)} insights__cal--partial" data-cal="${value}" data-cal-level="${level(value, max)}" data-cal-partial title="${partial}"><span>${n}</span>${value}</td>`,
         );
       else
         cells.push(
-          `<td class="insights__cal-${level(value, max)}" data-cal="${value}"><span>${n}</span>${value}</td>`,
+          `<td class="insights__cal-${level(value, max)}" data-cal="${value}" data-cal-level="${level(value, max)}"><span>${n}</span>${value}</td>`,
         );
     }
     while (cells.length % 7) cells.push("<td></td>");

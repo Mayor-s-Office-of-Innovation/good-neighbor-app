@@ -404,7 +404,7 @@ test("contacts show the details on the Site's record, and a missing one says why
   );
   assert.equal(
     text('[data-contact="public"] a[href^="tel:"]'),
-    "4155550100 ext. 12",
+    `4155550100 ${t("siteAdmin.phoneExtension", { extension: "12" })}`,
   );
   assert.ok(
     text('[data-contact="site"]').includes(

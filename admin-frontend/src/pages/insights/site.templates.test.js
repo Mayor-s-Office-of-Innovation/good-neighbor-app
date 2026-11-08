@@ -40,10 +40,16 @@ function drawn(change, page = {}, more = "") {
 
 test("an Issue row names its severity in words, as Overview does", () => {
   const box = drawn({ severity: 5 });
-  const sev = /** @type {HTMLElement} */ (box.querySelector(".insights__sev"));
-  // A boolean, since a failing assert would print the whole DOM node.
-  assert.equal(sev.querySelector(".visually-hidden") === null, true);
-  assert.equal(sev.textContent, t("admin.insights.severity.severe"));
+  const sev = /** @type {HTMLElement} */ (
+    box.querySelector('[data-severity="severe"]')
+  );
+  // Plain text, not a screen-reader-only span, so sighted users read it too.
+  assert.deepEqual(
+    [...sev.childNodes]
+      .filter((n) => n.nodeType === Node.TEXT_NODE)
+      .map((n) => n.textContent),
+    [t("admin.insights.severity.severe")],
+  );
 });
 
 test("a response with no recorded time reads Unknown, not No response", () => {

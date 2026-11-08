@@ -97,12 +97,15 @@ test("a running period's last day is drawn as partial and doesn't set the shadin
   );
   const cells = [...box.querySelectorAll("td[data-cal]")].slice(0, 4);
   assert.deepEqual(
-    cells.map((c) => [c.className, c.hasAttribute("data-cal-partial")]),
+    cells.map((c) => [
+      c.getAttribute("data-cal-level"),
+      c.hasAttribute("data-cal-partial"),
+    ]),
     [
-      ["insights__cal-3", false],
-      ["insights__cal-3", false],
-      ["insights__cal-3", false],
-      ["insights__cal-3 insights__cal--partial", true],
+      ["3", false],
+      ["3", false],
+      ["3", false],
+      ["3", true],
     ],
   );
   assert.equal(
