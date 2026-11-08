@@ -42,6 +42,7 @@ const LAKE_INPUT_SQL = {
   in_checks: `SELECT siteId, checkId, status, raw->>'$.flowType' AS flowType,
     startedAt, completedAt, synthesizedAt FROM checks`,
   in_sites: `SELECT siteId, raw->>'$.status' AS status,
+    raw->>'$.deactivatedAt' AS deactivatedAt,
     raw->>'$.updatedAt' AS updatedAt FROM sites`,
   in_terms: `SELECT siteId, termsVersionId,
     raw->>'$.effectiveStart' AS effectiveStart, raw->>'$.createdAt' AS createdAt,
@@ -266,7 +267,7 @@ const INPUT_SCHEMAS = {
     completedAt: V,
     synthesizedAt: V,
   },
-  in_sites: { siteId: V, status: V, updatedAt: V },
+  in_sites: { siteId: V, status: V, deactivatedAt: V, updatedAt: V },
   // Text, as the lake's JSON gives it, so rows handed in and lake rows are judged alike.
   in_terms: {
     siteId: V,

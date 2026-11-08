@@ -302,8 +302,8 @@ SELECT siteId, termsVersionId, effectiveStart, createdAt,
 FROM typed;
 
 -- Owing runs from a Site's first term to the snapshot. Closing a Site leaves
--- its terms open, so owing stops at the close; the app records no close
--- date, so the closed Site's last update stands in.
+-- its terms open, so owing stops at the close. Sites closed before the app
+-- recorded deactivatedAt fall back to their last update.
 CREATE OR REPLACE TEMP TABLE p_checks_owed AS
 WITH spans AS (
   -- A cancelled or unreadable start never applied, so it can't move the first day.
@@ -311,11 +311,12 @@ WITH spans AS (
     strftime(min(TRY_CAST(t.effectiveStart AS DATE))
       FILTER (WHERE NOT t.cancelled), '%Y-%m-%d') AS firstDay,
     CASE WHEN s.status = 'inactive'
-      THEN strftime(pacific_day(parse_time(s.updatedAt)), '%Y-%m-%d')
+      THEN strftime(pacific_day(parse_time(
+        coalesce(nullif(s.deactivatedAt, ''), s.updatedAt))), '%Y-%m-%d')
       ELSE strftime(pacific_day(snapshot_at()), '%Y-%m-%d') END AS lastDay
   FROM in_sites s
   JOIN term_versions t ON t.siteId = s.siteId
-  GROUP BY s.siteId, s.status, s.updatedAt),
+  GROUP BY s.siteId, s.status, s.deactivatedAt, s.updatedAt),
 -- No days for a close before the first term; a close time that can't be read
 -- compares false, so that Site owes nothing rather than owing forever.
 days AS (

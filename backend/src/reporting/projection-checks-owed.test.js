@@ -184,14 +184,27 @@ describe("checks_owed in the projection", () => {
         },
         // Closed, at a time that can't be read.
         { siteId: "s3", status: "inactive", updatedAt: "garbage" },
+        // Closed Oct 15; a term sweep touched it again on Oct 19.
+        {
+          siteId: "s4",
+          status: "inactive",
+          deactivatedAt: "2026-10-15T20:00:00.000Z",
+          updatedAt: "2026-10-19T20:00:00.000Z",
+        },
       ],
       [
         terms("s1", "2026-10-15"),
         terms("s2", "2026-10-15"),
         terms("s3", "2026-10-15"),
+        terms("s4", "2026-10-14"),
       ],
     );
-    expect(owed).toEqual({ "s1 2026-10-15": 3, "s1 2026-10-16": 3 });
+    expect(owed).toEqual({
+      "s1 2026-10-15": 3,
+      "s1 2026-10-16": 3,
+      "s4 2026-10-14": 3,
+      "s4 2026-10-15": 3,
+    });
   });
 
   it("stops at the snapshot's day and skips terms that start after it", async () => {
@@ -311,9 +324,11 @@ const EDGE_ITEMS = [
     expiresOnExclusive: "2026-09-15",
   }),
   lakeTerms("e01", "2026-09-20", { requiredChecksPerDay: undefined }),
+  // Closed Sep 11; renamed after, which moved its updatedAt.
   lakeSite("e02", {
     status: "inactive",
-    updatedAt: "2026-09-12T05:00:00.000Z",
+    deactivatedAt: "2026-09-12T05:00:00.000Z",
+    updatedAt: "2026-09-20T17:00:00.000Z",
   }),
   lakeTerms("e02", "2026-09-01"),
   lakeSite("e03", {
@@ -341,8 +356,8 @@ const EDGE_ITEMS = [
 ];
 
 /**
- * What the Check report's resolver owes each Site, cut at a closed Site's
- * last update, the close date the projection uses.
+ * What the Check report's resolver owes each Site, cut at the close day each
+ * fixture gives: when it was closed, or for older Sites its last update.
  * @param {Record<string, any>[]} items
  * @param {string} evaluatedAt
  */
@@ -364,7 +379,9 @@ function resolverOwed(items, evaluatedAt) {
       .sort();
     if (!starts.length) continue;
     const last =
-      site.status === "inactive" ? pacificDateKey(site.updatedAt) : today;
+      site.status === "inactive"
+        ? pacificDateKey(site.deactivatedAt ?? site.updatedAt)
+        : today;
     if (!last) continue;
     const { owedOn } = checksOwedResolver(site, own, today);
     const end = addDays(last < today ? last : today, 1);

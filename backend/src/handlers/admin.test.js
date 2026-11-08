@@ -1092,6 +1092,14 @@ describe("provider and site management", () => {
     const transaction = /** @type {TransactWriteCommand} */ (
       send.mock.calls[1][0]
     );
+    // Its own close time, since later edits and term sweeps move updatedAt.
+    const meta = transaction.input.TransactItems?.find(
+      (item) => item.Update?.Key?.sk === "#META",
+    )?.Update;
+    expect(meta?.UpdateExpression).toContain("deactivatedAt = :now");
+    expect(JSON.parse(res.body).site.deactivatedAt).toBe(
+      meta?.ExpressionAttributeValues?.[":now"],
+    );
     expect(transaction.input.TransactItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

@@ -508,6 +508,10 @@ export function generateYear(opts = {}) {
       : -1;
     const createdDay = days[first];
     const archived = last !== Infinity;
+    // Archived late on its last day, after that day's Checks.
+    const closedAt = archived
+      ? iso(Math.min(cutoff, Date.parse(at(days[last], 23 * 60 + 30))))
+      : "";
     // One Site keeps a stored contact the app's own check would reject.
     const invalidStored = s === lastWithPublicContact;
     // Some posted contacts lack one part, so pages show which part is missing.
@@ -581,10 +585,8 @@ export function generateYear(opts = {}) {
       },
       // Midnight, so the Site exists before its first day's Checks.
       createdAt: at(createdDay, 0),
-      // Archived late on its last day, after that day's Checks.
-      updatedAt: archived
-        ? iso(Math.min(cutoff, Date.parse(at(days[last], 23 * 60 + 30))))
-        : at(createdDay, 0),
+      ...(archived && { deactivatedAt: closedAt }),
+      updatedAt: archived ? closedAt : at(createdDay, 0),
     });
     answers.profiles[siteId] = profile.key;
     // Terms from the day the Site opens. Closing a Site leaves them open, as
