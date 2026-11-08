@@ -461,6 +461,7 @@
   "admin.insights.siteIssues.notYetDue": "Not yet due",
   "admin.insights.siteIssues.onTime": "On time",
   "admin.insights.siteIssues.overdueDueWithin": "Overdue (due within {expected})",
+  "admin.insights.siteIssues.tookTwoUnits": "{larger} {smaller}",
   "admin.insights.siteMeta.manager": "Program manager {name}",
   "admin.insights.siteNotFound": "This Site isn't in the reporting data. It may have been added since the last update.",
   "admin.insights.tableCaption": "Sites for {period}",

@@ -223,6 +223,12 @@
   opacity: 0.6;
 }
 
+/* Still focusable while its page loads, so a keyboard user's place survives the redraw. */
+[data-load-more][aria-disabled="true"] {
+  cursor: progress;
+  opacity: 0.6;
+}
+
 .insights__why-wrap > button wa-spinner {
   vertical-align: -0.125em;
 }
@@ -311,7 +317,7 @@
   background: var(--line);
 }
 
-/* Darker than the chart colours: on Site Issue rows the dot is the only visible severity, so it needs 3:1. */
+/* Darker than the chart colours, so each dot reaches 3:1 against the page. */
 [data-severity="severe"] .insights__dot {
   background: var(--insights-red);
 }

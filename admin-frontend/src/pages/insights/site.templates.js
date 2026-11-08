@@ -378,12 +378,48 @@ const duration = (ms) =>
 const between = (from, to) =>
   to ? duration(Date.parse(to) - Date.parse(from)) : "";
 
+const UNITS = /** @type {const} */ ([
+  ["days", 86_400_000],
+  ["hours", 3_600_000],
+  ["minutes", 60_000],
+]);
+
+/**
+ * Two units, the smaller rounded up, so "4 hours 20 minutes" never reads as
+ * its "due within 4 hours".
+ * @param {number} ms
+ */
+function lateTime(ms) {
+  const at = UNITS.findIndex(([, size]) => ms >= size);
+  if (at < 0 || at === UNITS.length - 1) return duration(ms);
+  const [big, bigSize] = UNITS[at];
+  const [small, smallSize] = UNITS[at + 1];
+  const whole = Math.floor(ms / bigSize);
+  const rest = Math.ceil((ms - whole * bigSize) / smallSize);
+  const larger = t(`reports.issues.duration.${big}`, { count: whole });
+  if (!rest) return larger;
+  // Rounding the rest up can reach a whole larger unit, as 59.5 minutes does.
+  if (rest * smallSize >= bigSize) return lateTime((whole + 1) * bigSize);
+  return t("admin.insights.siteIssues.tookTwoUnits", {
+    larger,
+    smaller: t(`reports.issues.duration.${small}`, { count: rest }),
+  });
+}
+
 /** @param {Reply} issue */
 function responseTimeCell(issue) {
-  const took = between(issue.createdAt, issue.firstResponseAt);
-  return took
-    ? escapeHtml(took)
-    : `<span class="muted" data-tone="muted">${escapeHtml(t("admin.insights.siteIssues.noResponse"))}</span>`;
+  const ms = issue.firstResponseAt
+    ? Date.parse(issue.firstResponseAt) - Date.parse(issue.createdAt)
+    : NaN;
+  const took =
+    issue.responseState === "late" && Number.isFinite(ms) && ms >= 0
+      ? lateTime(ms)
+      : between(issue.createdAt, issue.firstResponseAt);
+  if (took) return escapeHtml(took);
+  // Answered, but with no time on record.
+  if (issue.responseState === "unknown")
+    return `<span class="insights__unknown" data-tone="unknown">${escapeHtml(t("admin.insights.response.unknown"))}</span>`;
+  return `<span class="muted" data-tone="muted">${escapeHtml(t("admin.insights.siteIssues.noResponse"))}</span>`;
 }
 
 /**
@@ -432,7 +468,7 @@ function moreView(issues, more) {
       ? `<p class="error">${escapeHtml(more)}</p>`
       : "";
   const button = issues.nextCursor
-    ? `<p><button type="button" class="btn-secondary" data-load-more ${more === "loading" ? "disabled" : ""}>${escapeHtml(t("admin.status.loadMore"))}</button></p>`
+    ? `<p><button type="button" class="btn-secondary" data-load-more${more === "loading" ? ' aria-disabled="true"' : ""}>${escapeHtml(t("admin.status.loadMore"))}</button></p>`
     : "";
   return `${count}${failed}${button}`;
 }
@@ -471,10 +507,8 @@ export function siteIssuesView({
       <thead role="rowgroup"><tr role="row">${ISSUE_COLUMNS.map((key) => `<th role="columnheader" scope="col">${escapeHtml(colLabel(key))}</th>`).join("")}</tr></thead>
       <tbody role="rowgroup">${rows
         .map((i) => {
-          const band = severityBand(i.severity);
-          // The space keeps the hidden severity word apart from the category when read aloud.
           return `<tr role="row" data-issue-row="${escapeHtml(i.issueId)}">
-        <th role="rowheader" scope="row" data-label="${escapeHtml(colLabel("issue"))}"><span class="insights__sev" data-severity="${band}"><span class="insights__dot" aria-hidden="true"></span><span class="visually-hidden">${escapeHtml(t(`admin.insights.severity.${band}`))}</span></span> ${escapeHtml(i.category ? rulebookText(i.category, "rulebook.category") : t("admin.insights.issue.categoryUnknown"))}</th>
+        <th role="rowheader" scope="row" data-label="${escapeHtml(colLabel("issue"))}">${bandView(severityBand(i.severity))} ${escapeHtml(i.category ? rulebookText(i.category, "rulebook.category") : t("admin.insights.issue.categoryUnknown"))}</th>
         <td role="cell" data-label="${escapeHtml(colLabel("createdAt"))}" data-issue-created>${escapeHtml(formatInstant(i.createdAt))}</td>
         <td role="cell" data-label="${escapeHtml(colLabel("responseTime"))}" data-issue-took>${responseTimeCell(i)}</td>
         <td role="cell" data-label="${escapeHtml(colLabel("onTime"))}" data-issue-on-time>${onTimeCell(i)}</td>

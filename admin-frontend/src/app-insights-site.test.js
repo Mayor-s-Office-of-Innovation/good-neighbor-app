@@ -975,6 +975,39 @@ test("Load more adds the next Issues under the ones shown", async () => {
   assert.ok(missing('[data-list="response"] [data-issues-shown]'));
 });
 
+test("Load more keeps keyboard focus while its page loads, and a second press asks once", async () => {
+  const held = gate();
+  const { api } = await mountAdmin("/insights/sites/s1?period=2026-10", {
+    insights: true,
+    setup: (a) =>
+      a.on("GET", /^reporting\/issues/, async (/** @type {any} */ r) => {
+        const params = new URLSearchParams(r.search);
+        const cursor = params.get("cursor");
+        params.delete("cursor");
+        const reply = a.reply({ ...r, search: `?${params}` });
+        if (!params.get("responseState")) return reply;
+        if (cursor) await held.promise;
+        Object.assign(reply.json, { total: 3, nextCursor: "next" });
+        return reply;
+      }),
+  });
+  const more = '[data-list="response"] [data-load-more]';
+  $(more).focus();
+  await click(more);
+  assert.ok(focused(more));
+  assert.equal($(more).getAttribute("aria-disabled"), "true");
+  await click(more);
+  held.release();
+  await settle();
+  assert.equal(
+    api
+      .calls("GET", /^reporting\/issues/)
+      .filter((/** @type {any} */ c) => c.search.includes("cursor=")).length,
+    1,
+  );
+  assert.ok(focused(more));
+});
+
 test("a Site that can't load before the server names a period still steps from this month", async () => {
   // 10 pm on 31 October in San Francisco is already November in UTC.
   vi.useFakeTimers({
