@@ -111,8 +111,9 @@ the Cognito email key policy changing to name the plan role, since its
 `deploy.yml` won't make that change.
 
 The first plan may fail with AccessDenied while refreshing the CloudWatch Omni access grants
-(`omni.tf`), because `ReadOnlyAccess` may not cover that service. The error names the missing
-action; add it to the `plan` policy in `plan-role.tf`.
+(`omni.tf`), because `ReadOnlyAccess` may not cover that service. The log shows the error class
+and resource address but not the action, so work out the action from that `omni.tf` resource
+and add it to the `plan` policy in `plan-role.tf`.
 
 ## Production DNS bootstrap
 
