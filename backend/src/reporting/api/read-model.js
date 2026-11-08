@@ -643,11 +643,10 @@ function outcomeFilters(filters) {
 // Must cover every key in SORTS.sites; a test holds the two together.
 const SITE_SORT_VALUE = {
   /** @param {any} r */ name: (r) => r.name ?? r.siteId,
-  // Long-unresolved leaves out overdue and late, so no Issue counts twice.
+  // Each column sorts by the number it shows, so none ranks by a hidden total.
   /** @param {any} r */ overdueLate: (r) =>
-    r.response.overdue + r.response.late + r.longUnresolved,
+    r.response.overdue + r.response.late,
   /** @param {any} r */ maxSeverity: (r) => r.maxSeverity,
-  // The rates the columns show, so a sort never ranks by a hidden total.
   /** @param {any} r */ checksPerDay: (r) => r.checksPerDay,
   /** @param {any} r */ issuesPer30Days: (r) => r.issuesPer30Days,
 };

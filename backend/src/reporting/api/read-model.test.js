@@ -302,8 +302,18 @@ describe("overview", () => {
       list: list("sites", { sort: "overdueLate", dir: "asc" }),
       now: NOW,
     });
-    // Long-unresolved Issues count too: s1 has two, s2 one.
-    expect(res.sites.map((s) => s.siteId)).toEqual(["s3", "s2", "s1"]);
+    // The cell's number only: s1's long-unresolved Issue doesn't break the tie.
+    expect(
+      res.sites.map((s) => [
+        s.siteId,
+        s.response.overdue + s.response.late,
+        s.longUnresolved,
+      ]),
+    ).toEqual([
+      ["s3", 0, 0],
+      ["s1", 1, 1],
+      ["s2", 1, 0],
+    ]);
   });
 
   it("sorts the Checks and Issues columns by the rates they show, not by totals", () => {
