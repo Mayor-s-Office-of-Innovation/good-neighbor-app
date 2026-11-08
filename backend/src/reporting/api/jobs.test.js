@@ -399,6 +399,46 @@ describe("createJobs", () => {
     });
   });
 
+  it("drops a job that timed out in the queue, since its requester was told it failed", async () => {
+    let renders = 0;
+    const { jobs, clock, request } = setup({
+      render: async () => {
+        renders += 1;
+        return { body: "x", contentType: "text/csv", filename: "f", rows: 1 };
+      },
+    });
+    const { job } = await jobs.create("owner1", {
+      ...request,
+      idempotencyKey: "k1",
+    });
+    clock.now = T0 + JOB_LIMITS.queueWaitMs + 1;
+    expect((await jobs.get("owner1", job.jobId)).error).toBe("job_timed_out");
+    await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
+    expect(renders).toBe(0);
+    expect((await jobs.get("owner1", job.jobId)).state).toBe("failed");
+  });
+
+  it("keeps a timed-out run cancelled, so its redelivery doesn't rerun it", async () => {
+    let renders = 0;
+    const { jobs, store, clock, request } = setup({
+      render: async () => {
+        renders += 1;
+        return { body: "x", contentType: "text/csv", filename: "f", rows: 1 };
+      },
+    });
+    const { job } = await jobs.create("owner1", {
+      ...request,
+      idempotencyKey: "k1",
+    });
+    const record = /** @type {any} */ (await store.get("owner1", job.jobId));
+    await store.put("owner1", job.jobId, { ...record, state: "running" });
+    clock.now = T0 + JOB_LIMITS.stallMs + 1;
+    expect((await jobs.cancel("owner1", job.jobId)).state).toBe("cancelled");
+    await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
+    expect(renders).toBe(0);
+    expect((await jobs.get("owner1", job.jobId)).state).toBe("cancelled");
+  });
+
   it("doesn't rerun a job that failed with its own error", async () => {
     let renders = 0;
     const { jobs, request } = setup({
@@ -426,7 +466,9 @@ describe("createJobs", () => {
     const lambda = seconds(
       /"aws_lambda_function" "insights_jobs"[\s\S]*?\n {2}timeout\s*=\s*(\d+)/,
     );
-    const visibility = seconds(/visibility_timeout_seconds = (\d+)/);
+    const visibility = seconds(
+      /"aws_sqs_queue" "insights_jobs" \{[\s\S]*?\n {2}visibility_timeout_seconds\s*=\s*(\d+)/,
+    );
     expect(lambda).toBeLessThan(JOB_LIMITS.stallMs);
     expect(JOB_LIMITS.stallMs).toBeLessThan(visibility);
   });

@@ -30,6 +30,7 @@ export const JOB_LIMITS = Object.freeze({
  * @property {string} expiresAt
  * @property {number} attempts
  * @property {string | null} error
+ * @property {"queued" | "running" | null} [timedOutIn] the state a status poll timed it out from
  * @property {{ filename: string, contentType: string, rows: number, bytes: number } | null} result
  * @property {Record<string, any> | null} dataQuality
  */
@@ -236,7 +237,13 @@ export function createJobs({
       throw requestError("job_expired", 410);
     return update(ownerKey, read, (r) =>
       isStalled(r)
-        ? { ...r, state: "failed", error: "job_timed_out", updatedAt: iso() }
+        ? {
+            ...r,
+            state: "failed",
+            error: "job_timed_out",
+            timedOutIn: /** @type {"queued" | "running"} */ (r.state),
+            updatedAt: iso(),
+          }
         : null,
     );
   };
@@ -277,6 +284,7 @@ export function createJobs({
         params: retryParams,
         state: /** @type {JobState} */ ("queued"),
         error: null,
+        timedOutIn: null,
         attempts: existing.attempts + 1,
         snapshotId: fresh.snapshotId,
         snapshotPrefix: fresh.prefix,
@@ -339,7 +347,10 @@ export function createJobs({
         await load(ownerKey, jobId),
         (r) => {
           if (r.state === "succeeded") throw requestError("job_finished", 409);
-          if (r.state === "failed" || r.state === "cancelled") return null;
+          // One that timed out while running is rerun on redelivery, so the cancel must stick.
+          const rerunnable = r.timedOutIn === "running";
+          if ((r.state === "failed" && !rerunnable) || r.state === "cancelled")
+            return null;
           return { ...r, state: "cancelled", updatedAt: iso() };
         },
       );
@@ -351,13 +362,20 @@ export function createJobs({
       const read = await store.read(ownerKey, jobId);
       if (!read) return;
       // SQS delivers at least once; a live run or a cancel ends it here. A job a
-      // status poll timed out reruns: returning would delete the message, and a
-      // job that always dies would never reach the DLQ.
+      // status poll timed out while running reruns: returning would delete the
+      // message, and a job that always dies would never reach the DLQ. One that
+      // timed out in the queue never started; its requester was told it failed.
       const claim = await update(ownerKey, read, (r) =>
         r.state === "queued" ||
         (r.state === "running" && isStalled(r)) ||
-        (r.state === "failed" && r.error === "job_timed_out")
-          ? { ...r, state: "running", error: null, updatedAt: iso() }
+        (r.state === "failed" && r.timedOutIn === "running")
+          ? {
+              ...r,
+              state: "running",
+              error: null,
+              timedOutIn: null,
+              updatedAt: iso(),
+            }
           : null,
       );
       if (!claim.changed) return;
