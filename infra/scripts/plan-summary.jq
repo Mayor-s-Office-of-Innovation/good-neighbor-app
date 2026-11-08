@@ -1,6 +1,8 @@
 # One line per changed resource for plan-dev.yml's public summary: the action, the
 # address and, for an update or replace, the names of changed top-level attributes.
 # Values never appear, because a plan holds Lambda environments and secrets.
+include "public-address" {search: "./"};
+
 def unknown($u): [$u | .. | select(. == true)] | length > 0;
 def changed:
   (.before // {}) as $b | (.after // {}) as $a | (.after_unknown // {}) as $u
@@ -8,7 +10,7 @@ def changed:
 
 [.resource_changes[]? | select(.change.actions != ["no-op"])]
 | sort_by(.address)[]
-| "\(.change.actions | join("+"))\t\(.address)" + (
+| "\(.change.actions | join("+"))\t\(.address | public_address)" + (
     if (.change.before | type) == "object" and (.change.after | type) == "object" then
       "\t\(.change | changed | join(","))"
       + (if (.change.replace_paths // []) | length > 0

@@ -6,11 +6,14 @@ import { fileURLToPath } from "node:url";
 const filter = fileURLToPath(new URL("./plan-diagnostics.jq", import.meta.url));
 
 const PRIVATE_LINE =
-  "Summaries are withheld from this public log; run terraform plan in infra/environments/dev with dev credentials to read them.";
+  "Summaries are withheld from this public log; the last column names the error class. Full text needs a plan run with the plan role's own permissions, such as a maintainer assuming an equivalent read-only role.";
 
-/** @param {string[]} lines what `terraform plan -json` wrote to stdout and stderr */
-function diagnostics(lines) {
-  const result = spawnSync("jq", ["-n", "-R", "-r", "-f", filter], {
+/**
+ * @param {string[]} lines what `terraform plan -json` wrote to stdout and stderr
+ * @param {string} [status] the plan's exit status, as plan-dev.yml passes it
+ */
+function diagnostics(lines, status = "0") {
+  const result = spawnSync("jq", ["-n", "-R", "-r", "--arg", "status", status, "-f", filter], {
     input: lines.join("\n"),
     encoding: "utf8",
   });
@@ -42,7 +45,7 @@ test("prints each error's level, address and line, then how to read the rest", (
     }),
   ]);
   assert.deepEqual(out, [
-    "error\tmodule.app.aws_lambda_function.analysis\t../../modules/app/analysis-worker.tf:36",
+    "error\tmodule.app.aws_lambda_function.analysis\t../../modules/app/analysis-worker.tf:36\tAccessDeniedException",
     PRIVATE_LINE,
   ]);
 });
@@ -57,13 +60,13 @@ for (const [name, summary] of [
 ]) {
   test(`never prints a summary with ${name}`, () => {
     const out = diagnostics([diagnosticLine({ severity: "warning", summary, detail: summary })]);
-    assert.deepEqual(out, ["warning\t-\t-", PRIVATE_LINE]);
+    assert.deepEqual(out, ["warning\t-\t-\t-", PRIVATE_LINE]);
     assert.ok(!out.join("\n").includes(SECRET));
   });
 
   test(`never prints a plain-text error line with ${name}`, () => {
     const out = diagnostics([`│ Error: ${summary}`]);
-    assert.deepEqual(out, ["error\t-\t-", PRIVATE_LINE]);
+    assert.deepEqual(out, ["error\t-\t-\t-", PRIVATE_LINE]);
   });
 }
 
@@ -77,12 +80,72 @@ for (const [name, address, expected] of [
   ],
   ["a key with an escaped quote", `aws_iam_role.r["a\\"]${SECRET}"]`, "aws_iam_role.r[…]"],
   ["an unclosed key", `aws_iam_role.r["${SECRET}`, "aws_iam_role.r[…]"],
+  ["text outside the brackets", `aws_iam_role.r["a"] ${SECRET}: bad`, "-"],
+  ["an object", { name: SECRET }, "-"],
 ]) {
   test(`cuts ${name} from an address, since for_each and count keys can hold a value`, () => {
     const out = diagnostics([diagnosticLine({ severity: "error", summary: "x", address })]);
-    assert.deepEqual(out, [`error\t${expected}\t-`, PRIVATE_LINE]);
+    assert.deepEqual(out, [`error\t${expected}\t-\t-`, PRIVATE_LINE]);
   });
 }
+
+for (const [name, filename] of [
+  ["an absolute path", "/home/runner/work/main.tf"],
+  ["a space", `modules/${SECRET} x.tf`],
+  ["a non-.tf file", `modules/${SECRET}.tfvars`],
+  ["a number", 42],
+]) {
+  test(`prints - for a filename with ${name}`, () => {
+    const out = diagnostics([
+      diagnosticLine({ severity: "error", summary: "x", range: { filename, start: { line: 3 } } }),
+    ]);
+    assert.deepEqual(out, ["error\t-\t-\t-", PRIVATE_LINE]);
+  });
+}
+
+test("prints - for a range that is a string, and keeps the other columns", () => {
+  const out = diagnostics([
+    diagnosticLine({ severity: "warning", summary: "x", address: "aws_iam_role.r", range: SECRET }),
+  ]);
+  assert.deepEqual(out, ["warning\taws_iam_role.r\t-\t-", PRIVATE_LINE]);
+});
+
+test("prints a fixed line for a malformed diagnostic and keeps the others", () => {
+  const out = diagnostics([
+    JSON.stringify({ type: "diagnostic", diagnostic: SECRET }),
+    diagnosticLine({ severity: "error", summary: "x", address: "aws_iam_role.r" }),
+  ]);
+  assert.deepEqual(out, ["error\t-\t-\t-", "error\taws_iam_role.r\t-\t-", PRIVATE_LINE]);
+});
+
+for (const [summary, expected] of [
+  [`reading IAM Role (${SECRET}): AccessDenied: not authorized`, "AccessDenied"],
+  [`operation error Lambda: GetFunction, AccessDeniedException: ${SECRET}`, "AccessDeniedException"],
+  [`UnauthorizedOperation: ${SECRET}`, "UnauthorizedOperation"],
+  [`ResourceNotFoundException: ${SECRET}`, "ResourceNotFoundException"],
+  [`NoSuchEntity: role ${SECRET}`, "NoSuchEntity"],
+  [`ThrottlingException: Rate exceeded`, "ThrottlingException"],
+  [`ExpiredToken: ${SECRET}`, "ExpiredToken"],
+  [`InvalidClientTokenId: ${SECRET}`, "InvalidClientTokenId"],
+  [`ValidationException: ${SECRET}`, "ValidationException"],
+  [`Invalid value for ${SECRET}`, "-"],
+  [`MyAccessDeniedThing ${SECRET}`, "-"],
+]) {
+  test(`prints ${expected === "-" ? "- for an unmatched" : `only the class ${expected} from a`} summary`, () => {
+    const out = diagnostics([diagnosticLine({ severity: "error", summary })]);
+    assert.deepEqual(out, [`error\t-\t-\t${expected}`, PRIVATE_LINE]);
+  });
+}
+
+test("strips colour codes before reading an Error: line", () => {
+  const out = diagnostics([`\u001b[31m╷\u001b[0m`, `\u001b[31m│\u001b[0m \u001b[1m\u001b[31mError: \u001b[0m\u001b[0m${SECRET}`]);
+  assert.deepEqual(out, ["error\t-\t-\t-", PRIVATE_LINE]);
+});
+
+test("prints how to read errors when the plan fails with nothing recognised", () => {
+  assert.deepEqual(diagnostics([`panic: ${SECRET}`], "1"), [PRIVATE_LINE]);
+  assert.deepEqual(diagnostics([], "0"), []);
+});
 
 test("drops planned changes and other messages, which carry attribute values", () => {
   const out = diagnostics([

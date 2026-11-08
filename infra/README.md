@@ -78,8 +78,10 @@ changing anything. Run it from the Actions tab; the summary lists the action and
 changed resource, and the names of the attributes an update changes. It publishes no values: this
 repo is public, and the role can read Lambda environment values, so the plan's text stays on the
 runner. If the plan fails, the log shows only each error's level, resource address (with any
-`[...]` key cut) and file line, since error text can quote state; run `terraform plan` in
-`infra/environments/dev` with dev credentials to read the errors. It uses the read-only role in
+`[...]` key cut), file line and error class, such as `AccessDenied`, since error text can quote
+state. The error class names the kind of failure. The full text needs a plan run with the plan
+role's own permissions, such as a maintainer assuming an equivalent read-only role, because a plan
+with dev credentials won't hit the same denials. It uses the read-only role in
 `infra/modules/app/plan-role.tf`, through a `dev-plan` GitHub Environment that holds the secrets
 `AWS_ACCOUNT_ID` and `AWS_PLAN_ROLE_ARN` (the `terraform_plan_role_arn` output), and the variable
 `AWS_REGION`.

@@ -82,3 +82,18 @@ test("prints nothing for a plan with no changes", () => {
   assert.deepEqual(summarize({ resource_changes: [] }), []);
   assert.deepEqual(summarize({}), []);
 });
+
+for (const [name, address, expected] of [
+  ["a for_each key", `aws_sns_topic_subscription.emails["${SECRET}@example.com"]`, "aws_sns_topic_subscription.emails[…]"],
+  ["a count key", "aws_iam_role.r[2]", "aws_iam_role.r[…]"],
+  ["text outside the brackets", `aws_iam_role.r["a"] ${SECRET}`, "-"],
+  ["an object", { name: SECRET }, "-"],
+]) {
+  test(`cuts ${name} from an address, since keys can hold a value`, () => {
+    const out = summarize({
+      resource_changes: [{ address, change: { actions: ["create"], before: null, after: {} } }],
+    });
+    assert.deepEqual(out, [`create\t${expected}`]);
+    assert.ok(!out.join("\n").includes(SECRET));
+  });
+}
