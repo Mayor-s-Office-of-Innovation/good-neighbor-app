@@ -500,15 +500,13 @@ npm run insights:load -w backend
 # options: -- --copies 21 (about 500 Sites) --rounds 20 --parallel 10
 ```
 
-To compare read designs for Insights (A: the whole projection in memory, as
-the analytics Lambda reads it today; B: DuckDB querying the Parquet files per
-request; C: an Arrow file of Site-day totals, as the browser would read it),
-with each answer checked across designs, and the cold time, warm time and
-peak memory of each in its own 2 GB Node process:
+To time the read design picked for Insights (DuckDB querying the Parquet
+files per request) at larger sizes, with the cold time, warm time and peak
+memory of each query in its own 2 GB Node process:
 
 ```sh
 npm run insights:bench -w backend
-# options: -- --sites 500,1000 --years 1,2 --runs 30 --designs A,B,C --threads 1
+# options: -- --sites 500,1000 --years 1,2 --runs 30 --threads 1
 ```
 
 Sizes are copies of the `insights:data` Sites and year, built once into

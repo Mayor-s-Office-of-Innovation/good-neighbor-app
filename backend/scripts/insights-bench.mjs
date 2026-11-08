@@ -1,21 +1,14 @@
-// Times three ways to read Insights data and how much memory each needs, so
-// the read design can be picked on numbers. The analytics Lambda has 2 GB.
+// Times design B, the Insights read the plan picked: one long-lived DuckDB
+// instance queries the Parquet files per request. The analytics Lambda has 2 GB.
 //
 //   npm run insights:bench -w backend -- [--sites 500,1000] [--years 1,2] [--runs 30]
 //
-// Designs, each answering the same requests:
-// - A: PR 3 as built. Every projection table is loaded into memory as rows
-//   and indexed (snapshot.js), then read-model.js answers.
-// - B: one long-lived DuckDB instance queries the Parquet files on disk per
-//   request. Files are sorted by day and cut into 16,384-row groups, so a
-//   period's query skips the other days' row groups and unused columns.
-// - C: the architecture doc's browser file (decision 3 and 4): Arrow IPC of
-//   Site-day totals plus a Site table, decoded with apache-arrow in Node as a
-//   stand-in for the browser. It holds no Issue facts, so it answers Overview
-//   and Trends only, without max severity or Issue categories.
-// Queries: Overview and Trends for the 12 months before this month (Trends
-// by department), Site detail for the same 12 months, and last month's
-// first page of Issues.
+// Files are sorted by day and cut into 16,384-row groups, so a period's query
+// skips the other days' row groups and unused columns. Queries: Overview and
+// Trends for the 12 months before this month (Trends by department), Site
+// detail for the same 12 months, and last month's first page of Issues.
+// The in-memory and browser designs it was picked over were measured on
+// 11/05; their numbers are in the architecture doc.
 //
 // Input is the projection from `npm run insights:data` (24 Sites, a year).
 // Sizes are made from it by copying each Site's rows under new Site IDs,
@@ -23,40 +16,36 @@
 // data's span. Copies change the size, not the rules. Built files are kept in
 // backend/.local/insights-bench/ and reused while the input is unchanged.
 //
-// Each design × query × size runs in its own Node process with
-// --max-old-space-size=2048, the Lambda's memory, so one design's garbage
+// Each query × size runs in its own Node process with
+// --max-old-space-size=2048, the Lambda's memory, so one query's garbage
 // can't slow another. A run whose peak RSS, native memory included, passes
 // 2,048 MiB fails, as it would on the Lambda.
-// All designs' answers must agree (totals, comparisons, series, page rows);
-// any difference fails the run.
 //
 // Options:
 //   --dir      insights:data output folder (default backend/.local/insights-data)
 //   --sites    Site counts, comma-separated (default 500,1000)
 //   --years    years of data, comma-separated (default 1,2)
 //   --runs     warm runs per query after the first answer (default 30)
-//   --designs  any of A,B,C (default all)
-//   --threads  DuckDB threads for B (default 1; a 2 GB Lambda has about 1.2 vCPUs)
+//   --threads  DuckDB threads (default 1; a 2 GB Lambda has about 1.2 vCPUs)
 //   --rebuild  rebuild the sized files even if the input is unchanged
 //   --json     also write every result to this file
 //
 // Columns:
-//   cold ms     process start to the first answer: imports, reading the
-//               files from disk, decoding or indexing, and the query
+//   cold ms     process start to the first answer: imports, opening the
+//               files, and the query
 //   peak RSS    the process's peak resident memory, native memory included
 //               (DuckDB's buffers count here, not in heap)
-//   peak heap   the largest V8 heap in use, sampled after each step
+//   peak heap   the largest V8 heap in use, sampled after each answer
 //   warm p50    median time per answer over --runs answers, same process
 //   warm p95    95th percentile of those
-//   files MB    bytes on disk of the files the design reads for the query
+//   files MB    bytes on disk of the files the query reads
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { brotliCompressSync, gzipSync } from "node:zlib";
 import { sqlString } from "../src/analytics/convert.js";
 import {
   addDays,
@@ -71,24 +60,8 @@ import {
   parsePeriodParams,
 } from "../src/reporting/api/requests.js";
 
-const { values: args } = parseArgs({
-  options: {
-    dir: { type: "string" },
-    sites: { type: "string", default: "500,1000" },
-    years: { type: "string", default: "1,2" },
-    runs: { type: "string", default: "30" },
-    designs: { type: "string", default: "A,B,C" },
-    threads: { type: "string", default: "1" },
-    rebuild: { type: "boolean", default: false },
-    json: { type: "string" },
-    child: { type: "string" },
-    query: { type: "string" },
-    data: { type: "string" },
-  },
-});
-
 const HEAP_MB = 2048;
-const QUERIES = ["overview", "trends", "site", "issues"];
+export const QUERIES = ["overview", "trends", "site", "issues"];
 const QUERY_LABELS = {
   overview: "Overview, 12 months",
   trends: "Trends, 12 months",
@@ -97,39 +70,35 @@ const QUERY_LABELS = {
 };
 // Small enough that a year of 500 Sites spans about ten groups to skip.
 const ROW_GROUP = 16_384;
-const C_QUERIES = new Set(["overview", "trends"]);
 const NAMES = new Intl.Collator("en", { sensitivity: "base", numeric: true });
-const RUNS = Number(args.runs);
-const THREADS = Number(args.threads);
+const BENCH_DIR = fileURLToPath(
+  new URL("../.local/insights-bench", import.meta.url),
+);
+const DATA_DIR = fileURLToPath(
+  new URL("../.local/insights-data", import.meta.url),
+);
 
 /**
  * @param {string} list
  * @param {string} name
  * @returns {number[]}
  */
-function wholeNumbers(list, name) {
+export function wholeNumbers(list, name) {
   const xs = list.split(",").map(Number);
-  if (!xs.length || xs.some((n) => !Number.isInteger(n) || n < 1)) {
-    console.error(
-      `[insights-bench] ${name} must be whole numbers of 1 or more`,
-    );
-    process.exit(1);
-  }
+  if (xs.some((n) => !Number.isInteger(n) || n < 1))
+    throw new Error(`${name} must be whole numbers of 1 or more`);
   return xs;
 }
 
-/** @param {Record<string, any>} row */
-const metricsOf = (row) =>
+/** @param {Record<string, any> | undefined} row */
+export const metricsOf = (row) =>
   Object.fromEntries(SITE_DAY_METRICS.map((m) => [m, Number(row?.[m] ?? 0)]));
 
-/** @param {{ activity: Record<string, number>, response: Record<string, number> }} t */
-const flat = (t) => metricsOf({ ...t.activity, ...t.response });
-
 /**
- * The requests every design answers, from the snapshot's own clock.
+ * The requests every query answers, from the snapshot's own clock.
  * @param {Record<string, any>} manifest
  */
-function requests(manifest) {
+export function requests(manifest) {
   const { evaluatedAt } = manifest;
   // Pacific days, as the API reads them; UTC slicing is a day off at night.
   const today = pacificDateKey(evaluatedAt);
@@ -164,7 +133,7 @@ function requests(manifest) {
  * @param {string} today
  * @returns {{ start: string, end: string }[]}
  */
-function bucketRanges(interval, granularity, today) {
+export function bucketRanges(interval, granularity, today) {
   const out = [];
   let start = interval.startDay;
   while (start < interval.endDay && start <= today) {
@@ -182,7 +151,7 @@ function bucketRanges(interval, granularity, today) {
  * @param {{ siteId: string, name?: string | null }} a
  * @param {{ siteId: string, name?: string | null }} b
  */
-function byName(a, b) {
+export function byName(a, b) {
   for (const [x, y] of [
     [a.name ?? a.siteId, b.name ?? b.siteId],
     [a.name ?? "", b.name ?? ""],
@@ -193,149 +162,15 @@ function byName(a, b) {
   return a.siteId < b.siteId ? -1 : a.siteId > b.siteId ? 1 : 0;
 }
 
-// ---------------------------------------------------------------- answers
-// Each design's reply reduced to what all designs must agree on (`common`)
-// and what only some can give (`extra`: max severity, Issue categories).
-
-/** @param {Record<string, any> | null} change */
-const comparisonAnswer = (change) =>
-  change &&
-  Object.fromEntries(
-    SITE_DAY_METRICS.map((m) => [m, [change[m].current, change[m].prior]]),
-  );
-
-/** @param {Record<string, any>[]} series */
-const seriesAnswer = (series) =>
-  series.map((b) => ({
-    start: b.start,
-    end: b.end,
-    partial: b.partial,
-    noData: b.noData,
-    ...metricsOf(b),
-  }));
-
-/**
- * @param {string} query
- * @param {any} r a reply in read-model.js's shape
- */
-function answerOf(query, r) {
-  if (query === "overview")
-    return {
-      common: {
-        totals: flat(r.totals),
-        comparison: comparisonAnswer(r.comparison.change),
-        siteCount: r.siteCount,
-        page: r.sites.map((/** @type {any} */ s) => ({
-          siteId: s.siteId,
-          name: s.name,
-          ...flat(s),
-        })),
-      },
-      extra:
-        r.sites[0]?.maxSeverity === undefined
-          ? null
-          : r.sites.map((/** @type {any} */ s) => s.maxSeverity),
-    };
-  if (query === "trends")
-    return {
-      common: {
-        siteCount: r.scope.siteCount,
-        comparison: comparisonAnswer(r.comparison.change),
-        current: seriesAnswer(r.series.current),
-        prior: seriesAnswer(r.series.prior),
-        breakdown: r.breakdown.map((/** @type {any} */ g) => ({
-          value: g.value,
-          sites: g.sites,
-          current: metricsOf(g.current),
-          prior: g.prior && metricsOf(g.prior),
-        })),
-      },
-      extra: r.categories ?? null,
-    };
-  if (query === "site")
-    return {
-      common: {
-        siteId: r.site.siteId,
-        totals: flat(r.totals),
-        comparison: comparisonAnswer(r.comparison.change),
-        days: r.days.map((/** @type {any} */ d) => ({
-          day: d.day,
-          ...metricsOf(d),
-        })),
-      },
-      extra: null,
-    };
-  return {
-    common: {
-      total: r.total,
-      page: r.issues.map((/** @type {any} */ i) => [
-        i.issueId,
-        i.siteId,
-        i.createdAt,
-        i.siteName,
-      ]),
-    },
-    extra: null,
-  };
-}
-
-// ---------------------------------------------------------------- design A
-
 /**
  * @param {string} dir
  * @param {ReturnType<typeof requests>} req
- * @param {() => void} sample
+ * @param {number} [threads]
  */
-async function designA(dir, req, sample) {
-  const { dirSource, indexSnapshot } = await import(
-    "../src/reporting/api/snapshot.js"
-  );
-  const readModel = await import("../src/reporting/api/read-model.js");
-  const loaded = await dirSource(dir).load(dir);
-  sample();
-  const snap = indexSnapshot(loaded);
-  sample();
-  const { year, month, now } = req;
-  return {
-    /** @param {string} query */
-    run: async (query) =>
-      query === "overview"
-        ? readModel.overview(snap, {
-            interval: year,
-            filter: {},
-            list: req.siteList,
-            now,
-          })
-        : query === "trends"
-          ? readModel.trends(snap, {
-              interval: year,
-              scope: {},
-              breakdown: "department",
-              now,
-            })
-          : query === "site"
-            ? readModel.siteDetail(snap, req.siteId, { interval: year, now })
-            : readModel.listIssues(snap, {
-                interval: month,
-                filter: {},
-                list: req.issueList,
-                now,
-              }),
-  };
-}
-
-// ---------------------------------------------------------------- design B
-
-/**
- * @param {string} dir
- * @param {ReturnType<typeof requests>} req
- */
-async function designB(dir, req) {
-  // Imported here, not at the top, so A's and C's cold times leave it out
-  // unless they load it themselves.
+export async function designB(dir, req, threads = 1) {
   const { DuckDBInstance } = await import("@duckdb/node-api");
   const instance = await DuckDBInstance.create(":memory:", {
-    threads: String(THREADS),
+    threads: String(threads),
     // DuckDB's memory sits outside the V8 heap cap.
     memory_limit: `${HEAP_MB}MiB`,
   });
@@ -594,186 +429,29 @@ async function designB(dir, req) {
 
   /** @type {Record<string, () => Promise<any>>} */
   const queries = { overview, trends, site, issues };
-  return { run: (/** @type {string} */ q) => queries[q]() };
+  return {
+    run: (/** @type {string} */ q) => queries[q](),
+    close: () => {
+      conn.closeSync();
+      instance.closeSync();
+    },
+  };
 }
 
-// ---------------------------------------------------------------- design C
-
 /**
- * @param {string} dir
- * @param {ReturnType<typeof requests>} req
- * @param {() => void} sample
+ * @param {number[]} sorted
+ * @param {number} q
  */
-async function designC(dir, req, sample) {
-  const { tableFromIPC } = await import("apache-arrow");
-  const days = tableFromIPC(await readFile(join(dir, "site_days.arrow")));
-  const sitesTable = tableFromIPC(await readFile(join(dir, "sites.arrow")));
-  sample();
-  if (days.batches.length !== 1)
-    throw new Error("site_days.arrow must be one batch");
-  const siteCol = days.getChild("siteId")?.data[0];
-  const dayCol = days.getChild("day")?.data[0];
-  if (!siteCol?.dictionary || !dayCol?.dictionary)
-    throw new Error("bad site_days.arrow");
-  const siteIdx = siteCol.values;
-  const dayIdx = dayCol.values;
-  /** @type {string[]} */
-  const siteDict = siteCol.dictionary.toArray();
-  /** @type {string[]} */
-  const dayDict = dayCol.dictionary.toArray();
-  const metrics = SITE_DAY_METRICS.map((m) => days.getChild(m)?.data[0].values);
-  const M = metrics.length;
-  const sites = sitesTable.toArray().map((r) => r.toJSON());
-  const slot = new Map(siteDict.map((id, i) => [id, i]));
-  const coverageStart = dayDict.length ? dayDict[0] : null;
-  sample();
-
-  // Rows are sorted by day and the dictionary in first-seen order, so day
-  // indices rise with the row and a range is two binary searches.
-  /** @param {string} day */
-  const firstRow = (day) => {
-    let lo = 0;
-    let hi = dayIdx.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (dayDict[dayIdx[mid]] < day) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
-  };
-  /**
-   * @param {{ startDay: string, endDay: string }} r
-   * @param {Float64Array} [perSite] nSites × M sums, added to
-   */
-  const sumRange = (r, perSite) => {
-    const total = new Float64Array(M);
-    const end = firstRow(r.endDay);
-    for (let row = firstRow(r.startDay); row < end; row += 1) {
-      const base = perSite ? siteIdx[row] * M : 0;
-      for (let m = 0; m < M; m += 1) {
-        const v = metrics[m][row];
-        total[m] += v;
-        if (perSite) perSite[base + m] += v;
-      }
-    }
-    return total;
-  };
-  /** @param {ArrayLike<number>} xs */
-  const asMetrics = (xs, at = 0) =>
-    Object.fromEntries(SITE_DAY_METRICS.map((m, i) => [m, xs[at + i]]));
-  /** @param {Record<string, number>} t */
-  const split = (t) => ({ activity: t, response: {} });
-
-  /** @param {{ startDay: string, endDay: string }} interval */
-  function comparison(interval) {
-    const cmp = comparisonFor(/** @type {any} */ (interval), req.evaluatedAt);
-    if (!cmp.prior) return { cmp, change: null };
-    const cur = asMetrics(sumRange(cmp.current));
-    const pri = asMetrics(sumRange(cmp.prior));
-    return {
-      cmp,
-      change: Object.fromEntries(
-        SITE_DAY_METRICS.map((m) => [
-          m,
-          { current: cur[m], prior: pri[m], change: cur[m] - pri[m] },
-        ]),
-      ),
-    };
-  }
-
-  function overview() {
-    const perSite = new Float64Array(siteDict.length * M);
-    const total = asMetrics(sumRange(req.year, perSite));
-    const rows = sites
-      .map((s) => {
-        const i = slot.get(s.siteId);
-        return {
-          siteId: s.siteId,
-          name: s.name,
-          ...split(i === undefined ? metricsOf({}) : asMetrics(perSite, i * M)),
-          publicContact: s.publicContact,
-          siteContact: s.siteContact,
-        };
-      })
-      .sort(byName);
-    return {
-      totals: split(total),
-      comparison: { change: comparison(req.year).change },
-      siteCount: sites.length,
-      sites: rows.slice(0, req.siteList.limit),
-    };
-  }
-
-  function trends() {
-    const interval = req.year;
-    const granularity =
-      interval.kind === "year" || interval.kind === "financialYear"
-        ? "month"
-        : "week";
-    const prior = previousOf(interval, req.evaluatedAt);
-    /** @param {{ start: string, end: string }[]} list */
-    const series = (list) =>
-      list.map((b) => ({
-        ...b,
-        partial: b.end > req.today,
-        noData: coverageStart === null || b.end <= coverageStart,
-        ...asMetrics(sumRange({ startDay: b.start, endDay: b.end })),
-      }));
-    const { cmp, change } = comparison(interval);
-    const cur = new Float64Array(siteDict.length * M);
-    const pri = new Float64Array(siteDict.length * M);
-    sumRange(cmp.current, cur);
-    if (cmp.prior) sumRange(cmp.prior, pri);
-    /** @type {Map<string, { sites: number, current: Float64Array, prior: Float64Array }>} */
-    const groups = new Map();
-    for (const s of sites) {
-      const value = s.department ?? "unknown";
-      const g = groups.get(value) ?? {
-        sites: 0,
-        current: new Float64Array(M),
-        prior: new Float64Array(M),
-      };
-      g.sites += 1;
-      const i = slot.get(s.siteId);
-      if (i !== undefined)
-        for (let m = 0; m < M; m += 1) {
-          g.current[m] += cur[i * M + m];
-          g.prior[m] += pri[i * M + m];
-        }
-      groups.set(value, g);
-    }
-    return {
-      scope: { siteCount: sites.length },
-      comparison: { change },
-      series: {
-        current: series(bucketRanges(interval, granularity, req.today)),
-        prior: series(bucketRanges(prior, granularity, req.today)),
-      },
-      breakdown: [...groups]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([value, g]) => ({
-          value,
-          sites: g.sites,
-          current: asMetrics(g.current),
-          prior: cmp.prior ? asMetrics(g.prior) : null,
-        })),
-    };
-  }
-
-  /** @type {Record<string, () => any>} */
-  const queries = { overview, trends };
-  return { run: async (/** @type {string} */ q) => queries[q]() };
-}
-
-// ---------------------------------------------------------------- child
+export const quantile = (sorted, q) =>
+  sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
 
 /**
- * One design × query × size; prints one JSON line.
- * @param {string} design
+ * One query × size, timed in this process.
  * @param {string} query
  * @param {string} dir
+ * @param {{ runs: number, threads: number }} opts
  */
-async function child(design, query, dir) {
+export async function measure(query, dir, { runs, threads }) {
   let peakHeap = 0;
   const sample = () => {
     peakHeap = Math.max(peakHeap, process.memoryUsage().heapUsed);
@@ -781,42 +459,33 @@ async function child(design, query, dir) {
   const manifest = JSON.parse(
     await readFile(join(dir, "manifest.json"), "utf8"),
   );
-  const req = requests(manifest);
-  const impl =
-    design === "A"
-      ? await designA(dir, req, sample)
-      : design === "B"
-        ? await designB(dir, req)
-        : await designC(dir, req, sample);
-  const first = await impl.run(query);
-  // performance.now() counts from process start, so this includes imports.
-  const coldMs = performance.now();
-  sample();
-  /** @type {number[]} */
-  const times = [];
-  for (let i = 0; i < RUNS; i += 1) {
-    const started = performance.now();
+  const impl = await designB(dir, requests(manifest), threads);
+  try {
     await impl.run(query);
-    times.push(performance.now() - started);
+    // performance.now() counts from process start, so this includes imports.
+    const coldMs = performance.now();
     sample();
-  }
-  times.sort((a, b) => a - b);
-  const at = (/** @type {number} */ q) =>
-    times[Math.min(times.length - 1, Math.floor(q * times.length))];
-  process.stdout.write(
-    `${JSON.stringify({
+    /** @type {number[]} */
+    const times = [];
+    for (let i = 0; i < runs; i += 1) {
+      const started = performance.now();
+      await impl.run(query);
+      times.push(performance.now() - started);
+      sample();
+    }
+    times.sort((a, b) => a - b);
+    return {
       coldMs,
       // libuv reports maxRSS in kilobytes on every platform.
       peakRssMiB: process.resourceUsage().maxRSS / 1024,
       peakHeapMiB: peakHeap / 1048576,
-      warmP50: at(0.5),
-      warmP95: at(0.95),
-      answer: answerOf(query, first),
-    })}\n`,
-  );
+      warmP50: quantile(times, 0.5),
+      warmP95: quantile(times, 0.95),
+    };
+  } finally {
+    impl.close();
+  }
 }
-
-// ---------------------------------------------------------------- data
 
 /**
  * The input projection copied up to `sites` Sites and `years` years.
@@ -825,7 +494,7 @@ async function child(design, query, dir) {
  * @param {number} sites
  * @param {number} years
  */
-async function buildSize(base, out, sites, years) {
+export async function buildSize(base, out, sites, years) {
   const tmp = `${out}.partial`;
   await rm(tmp, { recursive: true, force: true });
   await mkdir(tmp, { recursive: true });
@@ -859,12 +528,12 @@ async function buildSize(base, out, sites, years) {
       `CASE WHEN y = 0 OR ${c} IS NULL THEN ${c} ELSE strftime(CAST(${c} AS TIMESTAMP) - to_days(CAST(y * ${span} AS INTEGER)), '%Y-%m-%dT%H:%M:%S.%gZ') END`;
     const suffix = `CASE WHEN c = 0 THEN '' ELSE '-copy' || c END`;
     const ySuffix = `CASE WHEN y = 0 THEN '' ELSE '-y' || y END`;
+    // Day first, so a period's query skips other days' row groups; any new
+    // dated table gets the same order without a change here.
+    /** @type {Record<string, string>} */
     const order = {
-      site_days: "day, siteId",
       issues: "createdDay, siteId, issueId",
       checks: "day, siteId, checkId",
-      sites: "siteId",
-      site_contacts: "siteId",
     };
     for (const [name, schema] of Object.entries(TABLE_SCHEMAS)) {
       const dated = !["sites", "site_contacts"].includes(name);
@@ -883,7 +552,7 @@ async function buildSize(base, out, sites, years) {
         `COPY (SELECT ${columns.join(", ")}
            FROM ${src(name)} AS t JOIN pick ON pick.baseId = t.siteId
            ${dated ? `, range(${years}) AS yr(y)` : ""}
-           ORDER BY ${/** @type {Record<string, string>} */ (order)[name]})
+           ORDER BY ${order[name] ?? ("day" in schema ? "day, siteId" : "siteId")})
          TO ${sqlString(join(tmp, `${name}.parquet`))}
          (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
       );
@@ -904,7 +573,6 @@ async function buildSize(base, out, sites, years) {
         2,
       ),
     );
-    await writeArrowFiles(conn, tmp);
   } finally {
     conn.closeSync();
     instance.closeSync();
@@ -914,158 +582,79 @@ async function buildSize(base, out, sites, years) {
 }
 
 /**
- * Design C's files: Site-day totals with dictionary-coded Site IDs and days
- * and 16-bit counts, plus the Site table with contact states.
- * @param {any} conn
- * @param {string} dir
- */
-async function writeArrowFiles(conn, dir) {
-  const arrow = await import("apache-arrow");
-  const {
-    Dictionary,
-    Int16,
-    Int32,
-    Table,
-    Utf8,
-    makeVector,
-    tableToIPC,
-    vectorFromArray,
-  } = arrow;
-  const file = (/** @type {string} */ n) =>
-    `read_parquet(${sqlString(join(dir, `${n}.parquet`))})`;
-  const days = (
-    await conn.runAndReadAll(
-      `SELECT siteId, CAST(day AS VARCHAR) AS day, ${SITE_DAY_METRICS.join(", ")}
-       FROM ${file("site_days")} ORDER BY day, siteId`,
-    )
-  ).getColumnsObjectJS();
-  /** @param {unknown[]} xs */
-  const dict = (xs) =>
-    vectorFromArray(
-      xs,
-      new Dictionary(
-        new Utf8(),
-        new Set(xs).size < 32_768 ? new Int16() : new Int32(),
-      ),
-    );
-  /** @type {Record<string, any>} */
-  const cols = { siteId: dict(days.siteId), day: dict(days.day) };
-  for (const m of SITE_DAY_METRICS) {
-    // A Site never logs 32,767 of anything in a day; check rather than wrap.
-    if (days[m].some((/** @type {number} */ v) => v > 32_767))
-      throw new Error(`${m} does not fit 16 bits`);
-    cols[m] = makeVector(Int16Array.from(days[m]));
-  }
-  await writeFile(
-    join(dir, "site_days.arrow"),
-    tableToIPC(new Table(cols), "file"),
-  );
-  const sites = (
-    await conn.runAndReadAll(
-      `SELECT s.siteId, s.name, s.status, s.siteType, s.providerId, s.programId,
-         s.department, s.managerId, c.publicContact, c.siteContact
-       FROM ${file("sites")} AS s LEFT JOIN ${file("site_contacts")} AS c USING (siteId)
-       ORDER BY s.siteId`,
-    )
-  ).getColumnsObjectJS();
-  await writeFile(
-    join(dir, "sites.arrow"),
-    tableToIPC(
-      new Table(
-        Object.fromEntries(
-          Object.entries(sites).map(([k, v]) => [
-            k,
-            vectorFromArray(v, new Utf8()),
-          ]),
-        ),
-      ),
-      "file",
-    ),
-  );
-}
 
 /**
  * @param {string} dir
- * @param {string[]} names
- */
-async function bytesOf(dir, names) {
-  let n = 0;
-  for (const name of names) n += (await stat(join(dir, name))).size;
-  return n;
-}
-
-/** Bytes the browser would add for the decoder: the one import C uses. */
-async function decoderSize() {
-  const { build } = await import("esbuild");
-  const result = await build({
-    stdin: {
-      contents: `import { tableFromIPC } from "apache-arrow"; export const decode = (b) => tableFromIPC(b);`,
-      resolveDir: fileURLToPath(new URL(".", import.meta.url)),
-    },
-    bundle: true,
-    minify: true,
-    format: "esm",
-    platform: "browser",
-    write: false,
-    logLevel: "silent",
-  });
-  const code = Buffer.from(result.outputFiles[0].contents);
-  return {
-    minKB: code.length / 1024,
-    gzipKB: gzipSync(code).length / 1024,
-    brotliKB: brotliCompressSync(code).length / 1024,
-  };
-}
-
-/**
- * @param {string} dir
- * @param {string} design
  * @param {string} query
  */
-async function fileBytes(dir, design, query) {
-  if (design === "A")
-    return bytesOf(
-      dir,
-      Object.keys(TABLE_SCHEMAS).map((n) => `${n}.parquet`),
-    );
-  if (design === "C") return bytesOf(dir, ["site_days.arrow", "sites.arrow"]);
+export async function fileBytes(dir, query) {
   const tables = {
     overview: ["site_days", "issues", "sites"],
     trends: ["site_days", "issues", "sites"],
     site: ["site_days", "sites"],
     issues: ["issues", "sites"],
   };
-  return bytesOf(
-    dir,
-    /** @type {Record<string, string[]>} */ (tables)[query].map(
-      (n) => `${n}.parquet`,
-    ),
-  );
+  let n = 0;
+  for (const name of /** @type {Record<string, string[]>} */ (tables)[query])
+    n += (await stat(join(dir, `${name}.parquet`))).size;
+  return n;
 }
 
 /**
- * @param {string} design
+ * A finished child process, read as a result or a failure.
+ * @param {{ code: number | null, signal: string | null, out: string, err: string }} run
+ * @returns {Record<string, any>}
+ */
+export function childResult({ code, signal, out, err }) {
+  const line = out.trim().split("\n").at(-1);
+  /** @type {any} */
+  let result = null;
+  try {
+    if (code === 0 && line) result = JSON.parse(line);
+  } catch {
+    // A stray stdout line; reported below as a failure.
+  }
+  if (result && result.peakRssMiB > HEAP_MB)
+    return {
+      ok: false,
+      failure: `peak RSS ${Math.round(result.peakRssMiB)} MiB, over the Lambda's ${HEAP_MB}`,
+      detail: "",
+    };
+  if (result) return { ok: true, ...result };
+  const oom = /heap out of memory|Allocation failed/i.test(err);
+  // The message comes before the stack; the last lines are frames.
+  const lines = err.trim().split("\n");
+  const message = lines.filter((l) => /error/i.test(l)).slice(0, 2);
+  return {
+    ok: false,
+    failure: oom
+      ? `out of memory at ${HEAP_MB} MiB heap`
+      : `exit ${code ?? signal}`,
+    detail: (message.length ? message : lines.slice(0, 3)).join(" "),
+  };
+}
+
+/**
  * @param {string} query
  * @param {string} dir
+ * @param {{ runs: number, threads: number }} opts
  * @returns {Promise<Record<string, any>>}
  */
-function runChild(design, query, dir) {
-  return new Promise((resolve) => {
+function runChild(query, dir, { runs, threads }) {
+  return new Promise((done) => {
     const proc = spawn(
       process.execPath,
       [
         `--max-old-space-size=${HEAP_MB}`,
         fileURLToPath(import.meta.url),
         "--child",
-        design,
-        "--query",
         query,
         "--data",
         dir,
         "--runs",
-        String(RUNS),
+        String(runs),
         "--threads",
-        String(THREADS),
+        String(threads),
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
@@ -1074,96 +663,35 @@ function runChild(design, query, dir) {
     proc.stdout.on("data", (b) => (out += b));
     proc.stderr.on("data", (b) => (err += b));
     proc.on("error", (e) =>
-      resolve({ ok: false, failure: "could not start", detail: e.message }),
+      done({ ok: false, failure: "could not start", detail: e.message }),
     );
-    proc.on("close", (code, signal) => {
-      const line = out.trim().split("\n").at(-1);
-      /** @type {any} */
-      let result = null;
-      try {
-        if (code === 0 && line) result = JSON.parse(line);
-      } catch {
-        // A stray stdout line; reported below as a failure.
-      }
-      if (result && result.peakRssMiB > HEAP_MB)
-        return resolve({
-          ok: false,
-          failure: `peak RSS ${Math.round(result.peakRssMiB)} MiB, over the Lambda's ${HEAP_MB}`,
-          detail: "",
-        });
-      if (result) return resolve({ ok: true, ...result });
-      const oom = /heap out of memory|Allocation failed/i.test(err);
-      // The message comes before the stack; the last lines are frames.
-      const lines = err.trim().split("\n");
-      const message = lines.filter((l) => /error/i.test(l)).slice(0, 2);
-      resolve({
-        ok: false,
-        failure: oom
-          ? `out of memory at ${HEAP_MB} MiB heap`
-          : `exit ${code ?? signal}`,
-        detail: (message.length ? message : lines.slice(0, 3)).join(" "),
-      });
-    });
+    proc.on("close", (code, signal) =>
+      done(childResult({ code, signal, out, err })),
+    );
   });
 }
 
 /**
- * @param {unknown} a
- * @param {unknown} b
- * @param {string} [path]
- * @returns {string | null} where the two first differ
+ * @param {{ dir?: string, sites: string, years: string, runs: string, threads: string, rebuild?: boolean, json?: string }} opts
+ * @param {string} [benchDir] where sized copies are built
+ * @returns {Promise<Record<string, any>[]>} one result per size and query
  */
-function firstDifference(a, b, path = "") {
-  if (a === b) return null;
-  if (
-    typeof a !== "object" ||
-    typeof b !== "object" ||
-    a === null ||
-    b === null
-  )
-    return `${path || "value"}: ${JSON.stringify(a)} vs ${JSON.stringify(b)}`;
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  for (const k of keys) {
-    const d = firstDifference(
-      /** @type {any} */ (a)[k],
-      /** @type {any} */ (b)[k],
-      `${path}${Array.isArray(a) ? `[${k}]` : `.${k}`}`,
-    );
-    if (d) return d;
-  }
-  return null;
-}
-
-async function main() {
-  const sizes = wholeNumbers(args.sites, "--sites");
-  const yearsList = wholeNumbers(args.years, "--years");
-  wholeNumbers(args.runs, "--runs");
-  wholeNumbers(args.threads, "--threads");
-  const designs = args.designs.split(",").map((s) => s.trim().toUpperCase());
-  if (designs.some((x) => !["A", "B", "C"].includes(x))) {
-    console.error("[insights-bench] --designs takes A, B and C");
-    process.exit(1);
-  }
-  const dataDir =
-    args.dir ??
-    fileURLToPath(new URL("../.local/insights-data", import.meta.url));
+export async function main(opts, benchDir = BENCH_DIR) {
+  const sizes = wholeNumbers(opts.sites, "--sites");
+  const yearsList = wholeNumbers(opts.years, "--years");
+  const [runs] = wholeNumbers(opts.runs, "--runs");
+  const [threads] = wholeNumbers(opts.threads, "--threads");
+  const dataDir = opts.dir ?? DATA_DIR;
   const base = join(dataDir, "projection");
-  if (!existsSync(join(base, "manifest.json"))) {
-    console.error(
-      `[insights-bench] no projection in ${dataDir}; run npm run insights:data -w backend first`,
+  if (!existsSync(join(base, "manifest.json")))
+    throw new Error(
+      `no projection in ${dataDir}; run npm run insights:data -w backend first`,
     );
-    process.exit(1);
-  }
   const baseManifest = JSON.parse(
     await readFile(join(base, "manifest.json"), "utf8"),
   );
-  const benchDir = fileURLToPath(
-    new URL("../.local/insights-bench", import.meta.url),
-  );
-  const decoder = designs.includes("C") ? await decoderSize() : null;
   /** @type {Record<string, any>[]} */
   const results = [];
-  const problems = [];
   for (const sites of sizes)
     for (const years of yearsList) {
       const label = `${sites} Sites, ${years} year${years > 1 ? "s" : ""}`;
@@ -1171,7 +699,7 @@ async function main() {
       const stamp = existsSync(join(dir, "manifest.json"))
         ? JSON.parse(await readFile(join(dir, "manifest.json"), "utf8"))
         : null;
-      if (args.rebuild || stamp?.snapshotId !== baseManifest.snapshotId) {
+      if (opts.rebuild || stamp?.snapshotId !== baseManifest.snapshotId) {
         const started = performance.now();
         await buildSize(base, dir, sites, years);
         console.log(
@@ -1181,66 +709,22 @@ async function main() {
       const { rowCounts } = JSON.parse(
         await readFile(join(dir, "manifest.json"), "utf8"),
       );
-      const arrowBytes = await readFile(join(dir, "site_days.arrow"));
       console.log(
         `[insights-bench] ${label}: ${Object.entries(rowCounts)
           .map(([k, v]) => `${k} ${v}`)
-          .join(
-            ", ",
-          )}; site_days.arrow ${(arrowBytes.length / 1e6).toFixed(2)} MB, ${(gzipSync(arrowBytes).length / 1e6).toFixed(2)} MB gzip, ${(brotliCompressSync(arrowBytes).length / 1e6).toFixed(2)} MB brotli`,
+          .join(", ")}`,
       );
       for (const query of QUERIES) {
-        /** @type {Record<string, any>} */
-        const byDesign = {};
-        for (const design of designs) {
-          if (design === "C" && !C_QUERIES.has(query)) continue;
-          const r = await runChild(design, query, dir);
-          r.fileMB = (await fileBytes(dir, design, query)) / 1e6;
-          byDesign[design] = r;
-          results.push({
-            size: label,
-            sites,
-            years,
-            design,
-            query,
-            ...r,
-            answer: undefined,
-          });
-        }
-        // Every design that answered must give the same numbers.
-        const answered = Object.entries(byDesign).filter(([, r]) => r.ok);
-        const [refName, ref] = answered[0] ?? [];
-        // C has no extras, so A and B compare them with whichever came first.
-        const [extraName, extraRef] =
-          answered.find(([, r]) => r.answer.extra) ?? [];
-        for (const [design, r] of answered) {
-          const common =
-            design !== refName &&
-            firstDifference(ref.answer.common, r.answer.common);
-          if (common)
-            problems.push(
-              `${label}, ${query}: ${refName} and ${design} differ at ${common}`,
-            );
-          const extra =
-            design !== extraName &&
-            r.answer.extra &&
-            firstDifference(extraRef.answer.extra, r.answer.extra);
-          if (extra)
-            problems.push(
-              `${label}, ${query}: ${extraName} and ${design} differ at ${extra}`,
-            );
-        }
-        if (answered.length > 1)
-          console.log(
-            `[insights-bench] ${label}, ${query}: ${answered.map(([d]) => d).join(", ")} checked for the same answer`,
-          );
+        const r = await runChild(query, dir, { runs, threads });
+        r.fileMB = (await fileBytes(dir, query)) / 1e6;
+        results.push({ size: label, sites, years, query, ...r });
       }
       const rows = results.filter((r) => r.size === label);
       console.log(`\n${label}`);
       console.table(
         Object.fromEntries(
           rows.map((r) => [
-            `${r.design} ${QUERY_LABELS[/** @type {keyof typeof QUERY_LABELS} */ (r.query)]}`,
+            QUERY_LABELS[/** @type {keyof typeof QUERY_LABELS} */ (r.query)],
             r.ok
               ? {
                   "cold ms": Math.round(r.coldMs),
@@ -1255,33 +739,46 @@ async function main() {
         ),
       );
     }
-  if (decoder)
-    console.log(
-      `[insights-bench] C's decoder (tableFromIPC), esbuild-minified for the browser: ${decoder.minKB.toFixed(0)} kB, ${decoder.gzipKB.toFixed(0)} kB gzip, ${decoder.brotliKB.toFixed(0)} kB brotli`,
-    );
-  if (args.json)
-    await writeFile(args.json, JSON.stringify({ decoder, results }, null, 2));
+  if (opts.json) await writeFile(opts.json, JSON.stringify(results, null, 2));
   for (const r of results)
-    if (!r.ok) {
+    if (!r.ok)
       console.error(
-        `[insights-bench] ${r.size}, ${r.design} ${r.query}: ${r.failure}. ${r.detail}`,
+        `[insights-bench] ${r.size}, ${r.query}: ${r.failure}. ${r.detail}`,
       );
-      process.exitCode = 1;
-    }
-  if (problems.length) {
-    for (const p of problems) console.error(`[insights-bench] ${p}`);
-    console.error(
-      "[insights-bench] designs disagree; the timings above don't compare like with like",
-    );
-    process.exitCode = 1;
-  } else
-    console.log(
-      "[insights-bench] every design that answered gave the same numbers",
-    );
+  return results;
 }
 
-if (args.child) {
-  if (!args.query || !args.data)
-    throw new Error("--child needs --query and --data");
-  await child(args.child, args.query, args.data);
-} else await main();
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+) {
+  const { values: args } = parseArgs({
+    options: {
+      dir: { type: "string" },
+      sites: { type: "string", default: "500,1000" },
+      years: { type: "string", default: "1,2" },
+      runs: { type: "string", default: "30" },
+      threads: { type: "string", default: "1" },
+      rebuild: { type: "boolean", default: false },
+      json: { type: "string" },
+      child: { type: "string" },
+      data: { type: "string" },
+    },
+  });
+  if (args.child) {
+    if (!args.data) throw new Error("--child needs --data");
+    const result = await measure(args.child, args.data, {
+      runs: Number(args.runs),
+      threads: Number(args.threads),
+    });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else {
+    try {
+      const results = await main(args);
+      if (results.some((r) => !r.ok)) process.exitCode = 1;
+    } catch (e) {
+      console.error(`[insights-bench] ${/** @type {Error} */ (e).message}`);
+      process.exitCode = 1;
+    }
+  }
+}
