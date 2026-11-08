@@ -16,6 +16,8 @@ import { copyObject, headObject, putObject } from "../../src/s3.js";
 import { assertLocalSeedTarget } from "./site-admin-seed.mjs";
 
 const MARKER = { pk: "LOCAL_SEED#INSIGHTS_RECORDS", sk: "#META" };
+// The task statuses the photo route drops; other statuses would put rows on worklists.
+const DEAD_STATUSES = new Set(["superseded", "deleted"]);
 
 // A few labelled images stand in for every photo, so the seed makes only these
 // and copies them to each photo's own key.
@@ -78,6 +80,8 @@ export function recordRows(items) {
           "sourceArtifactIds",
           "assessmentId",
           "conditionId",
+          // The photo route leaves out dead tasks; worklists skip them too.
+          ...(DEAD_STATUSES.has(item.status) ? ["status"] : []),
         ]),
       ];
     // An Issue's panel also shows its duplicates' and follow-up tasks' photos.

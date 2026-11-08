@@ -63,8 +63,15 @@ describe("recordRows", () => {
   });
 
   it("drops the fields the dev table's worklists index", () => {
-    expect(rows.some((r) => "status" in r || "gsi1pk" in r)).toBe(false);
+    expect(rows.some((r) => "gsi1pk" in r)).toBe(false);
     expect(rows.length).toBeLessThan(items.length);
+  });
+
+  it("keeps only a replaced or deleted task's status, so its photos stay out of the Issue", () => {
+    const statuses = new Set(
+      rows.flatMap((r) => ("status" in r ? [r.status] : [])),
+    );
+    expect([...statuses].sort()).toEqual(["superseded"]);
   });
 });
 
