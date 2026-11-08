@@ -49,7 +49,7 @@ test("cuts quoted text from a summary, since it can hold a value from state", ()
       },
     }),
   ]);
-  assert.deepEqual(out, ["warning\tinvalid value \"…\" for '…'\t-\t-"]);
+  assert.deepEqual(out, ["warning\tinvalid value \"…\"\t-\t-"]);
 });
 
 test("drops planned changes and other messages, which carry attribute values", () => {
@@ -93,15 +93,37 @@ test("cuts quoted keys from an address, since for_each keys can hold a value", (
   ]);
 });
 
-test("cuts a quoted value whole when it holds an escaped quote", () => {
-  const out = diagnostics([
-    JSON.stringify({
-      type: "diagnostic",
-      diagnostic: {
-        severity: "error",
-        summary: `bad value "a\\"${SECRET}" and 'b\\'${SECRET}'`,
-      },
-    }),
+/** @param {string} summary */
+function summaryOut(summary) {
+  return diagnostics([
+    JSON.stringify({ type: "diagnostic", diagnostic: { severity: "error", summary } }),
   ]);
-  assert.deepEqual(out, ["error\tbad value \"…\" and '…'\t-\t-"]);
+}
+
+test("cuts a quoted value whole when it holds an escaped quote", () => {
+  assert.deepEqual(summaryOut(`bad value "a\\"${SECRET}" and 'b\\'${SECRET}'`), [
+    'error\tbad value "…"\t-\t-',
+  ]);
+});
+
+test("cuts a single-quoted value that ends in a backslash", () => {
+  assert.deepEqual(summaryOut(`Value '${SECRET}\\' failed`), ["error\tValue '…' failed\t-\t-"]);
+});
+
+test("cuts every quoted value after one that ends in a backslash", () => {
+  assert.deepEqual(summaryOut(`x "a\\" and "${SECRET}" y`), ['error\tx "…" y\t-\t-']);
+});
+
+test("cuts to the end of the line after an unmatched quote", () => {
+  assert.deepEqual(summaryOut(`Value '${SECRET} failed`), ["error\tValue '…\t-\t-"]);
+});
+
+test("cuts quoted text that spans a newline", () => {
+  assert.deepEqual(summaryOut(`Value "a\n${SECRET}" failed`), ['error\tValue "…" failed\t-\t-']);
+});
+
+test("cuts quoted text from a plain-text error line", () => {
+  assert.deepEqual(diagnostics([`│ Error: Value '${SECRET}\\' failed`]), [
+    "│ Error: Value '…' failed",
+  ]);
 });
