@@ -43,6 +43,42 @@ const runInsightsJob = async (event) => {
 };
 
 /**
+ * Runs a few jobs at a time and queues the rest, without holding up the caller.
+ * @param {number} limit
+ */
+export function createJobRunner(limit) {
+  /** @type {(() => Promise<void>)[]} */
+  const waiting = [];
+  /** @type {Set<Promise<void>>} */
+  const running = new Set();
+  const next = () => {
+    while (running.size < limit && waiting.length) {
+      const task = /** @type {() => Promise<void>} */ (waiting.shift());
+      const run = task()
+        .catch(() => {})
+        .finally(() => {
+          running.delete(run);
+          next();
+        });
+      running.add(run);
+    }
+  };
+  return {
+    /** @param {() => Promise<void>} task */
+    run(task) {
+      waiting.push(task);
+      next();
+    },
+    async drain() {
+      while (running.size) await Promise.allSettled([...running]);
+    },
+  };
+}
+
+// Two at a time, like the insights-jobs Lambda's queue trigger.
+const insightsJobs = createJobRunner(2);
+
+/**
  * Reduce a thrown error to compact, non-sensitive fields for logging. The worker
  * drives the analyzer path, whose requests carry GNP's `x-api-key` credential, so
  * we never dump a raw error object here — a nested field could put the key in
@@ -270,54 +306,54 @@ async function poll(queueUrl) {
     // an N-photo check pay ~N× one call (visible as analyses landing one at a
     // time). Each message is still its own single-record event, so delete /
     // redelivery semantics per message are unchanged.
-    await settleBatch(
-      received.Messages ?? [],
-      (received.Messages ?? []).map(async (msg) => {
-        try {
-          const handler = pickHandler(msg.Body);
-          const result = await handler(
-            toSqsEvent(msg),
-            /** @type {any} */ ({}),
-            () => {},
-          );
-          const failed = result?.batchItemFailures?.some(
-            (failure) => failure.itemIdentifier === msg.MessageId,
-          );
-          if (failed) {
-            console.error(
-              `[worker] handler reported failure for ${msg.MessageId}; leaving message for redelivery`,
-            );
-            return;
-          }
-          // Delete with THIS receive's ReceiptHandle, only on success.
-          await sqs.send(
-            new DeleteMessageCommand({
-              QueueUrl: queueUrl,
-              ReceiptHandle: msg.ReceiptHandle,
-            }),
-          );
-          console.log(`[worker] processed & deleted ${msg.MessageId}`);
-        } catch (err) {
-          // Leave the message for redelivery (visibility timeout) — matches prod.
-          console.error(
-            `[worker] handler threw for ${msg.MessageId}: ${summarizeError(err)}`,
-          );
-        }
-      }),
-    );
+    /** @type {Promise<void>[]} */
+    const others = [];
+    for (const msg of received.Messages ?? []) {
+      const handler = pickHandler(msg.Body);
+      const task = () => handleMessage(queueUrl, msg, handler);
+      // Insights jobs can run for minutes; photo analysis shouldn't wait behind them.
+      if (handler === runInsightsJob) insightsJobs.run(task);
+      else others.push(task());
+    }
+    await Promise.allSettled(others);
   }
 }
 
 /**
- * Waits for every message except Insights jobs, which can run for minutes and
- * would hold up the photo analysis and other messages behind them.
- * @param {{ Body?: string }[]} messages
- * @param {Promise<void>[]} runs one per message, in order; none may reject
+ * @param {string} queueUrl
+ * @param {import("@aws-sdk/client-sqs").Message} msg
+ * @param {import("aws-lambda").SQSHandler} handler
  */
-export async function settleBatch(messages, runs) {
-  await Promise.allSettled(
-    runs.filter((_, i) => pickHandler(messages[i].Body) !== runInsightsJob),
-  );
+export async function handleMessage(queueUrl, msg, handler) {
+  try {
+    const result = await handler(
+      toSqsEvent(msg),
+      /** @type {any} */ ({}),
+      () => {},
+    );
+    const failed = result?.batchItemFailures?.some(
+      (failure) => failure.itemIdentifier === msg.MessageId,
+    );
+    if (failed) {
+      console.error(
+        `[worker] handler reported failure for ${msg.MessageId}; leaving message for redelivery`,
+      );
+      return;
+    }
+    // Delete with THIS receive's ReceiptHandle, only on success.
+    await sqs.send(
+      new DeleteMessageCommand({
+        QueueUrl: queueUrl,
+        ReceiptHandle: msg.ReceiptHandle,
+      }),
+    );
+    console.log(`[worker] processed & deleted ${msg.MessageId}`);
+  } catch (err) {
+    // Leave the message for redelivery (visibility timeout) — matches prod.
+    console.error(
+      `[worker] handler threw for ${msg.MessageId}: ${summarizeError(err)}`,
+    );
+  }
 }
 
 async function main() {
@@ -333,6 +369,9 @@ async function main() {
   process.on("SIGTERM", () => stop("SIGTERM"));
 
   await poll(queueUrl);
+  // A job cut off mid-run would sit as running until its stall timeout.
+  console.log("[worker] waiting for running Insights jobs…");
+  await insightsJobs.drain();
   process.exit(0);
 }
 

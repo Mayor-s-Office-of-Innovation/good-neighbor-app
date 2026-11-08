@@ -361,10 +361,9 @@ export function createJobs({
     async run({ ownerKey, jobId }) {
       const read = await store.read(ownerKey, jobId);
       if (!read) return;
-      // SQS delivers at least once; a live run or a cancel ends it here. A job a
-      // status poll timed out while running reruns: returning would delete the
-      // message, and a job that always dies would never reach the DLQ. One that
-      // timed out in the queue never started; its requester was told it failed.
+      // SQS delivers at least once; a live run or a cancel ends it here. Timed out
+      // while running means the last delivery died; rerun it so a job that always
+      // dies reaches the DLQ, rather than have its message deleted.
       const claim = await update(ownerKey, read, (r) =>
         r.state === "queued" ||
         (r.state === "running" && isStalled(r)) ||

@@ -25,6 +25,7 @@ import {
   HeadBucketCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { seedSiteCodes } from "./site-code-seeds.mjs";
 
@@ -84,6 +85,17 @@ export function applyLocalInsightsEnv(env = process.env) {
     new URL("../../.local/insights-data/projection", import.meta.url),
   );
   env.INSIGHTS_JOBS_BUCKET ||= LOCAL_INSIGHTS_JOBS_BUCKET;
+}
+
+/**
+ * `npm run insights:data` writes names.json and records.jsonl beside the projection.
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {string | null} null when the lake is in MinIO and there are no seed files
+ */
+export function insightsSeedDir(env) {
+  return env.INSIGHTS_PROJECTION_DIR
+    ? dirname(env.INSIGHTS_PROJECTION_DIR)
+    : null;
 }
 
 /**

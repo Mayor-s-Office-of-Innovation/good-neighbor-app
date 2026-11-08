@@ -9,6 +9,7 @@ import {
   applyLocalInsightsEnv,
   emulatedLakeBuckets,
   ensureLocalTableIndexes,
+  insightsSeedDir,
 } from "./ensure-infra.mjs";
 
 /**
@@ -115,4 +116,12 @@ it("keeps a blank projection folder and a named jobs bucket, as the emulator sui
     INSIGHTS_PROJECTION_DIR: "",
     INSIGHTS_JOBS_BUCKET: "mine",
   });
+});
+
+it("finds the Insights seed files beside the projection, and none when the lake is in MinIO", () => {
+  expect(insightsSeedDir({ INSIGHTS_PROJECTION_DIR: "/data/projection" })).toBe(
+    "/data",
+  );
+  // dirname("") is ".", which would read names.json from wherever the API started.
+  expect(insightsSeedDir({ INSIGHTS_PROJECTION_DIR: "" })).toBeNull();
 });

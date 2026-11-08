@@ -14,7 +14,7 @@ import {
 } from "./lib/site-admin-seed.mjs";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../src/db.js";
 import {
@@ -44,6 +44,7 @@ import { createServer } from "node:http";
 import {
   applyLocalInsightsEnv,
   ensureLocalInfra,
+  insightsSeedDir,
 } from "./lib/ensure-infra.mjs";
 import { resolveDeviceClaims } from "./lib/local-device-auth.mjs";
 import { buildProxyEvent } from "./lib/proxy-event.mjs";
@@ -842,11 +843,9 @@ const server = createServer(async (req, res) => {
 });
 
 // Insights takes names from Manage's lists, so the synthetic ones must be there.
-async function seedInsightsNames() {
-  const file = join(
-    dirname(/** @type {string} */ (process.env.INSIGHTS_PROJECTION_DIR)),
-    "names.json",
-  );
+/** @param {string} seedDir */
+async function seedInsightsNames(seedDir) {
+  const file = join(seedDir, "names.json");
   if (!existsSync(file)) return;
   assertLocalSeedTarget();
   const items = JSON.parse(await readFile(file, "utf8"));
@@ -860,14 +859,12 @@ async function seedInsightsNames() {
 async function main() {
   await ensureLocalInfra();
   if (process.env.LOCAL_SITE_ADMIN_SEED === "true") await seedLocalSiteAdmin();
-  await seedInsightsNames();
-  // The record panels read photos and notes from the table, not the snapshot.
-  await seedInsightsRecords(
-    join(
-      dirname(/** @type {string} */ (process.env.INSIGHTS_PROJECTION_DIR)),
-      "records.jsonl",
-    ),
-  );
+  const seedDir = insightsSeedDir(process.env);
+  if (seedDir) {
+    await seedInsightsNames(seedDir);
+    // The record panels read photos and notes from the table, not the snapshot.
+    await seedInsightsRecords(join(seedDir, "records.jsonl"));
+  }
   server.listen(PORT, "127.0.0.1", () => {
     console.log(`[api] listening on http://localhost:${PORT}`);
     console.log(

@@ -6,7 +6,10 @@ const { runJobs } = vi.hoisted(() => ({
 }));
 vi.mock("../src/lambda/analytics-query.js", () => ({ runJobs }));
 
-const { pickHandler, settleBatch } = await import("./local-worker.mjs");
+const { SQSClient } = await import("@aws-sdk/client-sqs");
+const { createJobRunner, handleMessage, pickHandler } = await import(
+  "./local-worker.mjs"
+);
 const { handler: processSubmission } = await import(
   "../src/workers/process-submission.js"
 );
@@ -44,31 +47,102 @@ describe("pickHandler", () => {
   });
 });
 
-describe("settleBatch", () => {
-  it("moves on while an Insights job runs, so photo analysis isn't held up", async () => {
-    const insights = JSON.stringify({
-      insightsJob: { ownerKey: "o", jobId: "j" },
+describe("createJobRunner", () => {
+  /** @returns {{ promise: Promise<void>, resolve: () => void }} */
+  const deferred = () => {
+    /** @type {() => void} */
+    let resolve = () => {};
+    const promise = new Promise((r) => {
+      resolve = () => r(undefined);
     });
-    let analysed = false;
-    let settled = false;
-    settleBatch(
-      [
-        { Body: insights },
-        { Body: JSON.stringify({ artifactId: "a", s3Key: "k" }) },
-      ],
-      [
-        new Promise(() => {}),
-        Promise.resolve().then(() => {
-          analysed = true;
-        }),
-      ],
-    ).then(() => {
-      settled = true;
-    });
-    // Runs once every queued promise callback has, with no wall-clock wait.
+    return { promise, resolve };
+  };
+
+  it("runs two Insights jobs at a time, as the jobs Lambda does, and queues the rest", async () => {
+    const runner = createJobRunner(2);
+    const jobs = [deferred(), deferred(), deferred()];
+    let started = 0;
+    for (const job of jobs)
+      runner.run(() => {
+        started += 1;
+        return job.promise;
+      });
     await setImmediate();
-    expect(settled).toBe(true);
-    expect(analysed).toBe(true);
+    expect(started).toBe(2);
+    jobs[0].resolve();
+    await setImmediate();
+    expect(started).toBe(3);
+  });
+
+  it("lets a stop wait for running and queued jobs, so none is cut off mid-run", async () => {
+    const runner = createJobRunner(1);
+    const jobs = [deferred(), deferred()];
+    let finished = 0;
+    for (const job of jobs)
+      runner.run(async () => {
+        await job.promise;
+        finished += 1;
+      });
+    let drained = false;
+    runner.drain().then(() => {
+      drained = true;
+    });
+    jobs[0].resolve();
+    await setImmediate();
+    expect(drained).toBe(false);
+    jobs[1].resolve();
+    await vi.waitFor(() => expect(drained).toBe(true));
+    expect(finished).toBe(2);
+  });
+
+  it("keeps running the queue after a job throws", async () => {
+    const runner = createJobRunner(1);
+    let ran = false;
+    runner.run(async () => {
+      throw new Error("boom");
+    });
+    runner.run(async () => {
+      ran = true;
+    });
+    await runner.drain();
+    expect(ran).toBe(true);
+  });
+});
+
+describe("handleMessage", () => {
+  const msg = { MessageId: "m1", ReceiptHandle: "r1", Body: "{}" };
+
+  it.each([
+    ["deletes a message its handler finished", async () => undefined, 1],
+    [
+      "leaves a message its handler reported failed, for redelivery",
+      async () => ({ batchItemFailures: [{ itemIdentifier: "m1" }] }),
+      0,
+    ],
+    [
+      "leaves a message whose handler threw, for redelivery",
+      async () => {
+        throw new Error("boom");
+      },
+      0,
+    ],
+  ])("%s", async (_, handler, deletes) => {
+    const send = vi
+      .spyOn(SQSClient.prototype, "send")
+      .mockImplementation(async () => ({}));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await handleMessage("q", msg, /** @type {any} */ (handler));
+      expect(send).toHaveBeenCalledTimes(deletes);
+      if (deletes)
+        expect(/** @type {any} */ (send.mock.calls[0][0]).input).toEqual({
+          QueueUrl: "q",
+          ReceiptHandle: "r1",
+        });
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });
 
