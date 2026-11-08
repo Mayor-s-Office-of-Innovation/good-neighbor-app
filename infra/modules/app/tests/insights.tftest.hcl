@@ -330,10 +330,10 @@ run "insights_infra" {
       ListLake            = { actions = ["s3:ListBucket"], resources = ["arn:aws:s3:::analytics-lake"] }
       ReadConverterState  = { actions = ["s3:GetObject"], resources = ["arn:aws:s3:::analytics-lake/readings/_converter/state.json"] }
       StartTableExport    = { actions = ["dynamodb:ExportTableToPointInTime"], resources = ["arn:aws:dynamodb:us-west-2:111111111111:table/app"] }
-      UseAppKey           = { actions = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"], resources = ["arn:aws:kms:us-west-2:111111111111:key/mock"] }
-      WriteRawExports     = { actions = ["s3:AbortMultipartUpload", "s3:PutObject", "s3:PutObjectAcl"], resources = ["arn:aws:s3:::analytics-lake/raw/*"] }
+      UseAppKey           = { actions = ["kms:Decrypt", "kms:GenerateDataKey"], resources = ["arn:aws:kms:us-west-2:111111111111:key/mock"] }
+      WriteRawExports     = { actions = ["s3:AbortMultipartUpload", "s3:PutObject", "s3:PutObjectAcl"], resources = ["arn:aws:s3:::analytics-lake/raw/AWSDynamoDB/*"] }
     })
-    error_message = "The converter's backfill grants must be exactly these: list the lake, read its state, start and describe a table export, and write it to raw/ under the app key."
+    error_message = "The converter's backfill grants must be exactly these: list the lake, read its state, start and describe a table export, and write it only where DynamoDB puts exports, with no KMS Encrypt it doesn't use."
   }
 
   assert {

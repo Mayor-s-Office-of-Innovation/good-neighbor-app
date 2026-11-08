@@ -384,11 +384,11 @@ data "aws_iam_policy_document" "analytics_convert" {
   }
 
   statement {
-    # DynamoDB writes the export with the requester's permissions, as for the export role's WriteRawExports.
+    # DynamoDB writes the export with the requester's permissions, always under <prefix>/AWSDynamoDB/.
     sid       = "WriteRawExports"
     effect    = "Allow"
     actions   = ["s3:AbortMultipartUpload", "s3:PutObject", "s3:PutObjectAcl"]
-    resources = ["${aws_s3_bucket.analytics_lake.arn}/raw/*"]
+    resources = ["${aws_s3_bucket.analytics_lake.arn}/raw/AWSDynamoDB/*"]
   }
 
   statement {
@@ -407,10 +407,10 @@ data "aws_iam_policy_document" "analytics_convert" {
   }
 
   statement {
-    # Encrypt and GenerateDataKey let the full export write raw/ under the lake's KMS key, as for the export role.
+    # GenerateDataKey lets the full export write raw/ under the lake's KMS key; S3 never calls Encrypt.
     sid       = "UseAppKey"
     effect    = "Allow"
-    actions   = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"]
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
     resources = [aws_kms_key.app.arn]
   }
 
