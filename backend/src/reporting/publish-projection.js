@@ -1,12 +1,12 @@
 // Readers find a snapshot through latest.json, so it's written last and a
 // failed run leaves the previous snapshot in place.
 
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { DuckDBInstance } from "@duckdb/node-api";
-import { sqlString } from "../analytics/convert.js";
 import { createViews } from "../analytics/lake-views.js";
 import { LATEST_PROJECTION_KEY } from "./contract.js";
 import { buildProjection } from "./projection.js";
@@ -14,10 +14,10 @@ import { buildProjection } from "./projection.js";
 /** @typedef {import("./api/job-store.js").Sender} Sender */
 
 const BUILD_FOLDER_PREFIX = "insights-projection-";
-// Fit the Lambda's 2,048 MB of memory and of /tmp, which also holds the DuckDB
+// Fit the Lambda's 2,048 MB. Spill gets half of /tmp, which also holds the DuckDB
 // extensions and the finished files. Neither size has been measured on real data.
 const DUCKDB_MEMORY_LIMIT = "1536MB";
-const DUCKDB_SPILL_LIMIT = "1536MB";
+const DUCKDB_SPILL_LIMIT = "1GiB";
 
 /**
  * S3 keys and folder names hold this ID, so it carries no colons or dots.
@@ -25,8 +25,10 @@ const DUCKDB_SPILL_LIMIT = "1536MB";
  */
 export const snapshotIdFor = (evaluatedAt) => evaluatedAt.replace(/[:.]/g, "-");
 
-// Lambda keeps /tmp after a build times out, and only one build runs at a time.
+// Lambda keeps /tmp after a build times out. Only there, because a laptop's
+// temp folder may hold another worktree's build that is still running.
 async function clearStaleBuildFolders() {
+  if (!process.env.AWS_LAMBDA_FUNCTION_NAME) return;
   const root = tmpdir();
   for (const name of await readdir(root))
     if (name.startsWith(BUILD_FOLDER_PREFIX))
@@ -46,15 +48,21 @@ export async function publishProjection({
 }) {
   const snapshotId = String(manifest.snapshotId);
   const prefix = `projections/${manifest.contractVersion}/${snapshotId}`;
-  for (const name of written)
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: `${prefix}/${name}`,
-        Body: await readFile(join(dir, name)),
-        ServerSideEncryption: "aws:kms",
-      }),
-    );
+  // Streamed, so a large table never sits whole in the Lambda's memory.
+  await Promise.all(
+    written.map(async (name) => {
+      const path = join(dir, name);
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: `${prefix}/${name}`,
+          Body: createReadStream(path),
+          ContentLength: (await stat(path)).size,
+          ServerSideEncryption: "aws:kms",
+        }),
+      );
+    }),
+  );
   await s3.send(
     new PutObjectCommand({
       Bucket: bucket,
@@ -88,12 +96,13 @@ export async function buildLatestProjection({
   /** @type {import("@duckdb/node-api").DuckDBConnection | undefined} */
   let conn;
   try {
-    instance = await DuckDBInstance.create(":memory:");
+    instance = await DuckDBInstance.create(":memory:", {
+      // DuckDB spills to a folder under the working directory, which Lambda keeps read-only.
+      temp_directory: join(tmp, "spill"),
+      memory_limit: DUCKDB_MEMORY_LIMIT,
+      max_temp_directory_size: DUCKDB_SPILL_LIMIT,
+    });
     conn = await instance.connect();
-    // DuckDB spills to a folder under the working directory, which Lambda keeps read-only.
-    await conn.run(`SET temp_directory = ${sqlString(join(tmp, "spill"))}`);
-    await conn.run(`SET memory_limit = '${DUCKDB_MEMORY_LIMIT}'`);
-    await conn.run(`SET max_temp_directory_size = '${DUCKDB_SPILL_LIMIT}'`);
     await (prepare
       ? prepare(conn)
       : createViews(conn, bucket, { s3, endpoint }));
@@ -102,6 +111,11 @@ export async function buildLatestProjection({
       evaluatedAt,
       snapshotId: snapshotIdFor(evaluatedAt),
     });
+    // DuckDB keeps its memory until closed, and the upload needs room too.
+    conn.closeSync();
+    conn = undefined;
+    instance.closeSync();
+    instance = undefined;
     const published = await publishProjection({
       s3,
       bucket,

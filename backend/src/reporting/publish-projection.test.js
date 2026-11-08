@@ -1,7 +1,10 @@
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { Readable } from "node:stream";
+import { buffer } from "node:stream/consumers";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createViews } from "../analytics/lake-views.js";
 import { LATEST_PROJECTION_KEY } from "./contract.js";
 import { createLocalViews, writeLocalLake } from "./local-lake.js";
 import { TABLE_SCHEMAS } from "./projection.js";
@@ -9,6 +12,11 @@ import {
   buildLatestProjection,
   publishProjection,
 } from "./publish-projection.js";
+
+vi.mock(import("../analytics/lake-views.js"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  createViews: vi.fn(),
+}));
 
 const NOW = new Date("2026-11-05T12:00:00.000Z");
 const SNAPSHOT_ID = "2026-11-05T12-00-00-000Z";
@@ -31,7 +39,7 @@ const LAKE_ITEMS = [
 let tmp;
 /** @type {string} */
 let scratch;
-/** @type {{ key: string, body: any }[]} */
+/** @type {{ key: string, body: any, length?: number }[]} */
 let puts;
 /** @type {{ send: import("vitest").Mock }} */
 let s3;
@@ -45,7 +53,10 @@ beforeEach(async () => {
   puts = [];
   s3 = {
     send: vi.fn(async (command) => {
-      puts.push({ key: command.input.Key, body: command.input.Body });
+      const { Key, Body, ContentLength } = command.input;
+      // Read a streamed body, as S3 would, so the test sees its text.
+      const body = Body instanceof Readable ? await buffer(Body) : Body;
+      puts.push({ key: Key, body, length: ContentLength });
     }),
   };
   vi.spyOn(console, "log").mockImplementation(() => {});
@@ -113,7 +124,7 @@ describe("buildLatestProjection", () => {
       throw new Error("s3 down");
     });
     await expect(build()).rejects.toThrow("s3 down");
-    expect(puts).toHaveLength(1);
+    expect(puts.length).toBeGreaterThan(0);
     expect(puts.map((p) => p.key)).not.toContain(LATEST_PROJECTION_KEY);
   });
 
@@ -126,11 +137,78 @@ describe("buildLatestProjection", () => {
     );
   });
 
-  it("clears a folder a timed-out build left behind, but no other files", async () => {
+  it("clears a folder a timed-out build left behind on Lambda, but no other files", async () => {
+    vi.stubEnv("AWS_LAMBDA_FUNCTION_NAME", "analytics-projection");
     await mkdir(join(scratch, "insights-projection-old"));
     await writeFile(join(scratch, "insights-snapshot-keep"), "");
     await build();
     expect(await readdir(scratch)).toEqual(["insights-snapshot-keep"]);
+  });
+
+  it("keeps other build folders off Lambda, where another worktree may be building", async () => {
+    vi.stubEnv("AWS_LAMBDA_FUNCTION_NAME", "");
+    await mkdir(join(scratch, "insights-projection-other"));
+    await build();
+    expect(await readdir(scratch)).toEqual(["insights-projection-other"]);
+  });
+
+  it("streams each table with its length, so no file sits whole in memory", async () => {
+    vi.spyOn(s3, "send");
+    await build();
+    const tables = s3.send.mock.calls
+      .map(([command]) => command.input)
+      .filter((input) => input.Key.endsWith(".parquet"));
+    expect(tables.length).toBeGreaterThan(1);
+    for (const input of tables) expect(input.Body).toBeInstanceOf(Readable);
+    for (const put of puts.filter((p) => p.key.endsWith(".parquet")))
+      expect(put.length).toBe(put.body.length);
+  });
+
+  it("closes DuckDB before uploading, so its memory is free for the upload", async () => {
+    /** @type {any} */
+    let held;
+    /** @type {unknown[]} */
+    const usable = [];
+    const upload = /** @type {any} */ (s3.send.getMockImplementation());
+    s3.send.mockImplementation(async (command) => {
+      usable.push(
+        await held.run("SELECT 1").then(
+          () => true,
+          () => false,
+        ),
+      );
+      return upload(command);
+    });
+    await buildLatestProjection({
+      s3,
+      bucket: "lake",
+      now: () => NOW,
+      prepare: async (conn) => {
+        held = conn;
+        await prepare(conn);
+      },
+    });
+    expect(usable.length).toBeGreaterThan(1);
+    expect(usable).not.toContain(true);
+  });
+
+  it("uploads the tables together, and latest.json only once all have landed", async () => {
+    let inFlight = 0;
+    let most = 0;
+    /** @type {number[]} */
+    const atLatest = [];
+    const upload = /** @type {any} */ (s3.send.getMockImplementation());
+    s3.send.mockImplementation(async (command) => {
+      if (command.input.Key === LATEST_PROJECTION_KEY) atLatest.push(inFlight);
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await upload(command);
+      inFlight -= 1;
+    });
+    await build();
+    expect(most).toBeGreaterThan(1);
+    expect(atLatest).toEqual([0]);
   });
 
   it("refuses to run without a lake bucket", async () => {
@@ -140,7 +218,7 @@ describe("buildLatestProjection", () => {
     expect(puts).toEqual([]);
   });
 
-  it("works in one temporary folder and leaves it behind after a failed build", async () => {
+  it("works in one temporary folder and removes it after a failed build", async () => {
     /** @type {string[]} */
     let during = [];
     await expect(
@@ -178,7 +256,44 @@ describe("buildLatestProjection", () => {
       },
     });
     expect(settings.memory_limit).toMatch(/^1\.[0-9]+ GiB$/);
-    expect(settings.max_temp_directory_size).toMatch(/^1\.[0-9]+ GiB$/);
+    // Half of the Lambda's 2 GiB of /tmp; the extensions and output need the rest.
+    expect(settings.max_temp_directory_size).toBe("1.0 GiB");
+  });
+
+  it("reads the S3 lake when no local lake is passed", async () => {
+    vi.mocked(createViews).mockImplementationOnce(async (conn) => {
+      await prepare(conn);
+      return { empty: [] };
+    });
+    await buildLatestProjection({
+      s3,
+      bucket: "lake",
+      endpoint: "http://127.0.0.1:9000",
+      now: () => NOW,
+    });
+    expect(createViews).toHaveBeenCalledWith(expect.anything(), "lake", {
+      s3,
+      endpoint: "http://127.0.0.1:9000",
+    });
+    expect(puts.at(-1)?.key).toBe(LATEST_PROJECTION_KEY);
+  });
+
+  it.each([
+    ["path-style URLs for an emulator endpoint", "http://127.0.0.1:9000", true],
+    ["AWS's default URLs with no endpoint", undefined, false],
+  ])("builds its own S3 client with %s", async (_, endpoint, pathStyle) => {
+    /** @type {any} */
+    let client;
+    vi.mocked(createViews).mockImplementationOnce(
+      async (_conn, _bucket, opts) => {
+        client = opts?.s3;
+        throw new Error("stop before upload");
+      },
+    );
+    await expect(
+      buildLatestProjection({ bucket: "lake", endpoint, now: () => NOW }),
+    ).rejects.toThrow("stop before upload");
+    expect(Boolean(client.config.forcePathStyle)).toBe(pathStyle);
   });
 });
 
