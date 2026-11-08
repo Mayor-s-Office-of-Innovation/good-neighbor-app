@@ -77,11 +77,13 @@ different `AWS_DEPLOY_ROLE_ARN` in each job: the export job uses `dev`; the migr
 changing anything. Run it from the Actions tab; the summary lists the action and address of each
 changed resource, and the names of the attributes an update changes. It publishes no values: this
 repo is public, and the role can read Lambda environment values, so the plan's text stays on the
-runner. If init or the plan fails, the log shows only each error's level, resource address (with any
-`[...]` key cut), file line and error class, such as `AccessDenied`, since error text can quote
-state. Config errors, such as a typo or an invalid argument, reproduce with a local plan on dev
-credentials. Only a permission failure needs the plan role's own permissions, and for that the
-error class names the denial. It uses the read-only role in
+runner. Error text can quote state, so for each init or plan error the log shows only its level
+and AWS error class, such as `AccessDenied`. A plan error also shows its resource address (with any
+`[...]` key cut) and file line, where Terraform gives them. A successful init shows only the
+provider versions it chose and any lock file change. Config errors, such as a typo or an invalid
+argument, reproduce with a local plan on dev credentials. A permission failure shows the denial
+class but not the action it was denied; find the action from the class and the resource address.
+It uses the read-only role in
 `infra/modules/app/plan-role.tf`, through a `dev-plan` GitHub Environment that holds the secrets
 `AWS_ACCOUNT_ID` and `AWS_PLAN_ROLE_ARN` (the `terraform_plan_role_arn` output), and the variable
 `AWS_REGION`.

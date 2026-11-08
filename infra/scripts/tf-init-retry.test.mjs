@@ -8,8 +8,11 @@ import { fileURLToPath } from "node:url";
 
 const script = fileURLToPath(new URL("./tf-init-retry.sh", import.meta.url));
 
-/** @param {number[]} statuses exit status of each terraform call, in order */
-function run(statuses) {
+/**
+ * @param {number[]} statuses exit status of each terraform call, in order
+ * @param {string[]} [args]
+ */
+function run(statuses, args = ["-backend=false"]) {
   const directory = mkdtempSync(join(tmpdir(), "gn-tf-init-test-"));
   try {
     const log = join(directory, "calls");
@@ -25,7 +28,7 @@ exit "$1"
 `,
       { mode: 0o755 },
     );
-    const result = spawnSync("bash", [script], {
+    const result = spawnSync("bash", [script, ...args], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -38,6 +41,7 @@ exit "$1"
     return {
       status: result.status,
       calls: readFileSync(log, "utf8").trim().split("\n").filter(Boolean),
+      stdout: result.stdout,
     };
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -60,4 +64,11 @@ test("doesn't retry an init that succeeds", () => {
   const { status, calls } = run([0]);
   assert.equal(status, 0);
   assert.equal(calls.length, 1);
+});
+
+test("passes its arguments to terraform init, so plan-dev.yml can init with the backend", () => {
+  const { status, calls, stdout } = run([1, 0], ["-input=false", "-json"]);
+  assert.equal(status, 0);
+  assert.deepEqual(calls, Array(2).fill("init -input=false -json"));
+  assert.equal(stdout, "Terraform initialization failed; retrying in 0 seconds (attempt 1/3).\n");
 });

@@ -101,23 +101,14 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
 
-      # Init errors can quote backend or provider config too, so they get the plan's filter.
+      # run-filtered.sh keeps Terraform's text off this public log, since errors can quote state.
+      # Init prints only provider versions and lock file changes; the retry covers registry resets.
       - name: Init
-        run: |
-          status=0
-          terraform init -input=false > "$RUNNER_TEMP/init.log" 2>&1 || status=$?
-          jq -n -R -r --arg status "$status" -f "$GITHUB_WORKSPACE/infra/scripts/plan-diagnostics.jq" "$RUNNER_TEMP/init.log"
-          exit "$status"
+        run: bash "$GITHUB_WORKSPACE/infra/scripts/run-filtered.sh" "$RUNNER_TEMP/init.log" bash "$GITHUB_WORKSPACE/infra/scripts/tf-init-retry.sh" -input=false -json
 
       # No lock: it would fail a deploy that starts meanwhile, and the role can't write it.
-      # The log is public and error text can quote state, so it shows only level, address, line and error class.
-      # The status goes to jq so a failure with no recognised error still prints how to read it.
       - name: Plan
-        run: |
-          status=0
-          terraform plan -input=false -lock=false -out=tfplan -json > "$RUNNER_TEMP/plan.log" 2>&1 || status=$?
-          jq -n -R -r --arg status "$status" -f "$GITHUB_WORKSPACE/infra/scripts/plan-diagnostics.jq" "$RUNNER_TEMP/plan.log"
-          exit "$status"
+        run: bash "$GITHUB_WORKSPACE/infra/scripts/run-filtered.sh" "$RUNNER_TEMP/plan.log" terraform plan -input=false -lock=false -out=tfplan -json
 
       # This repo is public, so the summary names changed attributes but never their values.
       - name: Summarize plan
@@ -129,6 +120,15 @@ jobs:
             echo "Ref: \`$GITHUB_REF_NAME\`. Only actions, addresses and the names of changed attributes are shown, because this repo is public."
             echo
             echo '```text'
-            terraform show -json tfplan | jq -r -f "$GITHUB_WORKSPACE/infra/scripts/plan-summary.jq"
+            # terraform show and jq errors can quote plan values, so they go to files.
+            if ! terraform show -json tfplan 2> "$RUNNER_TEMP/show.err" \
+              | jq -r -f "$GITHUB_WORKSPACE/infra/scripts/plan-summary.jq" 2> "$RUNNER_TEMP/summary.err"; then
+              echo 'Could not summarize the plan; its errors are kept off this public log.'
+              summary_failed=1
+            fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${summary_failed:-}" ]; then
+            echo 'Could not summarize the plan; its errors are kept off this public log.' >&2
+            exit 1
+          fi
