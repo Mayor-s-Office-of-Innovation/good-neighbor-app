@@ -585,6 +585,57 @@ describe("export and report jobs", () => {
     }
   });
 
+  it.each([
+    ["export", "postExport", { dataset: "issues" }],
+    ["report", "postReport", { siteIds: ["s1"] }],
+  ])(
+    "retries a default-month %s for the month it was asked in",
+    async (_kind, route, body) => {
+      const projection = syntheticProjection();
+      const jobStore = memoryJobStore();
+      /**
+       * @param {string} id
+       * @param {string} evaluatedAt
+       * @returns {any}
+       */
+      const handlersOn = (id, evaluatedAt) =>
+        createReportingHandlers({
+          snapshots: createSnapshotStore({
+            source: {
+              latest: async () => ({ prefix: id, snapshotId: id }),
+              load: async (/** @type {string} */ prefix) => ({
+                prefix,
+                manifest: {
+                  ...projection.manifest,
+                  snapshotId: id,
+                  evaluatedAt,
+                },
+                tables: projection.tables,
+              }),
+            },
+          }),
+          jobStore,
+          starter: async () => {},
+          now: () => NOW,
+        });
+      // 11 pm on Oct 31 in San Francisco, then the next day's snapshot.
+      const first = json(
+        await handlersOn("snap1", "2026-11-01T06:00:00.000Z")[route](
+          event({ headers: key, body }),
+        ),
+      );
+      expect(first.job.request.month).toBe("2026-10");
+      const [record] = [...jobStore.records.values()];
+      record.state = "failed";
+      const h = handlersOn("snap2", "2026-11-01T19:00:00.000Z");
+      const retry = json(await h[route](event({ headers: key, body })));
+      expect(retry.job).toMatchObject({
+        snapshotId: "snap2",
+        request: { month: "2026-10" },
+      });
+    },
+  );
+
   it("cancels a queued job", async () => {
     const { h } = setup();
     const created = json(

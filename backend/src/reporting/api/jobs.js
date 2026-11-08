@@ -238,7 +238,7 @@ export function createJobs({
   // A repeat of a known key skips `check`, so a double click doesn't redo the count.
   /**
    * @param {string} ownerKey
-   * @param {{ kind: JobRecord["kind"], params: Record<string, any>, idempotencyKey: string, check?: (snap: import("./snapshot.js").Snapshot) => void }} req
+   * @param {{ kind: JobRecord["kind"], params: Record<string, any>, idempotencyKey: string, check?: (snap: import("./snapshot.js").Snapshot, params: Record<string, any>) => Record<string, any> | void }} req a returned object from `check` is the params the job stores
    * @param {number} [races]
    * @returns {Promise<{ statusCode: number, job: Awaited<ReturnType<typeof view>> }>}
    */
@@ -265,9 +265,10 @@ export function createJobs({
         return { statusCode: 200, job: await view(ownerKey, existing) };
       // A retry reads the newest data and gets a full day to be downloaded.
       const fresh = await snapshots.current();
-      check(fresh);
+      const retryParams = check(fresh, existing.params) ?? existing.params;
       const retry = {
         ...existing,
+        params: retryParams,
         state: /** @type {JobState} */ ("queued"),
         error: null,
         attempts: existing.attempts + 1,
@@ -282,12 +283,12 @@ export function createJobs({
       return { statusCode: 202, job: await view(ownerKey, retry) };
     }
     const snap = await snapshots.current();
-    check(snap);
+    const stored = check(snap, params) ?? params;
     /** @type {JobRecord} */
     const record = {
       jobId,
       kind,
-      params,
+      params: stored,
       requestHash,
       snapshotId: snap.snapshotId,
       snapshotPrefix: snap.prefix,

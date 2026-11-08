@@ -36,6 +36,7 @@ import {
   parsePeriodParams,
   parseSiteFilter,
   requestError,
+  withDefaultMonth,
 } from "../reporting/api/requests.js";
 import {
   createSnapshotStore,
@@ -391,10 +392,12 @@ export function createReportingHandlers({
           params: stored,
           idempotencyKey: key,
           // Refused before it is queued, on the snapshot the job will read.
-          check: (snap) => {
-            const rows = exportRowCount(snap, exportRequest(snap, stored));
+          check: (snap, asked) => {
+            const resolved = withDefaultMonth(asked, snap.manifest.evaluatedAt);
+            const rows = exportRowCount(snap, exportRequest(snap, resolved));
             if (rows > maxExportRows)
               throw requestError("export_too_large", 413);
+            return resolved;
           },
         });
         return { statusCode, body: { job } };
@@ -410,7 +413,11 @@ export function createReportingHandlers({
           kind: "report",
           params: stored,
           idempotencyKey: key,
-          check: (snap) => reportRequest(snap, stored),
+          check: (snap, asked) => {
+            const resolved = withDefaultMonth(asked, snap.manifest.evaluatedAt);
+            reportRequest(snap, resolved);
+            return resolved;
+          },
         });
         return { statusCode, body: { job } };
       }),

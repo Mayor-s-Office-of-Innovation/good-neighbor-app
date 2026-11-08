@@ -86,6 +86,18 @@ export function parsePeriodParams(params, evaluatedAt) {
   return resolvePeriod(spec, evaluatedAt);
 }
 
+// A job keeps the month it was asked in, so a retry after the 1st builds the same month.
+/**
+ * @param {Params} params
+ * @param {string} evaluatedAt
+ * @returns {Params}
+ */
+export function withDefaultMonth(params, evaluatedAt) {
+  if ((str(params.period) ?? "month") !== "month" || str(params.month))
+    return params;
+  return { ...params, month: pacificDateKey(evaluatedAt).slice(0, 7) };
+}
+
 /**
  * @param {unknown} value comma list or array of IDs
  * @param {number} max
