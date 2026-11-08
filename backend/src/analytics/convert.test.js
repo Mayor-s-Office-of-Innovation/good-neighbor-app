@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // S3 seam for the manifest test: one GetObject per call, body via
 // transformToString (the shape listManifestDataFiles consumes).
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, ddbSend } = vi.hoisted(() => ({
+  send: vi.fn(),
+  ddbSend: vi.fn(),
+}));
 vi.mock("@aws-sdk/client-s3", () => ({
   S3Client: class {
     send = send;
@@ -18,6 +21,23 @@ vi.mock("@aws-sdk/client-s3", () => ({
     }
   },
   ListObjectsV2Command: class {
+    constructor(/** @type {any} */ input) {
+      this.input = input;
+    }
+  },
+}));
+
+// DynamoDB seam for the backfill's full export.
+vi.mock("@aws-sdk/client-dynamodb", () => ({
+  DynamoDBClient: class {
+    send = ddbSend;
+  },
+  ExportTableToPointInTimeCommand: class {
+    constructor(/** @type {any} */ input) {
+      this.input = input;
+    }
+  },
+  DescribeExportCommand: class {
     constructor(/** @type {any} */ input) {
       this.input = input;
     }
@@ -730,7 +750,14 @@ describe("convertS3Event backfill", () => {
 
   beforeEach(() => {
     process.env.LAKE_BUCKET = "lake";
+    process.env.DYNAMO_TABLE_ARN = "arn:aws:dynamodb:us-west-2:1:table/app";
     delete process.env.ANALYTICS_BACKFILL_ENABLED;
+    ddbSend.mockReset();
+    ddbSend.mockResolvedValue({
+      ExportDescription: {
+        ExportArn: "arn:aws:dynamodb:us-west-2:1:table/app/export/full1",
+      },
+    });
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
@@ -740,16 +767,28 @@ describe("convertS3Event backfill", () => {
     const result = await convertS3Event(event);
     expect(result).toMatchObject({ converted: 1, backfilled: 0 });
     expect(calls.some((c) => c.startsWith("ListObjectsV2Command"))).toBe(false);
+    expect(ddbSend).not.toHaveBeenCalled();
   });
 
-  it("records the format version without re-converting the trigger export", async () => {
+  it("starts a full export of the table without re-converting the trigger export", async () => {
     process.env.ANALYTICS_BACKFILL_ENABLED = "true";
     lake();
     const result = await convertS3Event(event);
     expect(result).toMatchObject({ converted: 1, backfilled: 0 });
     expect(calls).toContain("ListObjectsV2Command raw/");
     expect(calls.filter((c) => c.endsWith(SUMMARY))).toHaveLength(1);
-    expect(stateWritten).toMatchObject({ formatVersion: FORMAT_VERSION });
+    expect(ddbSend).toHaveBeenCalledTimes(1);
+    expect(ddbSend.mock.calls[0][0].input).toMatchObject({
+      TableArn: "arn:aws:dynamodb:us-west-2:1:table/app",
+      S3Bucket: "lake",
+      S3Prefix: "raw",
+      ExportType: "FULL_EXPORT",
+    });
+    // The version waits for the full export to convert.
+    expect(stateWritten).toMatchObject({
+      formatVersion: null,
+      backfill: { formatVersion: FORMAT_VERSION },
+    });
   });
 
   it("keeps the trigger export converted when the backfill fails", async () => {
@@ -758,6 +797,6 @@ describe("convertS3Event backfill", () => {
     const result = await convertS3Event(event);
     expect(result).toMatchObject({ converted: 1, backfilled: 0 });
     expect(console.error).toHaveBeenCalled();
-    expect(stateWritten).toBeNull();
+    expect(stateWritten?.formatVersion).toBeNull();
   });
 });

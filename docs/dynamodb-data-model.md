@@ -975,15 +975,19 @@ never merges a live Issue. `task_updates.raw` and `programs.raw` keep only
 listed fields, so update text, notes, photo keys, the actor and Program contacts
 stay out of the lake. The converter records its format version in
 `readings/_converter/state.json` (`FORMAT_VERSION` in `convert.js`). The first
-conversion after the version changes re-converts every `raw/` export still kept
-(30 days), once, oldest first and at each export's own time. An export that fails
-is logged and passed, so later exports still convert; the old version stays until a
-later run converts it or it expires. A run stops when the next export's estimated
-time, from its data files' size, plus two minutes passes the time left, and resumes
-on the next export. Exports are incremental, so an item unchanged in those 30 days keeps only
-what its first conversion wrote. The backfill runs only when
-`ANALYTICS_BACKFILL_ENABLED=true`, which waits on the converter role being allowed
-to list `raw/` and read the state file.
+conversion after the version changes starts one full DynamoDB export into `raw/`,
+which converts like any other export, so items unchanged since before the 30-day
+`raw/` window reach the lake in the new format. It also re-converts every `raw/`
+export still kept (30 days), once, oldest first and at each export's own time, which
+covers items deleted in those 30 days that the full export no longer holds. An export
+that fails is logged and passed, so later exports still convert; the old version stays
+until a later run converts it or it expires. A run stops when the next export's
+estimated time, from its data files' size, plus two minutes passes the time left, and
+resumes on the next export. The new version is recorded only once the full export has
+converted and no re-conversion failed; if the full export fails, a later run starts
+another. The backfill runs only when `ANALYTICS_BACKFILL_ENABLED=true`, which waits on
+the converter role being allowed to list `raw/`, read the state file, and start and
+describe table exports.
 Current ART keys and legacy ART keys
 with a place segment remain supported. Assessment/condition and device shapes are
 also matched explicitly; identifiers need not be UUIDs.

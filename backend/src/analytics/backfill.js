@@ -1,7 +1,12 @@
 // Re-converts raw exports after a format change, so older rows gain new record types.
-// Raw exports expire after 30 days (analytics.tf); older history keeps its first conversion.
+// Raw exports expire after 30 days (analytics.tf), so it also starts one full table export,
+// which brings every item older than that into the lake in the new format.
 // A failed export leaves the version unchanged, and re-converting overwrites, so retries are safe.
 
+import {
+  DescribeExportCommand,
+  ExportTableToPointInTimeCommand,
+} from "@aws-sdk/client-dynamodb";
 import {
   GetObjectCommand,
   ListObjectsV2Command,
@@ -15,13 +20,21 @@ export const STATE_KEY = "readings/_converter/state.json";
 /**
  * @typedef {object} ConverterState
  * @property {number | null} formatVersion
- * @property {{ formatVersion: number, done: string[] }} [backfill] in-progress run
+ * @property {{ formatVersion: number, done: string[], fullExport?: FullExport }} [backfill] in-progress run
  * @property {string} [updatedAt]
+ */
+
+/**
+ * @typedef {object} FullExport
+ * @property {string} exportArn
+ * @property {number} attempt counts failed exports, so a retry gets a fresh ClientToken
  */
 
 /**
  * @typedef {object} BackfillDeps
  * @property {(command: any) => Promise<any>} send S3 client send
+ * @property {(command: any) => Promise<any>} ddbSend DynamoDB client send
+ * @property {string | undefined} tableArn the app table, exported in full once per version
  * @property {(bucket: string, key: string, exportedAt: string) => Promise<unknown>} convert convertExport
  * @property {string} bucket
  * @property {number} formatVersion the converter's current version
@@ -116,6 +129,47 @@ async function listExports({ send, bucket, prefix = "raw" }) {
 }
 
 /**
+ * Starts the full export, or a new one after a failure. Same bucket, prefix and format as
+ * the scheduled export in export.js, so its manifest triggers this converter like any other.
+ * @param {BackfillDeps} deps
+ * @param {number} attempt
+ * @returns {Promise<FullExport>}
+ */
+async function startFullExport(
+  { ddbSend, tableArn, bucket, prefix = "raw", formatVersion },
+  attempt,
+) {
+  if (!tableArn) throw new Error("Missing DYNAMO_TABLE_ARN");
+  const res = await ddbSend(
+    new ExportTableToPointInTimeCommand({
+      TableArn: tableArn,
+      S3Bucket: bucket,
+      S3Prefix: prefix,
+      ExportFormat: "DYNAMODB_JSON",
+      ExportType: "FULL_EXPORT",
+      // Two converters running at once get the same export back, not two (DynamoDB keeps the token 8 h).
+      ClientToken: `format-${formatVersion}-${attempt}`,
+    }),
+  );
+  const exportArn = res.ExportDescription?.ExportArn;
+  if (!exportArn)
+    throw new Error("ExportTableToPointInTime returned no ExportArn");
+  return { exportArn, attempt };
+}
+
+/**
+ * @param {BackfillDeps} deps
+ * @param {string} exportArn
+ * @returns {Promise<boolean>}
+ */
+async function exportFailed({ ddbSend }, exportArn) {
+  const res = await ddbSend(
+    new DescribeExportCommand({ ExportArn: exportArn }),
+  );
+  return res.ExportDescription?.ExportStatus === "FAILED";
+}
+
+/**
  * @param {BackfillDeps} deps
  * @returns {Promise<{ backfilled: number, failed: number, finished: boolean }>}
  */
@@ -123,11 +177,57 @@ export async function backfillIfFormatChanged(deps) {
   const state = await readState(deps);
   if (state?.formatVersion === deps.formatVersion)
     return { backfilled: 0, failed: 0, finished: true };
-  const done = new Set(
+  const prior =
     state?.backfill?.formatVersion === deps.formatVersion
-      ? state.backfill.done
-      : [],
-  );
+      ? state.backfill
+      : undefined;
+  const done = new Set(prior?.done ?? []);
+  let fullExport = prior?.fullExport;
+  const save = () =>
+    writeState(deps, {
+      formatVersion: state?.formatVersion ?? null,
+      backfill: {
+        formatVersion: deps.formatVersion,
+        done: [...done],
+        fullExport,
+      },
+    });
+  // DynamoDB writes an export's files under <prefix>/AWSDynamoDB/<the ARN's last segment>/.
+  const fullKey = (/** @type {FullExport} */ f) =>
+    `${deps.prefix ?? "raw"}/AWSDynamoDB/${f.exportArn.split("/").pop()}/manifest-summary.json`;
+  // This run's trigger was the full export, so later runs needn't wait for it.
+  if (
+    fullExport &&
+    deps.skip?.has(fullKey(fullExport)) &&
+    !done.has(fullKey(fullExport))
+  ) {
+    done.add(fullKey(fullExport));
+    await save();
+  }
+
+  let exportPending = false;
+  try {
+    if (!fullExport) {
+      fullExport = await startFullExport(deps, 1);
+      await save();
+    } else if (!done.has(fullKey(fullExport))) {
+      if (await exportFailed(deps, fullExport.exportArn)) {
+        logServerError(
+          "analytics-convert backfill",
+          new Error("full export failed; starting another"),
+          { extra: { exportArn: fullExport.exportArn } },
+        );
+        fullExport = await startFullExport(deps, fullExport.attempt + 1);
+        await save();
+      }
+    }
+  } catch (err) {
+    // The re-conversion below still helps; the next run starts or checks the export again.
+    logServerError("analytics-convert backfill", err);
+    exportPending = true;
+  }
+  if (fullExport && !done.has(fullKey(fullExport))) exportPending = true;
+
   let backfilled = 0;
   let failed = 0;
   for (const { key, exportedAt, bytes } of await listExports(deps)) {
@@ -154,13 +254,11 @@ export async function backfillIfFormatChanged(deps) {
     }
     done.add(key);
     backfilled += 1;
+    if (fullExport && key === fullKey(fullExport)) exportPending = false;
     // Progress after each export, so a timeout doesn't redo the lot.
-    await writeState(deps, {
-      formatVersion: state?.formatVersion ?? null,
-      backfill: { formatVersion: deps.formatVersion, done: [...done] },
-    });
+    await save();
   }
-  if (failed) return { backfilled, failed, finished: false };
+  if (failed || exportPending) return { backfilled, failed, finished: false };
   await writeState(deps, { formatVersion: deps.formatVersion });
   return { backfilled, failed, finished: true };
 }

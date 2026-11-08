@@ -21,6 +21,7 @@ import {
   GetObjectCommand,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { createGunzip } from "node:zlib";
@@ -38,6 +39,8 @@ export { classifyItem } from "./entity-keys.js";
 const s3 = new S3Client(
   process.env.AWS_ENDPOINT_URL_S3 ? { forcePathStyle: true } : {},
 );
+// Only the backfill uses it, to start a full table export after a format change.
+const dynamo = new DynamoDBClient({});
 
 // Grade score mapping (ADR 0013 §6): Excellent=5 … Very Poor=1, null when
 // absent. Mirrors GRADE_ORDER in synthesize-check.js (worst-first there,
@@ -696,11 +699,13 @@ export async function convertS3Event(event, context) {
     rows += result.rows;
   }
   let backfilled = 0;
-  // Off until the converter role can list raw/ and read its state, or every export logs AccessDenied.
+  // Off where the converter role can't list raw/, read its state or start an export, or every export logs AccessDenied.
   if (converted && process.env.ANALYTICS_BACKFILL_ENABLED === "true")
     try {
       ({ backfilled } = await backfillIfFormatChanged({
         send: (command) => s3.send(command),
+        ddbSend: (command) => dynamo.send(command),
+        tableArn: process.env.DYNAMO_TABLE_ARN,
         convert: convertExport,
         bucket,
         prefix: process.env.EXPORT_PREFIX || "raw",
