@@ -350,32 +350,31 @@ run "insights_waf" {
     target = [aws_wafv2_web_acl.web]
   }
 
-  # Each exemption is a not_statement holding exactly this path and method, untransformed, in a rule that blocks.
+  # The full list, so an added, dropped or loosened exemption fails, not only a changed count.
   assert {
-    condition = alltrue([
-      for route in ["/admin/v1/reports/insights", "/admin/v1/reporting/trends"] : anytrue([
-        for rule in aws_wafv2_web_acl.web.rule : (
-          length(rule.action[0].block) == 1
-          && length(rule.statement[0].and_statement[0].statement) == 5
-          && rule.statement[0].and_statement[0].statement[0].label_match_statement[0].key == "awswaf:managed:aws:core-rule-set:SizeRestrictions_Body"
-          && anytrue([
-            for s in rule.statement[0].and_statement[0].statement : try(jsonencode([
-              for m in s.not_statement[0].statement[0].and_statement[0].statement : {
-                search     = m.byte_match_statement[0].search_string
-                position   = m.byte_match_statement[0].positional_constraint
-                field      = length(m.byte_match_statement[0].field_to_match[0].uri_path) == 1 ? "path" : length(m.byte_match_statement[0].field_to_match[0].method) == 1 ? "method" : "other"
-                transforms = sort([for t in m.byte_match_statement[0].text_transformation : "${t.priority}:${t.type}"])
-              }
-              ]) == jsonencode([
-              { search = route, position = "EXACTLY", field = "path", transforms = ["0:NONE"] },
-              { search = "POST", position = "EXACTLY", field = "method", transforms = ["0:NONE"] },
-            ]), false)
-          ])
-        )
-        if rule.name == "BodySizeRestrictionsOutsideAssessmentEvaluation"
-      ])
+    condition = anytrue([
+      for rule in aws_wafv2_web_acl.web.rule : (
+        length(rule.action[0].block) == 1
+        && rule.statement[0].and_statement[0].statement[0].label_match_statement[0].key == "awswaf:managed:aws:core-rule-set:SizeRestrictions_Body"
+        && try(jsonencode([
+          for s in slice(rule.statement[0].and_statement[0].statement, 1, length(rule.statement[0].and_statement[0].statement)) : [
+            for m in s.not_statement[0].statement[0].and_statement[0].statement : {
+              search     = m.byte_match_statement[0].search_string
+              position   = m.byte_match_statement[0].positional_constraint
+              field      = length(m.byte_match_statement[0].field_to_match[0].uri_path) == 1 ? "path" : length(m.byte_match_statement[0].field_to_match[0].method) == 1 ? "method" : "other"
+              transforms = sort([for t in m.byte_match_statement[0].text_transformation : "${t.priority}:${t.type}"])
+            }
+          ]
+          ]) == jsonencode([
+          for route in ["/v1/assessments:evaluate", "/admin/v1/site-imports/preview", "/admin/v1/reports/insights", "/admin/v1/reporting/trends"] : [
+            { search = route, position = "EXACTLY", field = "path", transforms = ["0:NONE"] },
+            { search = "POST", position = "EXACTLY", field = "method", transforms = ["0:NONE"] },
+          ]
+        ]), false)
+      )
+      if rule.name == "BodySizeRestrictionsOutsideAssessmentEvaluation"
     ])
-    error_message = "The Insights report and trends POSTs must be exempt from the 8 KiB body rule by exact, untransformed path and method, or a report of about 200 Sites or a chart of 50 Sites is blocked."
+    error_message = "The 8 KiB body rule must exempt exactly the evaluate, site-import preview, Insights report and trends POSTs, by exact, untransformed path and method, or a report of about 200 Sites is blocked or another route skips the check."
   }
 
   assert {

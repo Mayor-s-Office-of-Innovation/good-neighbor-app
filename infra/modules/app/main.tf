@@ -1650,7 +1650,7 @@ resource "aws_wafv2_web_acl" "web" {
             key   = "awswaf:managed:aws:core-rule-set:SizeRestrictions_QueryString"
           }
         }
-        # Plain reporting paths only, since % or .. could disguise another route.
+        # Plain reporting GETs only, since % or .. in the path could disguise another route.
         statement {
           or_statement {
             statement {
