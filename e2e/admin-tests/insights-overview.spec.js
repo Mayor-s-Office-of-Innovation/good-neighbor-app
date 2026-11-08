@@ -119,3 +119,50 @@ test("a Site's financial year draws the months before its records as no data, no
     fills.map(() => expect.stringContaining("repeating-linear-gradient")),
   );
 });
+
+test("at 1280px, Overview column heads keep their spaces and a Site's month labels don't overlap", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await mockAdmin(page, { insights: true });
+  await page.goto("/insights?period=2026-10&show=all");
+  await expect(siteRows(page)).toHaveCount(4);
+  // The gap between a head's last two words, measured where the browser drew them.
+  const gaps = await page.locator("[data-sort-key]").evaluateAll((heads) =>
+    heads
+      .filter((head) => head.firstChild?.textContent?.trim())
+      .map((head) => {
+        const words = document.createRange();
+        words.selectNodeContents(/** @type {Node} */ (head.firstChild));
+        const before = [...words.getClientRects()].at(-1);
+        const last = /** @type {Element} */ (
+          head.querySelector(":scope > span")
+        ).getBoundingClientRect();
+        return last.top > (before?.top ?? 0) + 1
+          ? 4
+          : last.left - (before?.right ?? 0);
+      }),
+  );
+  expect(gaps.length).toBeGreaterThan(0);
+  expect(gaps.every((gap) => gap >= 2)).toBe(true);
+  await page.goto("/insights/sites/s1?period=2026");
+  await expect(page.locator("[data-bar-label]").first()).toBeAttached();
+  // Each month's label must end before the next one starts.
+  const overlaps = await page
+    .locator("[data-charts] > div:first-child [data-bar-label]")
+    .evaluateAll((spans) => {
+      const drawn = spans
+        .filter((s) => s.textContent?.trim())
+        .map((s) => {
+          const r = document.createRange();
+          r.selectNodeContents(s);
+          const rects = [...r.getClientRects()];
+          return {
+            left: Math.min(...rects.map((x) => x.left)),
+            right: Math.max(...rects.map((x) => x.right)),
+          };
+        });
+      return drawn.filter((d, i) => i && d.left < drawn[i - 1].right).length;
+    });
+  expect(overlaps).toBe(0);
+});

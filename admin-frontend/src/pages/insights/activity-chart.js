@@ -135,11 +135,13 @@ function bars(span, points, unit, kind) {
   const max = Math.max(1, ...list.map((b) => b.value ?? 0));
   const months = list.map((b) => b.start.slice(0, 7));
   // January carries its year, so a period across New Year doesn't show "Jan" twice unexplained.
+  // The year takes its own line, since "Jan 2026" is wider than a month's bar.
   const monthName = (/** @type {string} */ day) =>
-    formatDateTime(dayInstant(day), {
-      month: "short",
-      ...(day.slice(5, 7) === "01" ? { year: "numeric" } : {}),
-    });
+    `${escapeHtml(formatDateTime(dayInstant(day), { month: "short" }))}${
+      day.slice(5, 7) === "01"
+        ? `<span class="insights__bar-year">${escapeHtml(formatDateTime(dayInstant(day), { year: "numeric" }))}</span>`
+        : ""
+    }`;
   const partial = t("admin.insights.chart.partial");
   return `<div class="insights__bars" data-chart="${kind}">${list
     .map((b) => {
@@ -153,7 +155,7 @@ function bars(span, points, unit, kind) {
     // Weekly bars name each month once, at its first week.
     .map(
       (b, i) =>
-        `<span data-bar-label>${i && months[i - 1] === months[i] ? "" : escapeHtml(monthName(b.start))}</span>`,
+        `<span data-bar-label>${i && months[i - 1] === months[i] ? "" : monthName(b.start)}</span>`,
     )
     .join("")}</div>`;
 }

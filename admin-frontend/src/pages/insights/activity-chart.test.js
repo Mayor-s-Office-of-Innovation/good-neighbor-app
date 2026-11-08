@@ -11,8 +11,14 @@ const values = (html, attribute) =>
     (m) => m[1],
   );
 /** @param {string} html */
-const barLabels = (html) =>
-  [...html.matchAll(/<span data-bar-label>([^<]*)<\/span>/g)].map((m) => m[1]);
+const barLabels = (html) => {
+  const box = document.createElement("div");
+  box.innerHTML = html;
+  // A label's lines joined by a space, as a reader sees "Jan" over "2026".
+  return [...box.querySelectorAll("[data-bar-label]")].map((label) =>
+    [...label.childNodes].map((n) => n.textContent).join(" "),
+  );
+};
 /** @param {string} day @param {Intl.DateTimeFormatOptions} options */
 const pacificDay = (day, options) =>
   // 3 PM Pacific, inside the day in any season.

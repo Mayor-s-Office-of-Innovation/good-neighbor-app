@@ -381,6 +381,11 @@
   font-weight: 500;
 }
 
+/* Buttons lay out as flex, which drops the space before the last word's span. */
+.insights__sort {
+  column-gap: 0.25em;
+}
+
 /* Underlined only on hover or when sorted, so the headers still read as headers. */
 .insights__sort:hover,
 .insights__sort.is-sorted {
@@ -728,6 +733,10 @@
   font-size: 0.625rem;
   color: var(--muted);
   white-space: nowrap;
+}
+
+.insights__bar-x .insights__bar-year {
+  display: block;
 }
 
 .insights__table tbody th .insights__sev {
