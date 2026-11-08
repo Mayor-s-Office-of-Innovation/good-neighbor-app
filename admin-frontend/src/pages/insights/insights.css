@@ -648,8 +648,7 @@
   background: var(--insights-orange);
 }
 
-.insights__cal-none,
-.insights__bar--none i {
+.insights__cal-none {
   background: repeating-linear-gradient(
     45deg,
     transparent 0 3px,
@@ -707,6 +706,15 @@
 /* Lighter, so a week or month with days cut off or missing isn't read as a quiet one. */
 .insights__bar--partial i {
   opacity: 0.5;
+}
+
+/* After the series colours, so a month with no data shows hatched, not as a full bar of data. */
+.insights__bars .insights__bar--none i {
+  background: repeating-linear-gradient(
+    45deg,
+    transparent 0 3px,
+    var(--line) 3px 4px
+  );
 }
 
 .insights__bar-x {

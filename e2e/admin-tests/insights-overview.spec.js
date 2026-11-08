@@ -102,3 +102,20 @@ test("on a 320px phone, Overview fits without sideways scrolling", async ({
   );
   expect(overflow).toEqual([0, 0]);
 });
+
+test("a Site's financial year draws the months before its records as no data, not as its busiest months", async ({
+  page,
+}) => {
+  await mockAdmin(page, { insights: true });
+  // The fake's records begin Jan 1, 2026, so Jul–Dec 2025 have no data.
+  await page.goto("/insights/sites/s1?period=fy2025");
+  const none = page.locator('[data-chart="checks"] [data-bar="none"] i');
+  await expect(none).toHaveCount(6);
+  // Only the browser's cascade shows whether the hatch or the series colour wins.
+  const fills = await none.evaluateAll((bars) =>
+    bars.map((bar) => window.getComputedStyle(bar).backgroundImage),
+  );
+  expect(fills).toEqual(
+    fills.map(() => expect.stringContaining("repeating-linear-gradient")),
+  );
+});
