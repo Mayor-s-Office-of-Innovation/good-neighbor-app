@@ -271,7 +271,7 @@ export function s3Source({ s3, bucket }) {
 
 // A stale request gets the held snapshot while a newer one loads. Lambda freezes
 // once it replies, which would stall that load, so set refreshWaitMs there.
-/** @param {{ source: SnapshotSource, now?: () => number, refreshMs?: number, refreshWaitMs?: number, firstLoadWaitMs?: number, wait?: (ms: number, signal: AbortSignal) => Promise<unknown>, onError?: (err: unknown) => void }} opts */
+/** @param {{ source: SnapshotSource, now?: () => number, refreshMs?: number, refreshWaitMs?: number, firstLoadWaitMs?: number, wait?: (ms: number, signal: AbortSignal) => Promise<unknown>, onError?: (err: unknown) => void, onLoad?: (load: { snapshotId: string, ms: number }) => void }} opts */
 export function createSnapshotStore({
   source,
   now = Date.now,
@@ -280,6 +280,7 @@ export function createSnapshotStore({
   firstLoadWaitMs = 0,
   wait = (ms, signal) => sleep(ms, undefined, { signal }),
   onError = () => {},
+  onLoad = () => {},
 }) {
   /** @type {Snapshot | null} */
   let held = null;
@@ -350,7 +351,9 @@ export function createSnapshotStore({
         try {
           // The old one isn't kept: two indexed snapshots would double the Lambda's
           // memory. A job on it reloads it once.
+          const loadStart = now();
           held = await load(latest.prefix, latest.snapshotId);
+          onLoad({ snapshotId: held.snapshotId, ms: now() - loadStart });
         } catch (err) {
           // Logged once per snapshot, since parallel downloads can fail on a different file each time.
           if (isExpired(err)) {

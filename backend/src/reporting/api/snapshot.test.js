@@ -118,6 +118,20 @@ describe("createSnapshotStore", () => {
     expect(source.loads).toBe(1);
   });
 
+  it("reports how long each snapshot took to load, once per load", async () => {
+    const source = fakeSource();
+    const load = source.load.bind(source);
+    let now = 0;
+    source.load = async (/** @type {string} */ prefix) => {
+      now += 1200;
+      return load(prefix);
+    };
+    const onLoad = vi.fn();
+    const store = createSnapshotStore({ source, now: () => now, onLoad });
+    await Promise.all([store.current(), store.current()]);
+    expect(onLoad.mock.calls).toEqual([[{ snapshotId: "snap1", ms: 1200 }]]);
+  });
+
   it("swaps to a newer snapshot once its refresh time passes", async () => {
     const source = fakeSource();
     let now = 0;

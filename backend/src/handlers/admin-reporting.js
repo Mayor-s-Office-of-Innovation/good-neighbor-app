@@ -568,6 +568,17 @@ export function reportingHandlers(env = process.env) {
         logServerError("admin-reporting", /** @type {Error} */ (err), {
           extra: { step: "snapshot-refresh" },
         }),
+      // A load past refreshWaitMs may stall while Lambda is frozen, so dev logs show how close it runs.
+      onLoad: ({ snapshotId, ms }) =>
+        console.info(
+          JSON.stringify({
+            level: "INFO",
+            route: "admin-reporting",
+            step: "snapshot-load",
+            snapshotId,
+            ms,
+          }),
+        ),
     }),
     jobStore: jobsReady
       ? s3JobStore({
