@@ -158,16 +158,16 @@ function reportRequest(snap, params) {
  * @param {Snapshot} snap
  * @param {number} now
  * @param {number} maxExportRows
- * @returns {import("../reporting/api/jobs.js").JobOutput}
+ * @returns {Promise<import("../reporting/api/jobs.js").JobOutput>}
  */
-function renderJob(kind, params, snap, now, maxExportRows) {
+async function renderJob(kind, params, snap, now, maxExportRows) {
   const stamp = snap.snapshotId.replace(/[^A-Za-z0-9-]/g, "-");
   // endDay is exclusive; a name ending on it would claim one day too many.
   const span = (/** @type {{ startDay: string, endDay: string }} */ i) =>
     `${i.startDay}-to-${addDays(i.endDay, -1)}`;
   if (kind === "export") {
     const req = exportRequest(snap, params);
-    const { columns, rows } = exportRows(snap, req);
+    const { columns, rows } = await exportRows(snap, req);
     if (rows.length > maxExportRows)
       throw requestError("export_too_large", 413);
     return {
@@ -178,7 +178,7 @@ function renderJob(kind, params, snap, now, maxExportRows) {
     };
   }
   const req = reportRequest(snap, params);
-  const dataset = reportDataset(snap, { ...req, now });
+  const dataset = await reportDataset(snap, { ...req, now });
   return {
     body: JSON.stringify(dataset),
     contentType: "application/json",
@@ -333,7 +333,7 @@ export function createReportingHandlers({
     getOverview: (event) =>
       guarded(event, async ({ params }) => {
         const snap = await snapshots.current();
-        return { body: overview(snap, listArgs("sites", snap, params)) };
+        return { body: await overview(snap, listArgs("sites", snap, params)) };
       }),
 
     /** @param {Event} event */
@@ -341,7 +341,7 @@ export function createReportingHandlers({
       guarded(event, async ({ params }) => {
         const snap = await snapshots.current();
         return {
-          body: siteDetail(snap, pathParam(event, "siteId"), {
+          body: await siteDetail(snap, pathParam(event, "siteId"), {
             interval: intervalFor(snap, params),
             now: now(),
           }),
@@ -352,7 +352,9 @@ export function createReportingHandlers({
     listIssues: (event) =>
       guarded(event, async ({ params }) => {
         const snap = await snapshots.current();
-        return { body: listIssues(snap, listArgs("issues", snap, params)) };
+        return {
+          body: await listIssues(snap, listArgs("issues", snap, params)),
+        };
       }),
 
     /** @param {Event} event */
@@ -360,7 +362,7 @@ export function createReportingHandlers({
       guarded(event, async ({ params }) => {
         const snap = await snapshots.current();
         return {
-          body: issueDetail(snap, pathParam(event, "issueId"), {
+          body: await issueDetail(snap, pathParam(event, "issueId"), {
             siteId: optionalSiteId(params),
             now: now(),
           }),
@@ -371,7 +373,9 @@ export function createReportingHandlers({
     listChecks: (event) =>
       guarded(event, async ({ params }) => {
         const snap = await snapshots.current();
-        return { body: listChecks(snap, listArgs("checks", snap, params)) };
+        return {
+          body: await listChecks(snap, listArgs("checks", snap, params)),
+        };
       }),
 
     /** @param {Event} event */
@@ -379,7 +383,7 @@ export function createReportingHandlers({
       guarded(event, async ({ params }) => {
         const snap = await snapshots.current();
         return {
-          body: checkDetail(snap, pathParam(event, "checkId"), {
+          body: await checkDetail(snap, pathParam(event, "checkId"), {
             siteId: optionalSiteId(params),
             now: now(),
           }),
@@ -389,7 +393,7 @@ export function createReportingHandlers({
     /** @param {Event} event */
     getScopeOptions: (event) =>
       guarded(event, async ({ params }) => ({
-        body: scopeOptions(await snapshots.current(), {
+        body: await scopeOptions(await snapshots.current(), {
           now: now(),
           include: typeof params.include === "string" ? params.include : "",
         }),
@@ -429,7 +433,7 @@ export function createReportingHandlers({
         if (breakdown !== undefined && !SITE_DIMENSIONS.includes(breakdown))
           throw requestError("invalid_breakdown");
         return {
-          body: trends(snap, {
+          body: await trends(snap, {
             interval: intervalFor(snap, params),
             scope: { siteIds, groups },
             breakdown,
@@ -453,9 +457,12 @@ export function createReportingHandlers({
           params: stored,
           idempotencyKey: key,
           // Refused before it is queued, on the snapshot the job will read.
-          check: (snap, asked) => {
+          check: async (snap, asked) => {
             const resolved = withDefaultMonth(asked, snap.manifest.evaluatedAt);
-            const rows = exportRowCount(snap, exportRequest(snap, resolved));
+            const rows = await exportRowCount(
+              snap,
+              exportRequest(snap, resolved),
+            );
             if (rows > maxExportRows)
               throw requestError("export_too_large", 413);
             return resolved;

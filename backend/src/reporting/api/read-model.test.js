@@ -50,21 +50,21 @@ const list = (kind, params = {}) => parseListQuery(kind, params);
  * A snapshot built from edited synthetic tables.
  * @param {(t: Record<string, any[]>, m: Record<string, any>) => void} edit
  */
-function edited(edit) {
+async function edited(edit) {
   const { tables, manifest } = syntheticProjection();
   edit(/** @type {any} */ (tables), manifest);
   return indexSnapshot({ prefix: "p1", manifest, tables });
 }
 
 describe("dataQuality", () => {
-  it("is ok for a fresh snapshot over a covered period", () => {
+  it("is ok for a fresh snapshot over a covered period", async () => {
     expect(dataQuality(snap, october, NOW)).toMatchObject({
       state: "ok",
       reasons: [],
     });
   });
 
-  it("flags a snapshot over six hours old as stale, without blocking", () => {
+  it("flags a snapshot over six hours old as stale, without blocking", async () => {
     const later = Date.parse("2026-11-05T00:01:00.000Z");
     expect(dataQuality(snap, october, later)).toMatchObject({
       state: "stale",
@@ -72,7 +72,7 @@ describe("dataQuality", () => {
     });
   });
 
-  it("flags a period that starts before any record as partial", () => {
+  it("flags a period that starts before any record as partial", async () => {
     const august = parsePeriodParams(
       { period: "month", month: "2026-08" },
       TEST_EVALUATED_AT,
@@ -85,8 +85,8 @@ describe("dataQuality", () => {
     });
   });
 
-  it("leaves Sites with no compliance terms to Overview's list, not every reply", () => {
-    const s = edited((_, m) => {
+  it("leaves Sites with no compliance terms to Overview's list, not every reply", async () => {
+    const s = await edited((_, m) => {
       m.dataQuality = { ...m.dataQuality, openSitesWithoutTerms: 2 };
     });
     expect(dataQuality(s, october, NOW)).toMatchObject({
@@ -95,8 +95,8 @@ describe("dataQuality", () => {
     });
   });
 
-  it("flags Issues left out for having no usable time as partial", () => {
-    const s = edited((_, m) => {
+  it("flags Issues left out for having no usable time as partial", async () => {
+    const s = await edited((_, m) => {
       m.dataQuality = { ...m.dataQuality, undated: 1 };
     });
     expect(dataQuality(s, october, NOW)).toMatchObject({
@@ -107,11 +107,11 @@ describe("dataQuality", () => {
 });
 
 describe("overview", () => {
-  it("names no rule version when the snapshot didn't record one", () => {
-    const s = edited((_, m) => {
+  it("names no rule version when the snapshot didn't record one", async () => {
+    const s = await edited((_, m) => {
       delete m.ruleVersion;
     });
-    const res = overview(s, {
+    const res = await overview(s, {
       interval: october,
       filter: {},
       list: list("sites"),
@@ -120,8 +120,8 @@ describe("overview", () => {
     expect(res.meta.ruleVersion).toBeNull();
   });
 
-  it.each(Object.keys(SORTS.sites))("accepts the %s sort", (sort) => {
-    const res = overview(snap, {
+  it.each(Object.keys(SORTS.sites))("accepts the %s sort", async (sort) => {
+    const res = await overview(snap, {
       interval: october,
       filter: {},
       list: list("sites", { sort }),
@@ -130,13 +130,13 @@ describe("overview", () => {
     expect(res.sites).toHaveLength(3);
   });
 
-  it("sorts names the way people read them, whatever the case", () => {
-    const s = edited((t) => {
+  it("sorts names the way people read them, whatever the case", async () => {
+    const s = await edited((t) => {
       t.sites[0].name = "the Ark";
       t.sites[1].name = "Zion House";
       t.sites[2].name = "apple St";
     });
-    const res = overview(s, {
+    const res = await overview(s, {
       interval: october,
       filter: {},
       list: list("sites"),
@@ -151,8 +151,8 @@ describe("overview", () => {
 
   it.each(["asc", "desc"])(
     "puts a Site with no Issues last, even sorted %s",
-    (dir) => {
-      const res = overview(snap, {
+    async (dir) => {
+      const res = await overview(snap, {
         interval: october,
         filter: {},
         list: list("sites", { sort: "maxSeverity", dir }),
@@ -162,11 +162,11 @@ describe("overview", () => {
     },
   );
 
-  it("gives no basis for a Site with no contact record", () => {
-    const s = edited((t) => {
+  it("gives no basis for a Site with no contact record", async () => {
+    const s = await edited((t) => {
       t.site_contacts = t.site_contacts.filter((c) => c.siteId !== "s3");
     });
-    const res = overview(s, {
+    const res = await overview(s, {
       interval: october,
       filter: { siteIds: ["s3"] },
       list: list("sites"),
@@ -178,10 +178,10 @@ describe("overview", () => {
     });
   });
 
-  it("says how much of the prior period has data", () => {
+  it("says how much of the prior period has data", async () => {
     const args = { filter: {}, list: list("sites"), now: NOW };
-    const oct = overview(snap, { ...args, interval: october });
-    const nov = overview(snap, { ...args, interval: november });
+    const oct = await overview(snap, { ...args, interval: october });
+    const nov = await overview(snap, { ...args, interval: november });
     // Records start 2026-09-15, halfway through October's prior month.
     expect([
       oct.comparison.priorCoverage,
@@ -189,8 +189,8 @@ describe("overview", () => {
     ]).toEqual(["partial", "full"]);
   });
 
-  it("totals activity and response states for every Site in the period", () => {
-    const res = overview(snap, {
+  it("totals activity and response states for every Site in the period", async () => {
+    const res = await overview(snap, {
       interval: october,
       filter: {},
       list: list("sites"),
@@ -216,8 +216,8 @@ describe("overview", () => {
     expect(res.siteCount).toBe(3);
   });
 
-  it("compares a finished month with the whole month before", () => {
-    const res = overview(snap, {
+  it("compares a finished month with the whole month before", async () => {
+    const res = await overview(snap, {
       interval: october,
       filter: {},
       list: list("sites"),
@@ -234,8 +234,8 @@ describe("overview", () => {
     });
   });
 
-  it("compares a partial month with the same finished days of the month before", () => {
-    const res = overview(snap, {
+  it("compares a partial month with the same finished days of the month before", async () => {
+    const res = await overview(snap, {
       interval: november,
       filter: {},
       list: list("sites"),
@@ -254,8 +254,8 @@ describe("overview", () => {
     });
   });
 
-  it("gives each Site its own counts, contacts and a Manage link, with no score", () => {
-    const res = overview(snap, {
+  it("gives each Site its own counts, contacts and a Manage link, with no score", async () => {
+    const res = await overview(snap, {
       interval: october,
       filter: {},
       list: list("sites"),
@@ -273,8 +273,8 @@ describe("overview", () => {
     expect(Object.keys(s1)).not.toContain("compliant");
   });
 
-  it("limits Sites to the filter", () => {
-    const res = overview(snap, {
+  it("limits Sites to the filter", async () => {
+    const res = await overview(snap, {
       interval: october,
       filter: { department: "Other Department" },
       list: list("sites"),
@@ -284,8 +284,8 @@ describe("overview", () => {
     expect(res.totals.activity.completedPerimeterChecks).toBe(1);
   });
 
-  it("finds Sites by part of their name", () => {
-    const res = overview(snap, {
+  it("finds Sites by part of their name", async () => {
+    const res = await overview(snap, {
       interval: october,
       filter: { q: "site 3" },
       list: list("sites"),
@@ -294,8 +294,8 @@ describe("overview", () => {
     expect(res.sites.map((s) => s.siteId)).toEqual(["s3"]);
   });
 
-  it("returns only the selected Sites, even when asked for others", () => {
-    const res = overview(snap, {
+  it("returns only the selected Sites, even when asked for others", async () => {
+    const res = await overview(snap, {
       interval: october,
       filter: { siteIds: ["s2", "s9"] },
       list: list("sites"),
@@ -304,9 +304,9 @@ describe("overview", () => {
     expect(res.sites.map((s) => s.siteId)).toEqual(["s2"]);
   });
 
-  it("sorts by overdue and late Issues together, ties by name", () => {
+  it("sorts by overdue and late Issues together, ties by name", async () => {
     // s1 has one overdue, s2 one late, s3 neither.
-    const res = overview(snap, {
+    const res = await overview(snap, {
       interval: october,
       filter: {},
       list: list("sites", { sort: "overdueLate", dir: "asc" }),
@@ -326,9 +326,9 @@ describe("overview", () => {
     ]);
   });
 
-  it("sorts the Checks and Issues columns by the rates they show, not by totals", () => {
+  it("sorts the Checks and Issues columns by the rates they show, not by totals", async () => {
     // s2 opens Oct 30 and has one Check and three Issues on Oct 31: fewer than s1 in total, at a higher rate.
-    const opened = edited((t) => {
+    const opened = await edited((t) => {
       for (const site of t.sites) site.hasPerimeter = true;
       t.sites[1].createdAt = "2026-10-30T20:00:00.000Z";
       t.site_days = t.site_days.filter((d) => d.siteId !== "s2");
@@ -345,19 +345,21 @@ describe("overview", () => {
       snap.dataDays,
     );
     /** @param {string} sort @param {string} dir */
-    const sorted = (sort, dir) =>
-      overview(opened, {
-        interval: fy,
-        filter: {},
-        list: list("sites", { sort, dir }),
-        now: NOW,
-      }).sites.map((r) => [
+    const sorted = async (sort, dir) =>
+      (
+        await overview(opened, {
+          interval: fy,
+          filter: {},
+          list: list("sites", { sort, dir }),
+          now: NOW,
+        })
+      ).sites.map((r) => [
         r.siteId,
         sort === "checksPerDay" ? r.checksPerDay : r.issuesPer30Days,
       ]);
     expect([
-      sorted("checksPerDay", "desc"),
-      sorted("issuesPer30Days", "desc"),
+      await sorted("checksPerDay", "desc"),
+      await sorted("issuesPer30Days", "desc"),
     ]).toEqual([
       [
         ["s2", 0.3],
@@ -377,8 +379,8 @@ describe("overview", () => {
    * @param {Record<string, unknown>} params
    * @param {Snapshot} [from]
    */
-  const shown = (params, from = snap) =>
-    overview(from, {
+  const shown = async (params, from = snap) =>
+    await overview(from, {
       interval: october,
       filter: {},
       list: list("sites", params),
@@ -386,17 +388,17 @@ describe("overview", () => {
     });
 
   // s3 reopens with a public and a Site contact, so only its activity can flag it.
-  const s3Contacted = (/** @type {string} */ state = "available") =>
-    edited((t) => {
+  const s3Contacted = async (/** @type {string} */ state = "available") =>
+    await edited((t) => {
       t.sites[2].status = "active";
       const row = t.site_contacts.find((c) => c.siteId === "s3");
       row.publicContact = state;
       row.siteContact = state;
     });
 
-  it("lists why each Site is a top concern, and what evidence is unknown", () => {
+  it("lists why each Site is a top concern, and what evidence is unknown", async () => {
     // s1: two Severe Issues, one Overdue and one open since early October; s2: one late.
-    const rows = shown({}, s3Contacted("unknown")).sites;
+    const rows = (await shown({}, await s3Contacted("unknown"))).sites;
     expect(rows.map((r) => [r.siteId, r.concerns, r.unknownEvidence])).toEqual([
       ["s1", ["repeatedSevere", "slowResponse"], []],
       ["s2", ["slowResponse"], []],
@@ -405,7 +407,7 @@ describe("overview", () => {
     expect(rows.map((r) => r.longUnresolved)).toEqual([1, 0, 0]);
   });
 
-  it("keeps each threshold as a named rule, the same one the pages explain", () => {
+  it("keeps each threshold as a named rule, the same one the pages explain", async () => {
     expect(CONCERN_RULES).toEqual({
       severeIssues: 2,
       issuesPer30Days: 4,
@@ -419,22 +421,26 @@ describe("overview", () => {
    * @param {typeof october} interval
    * @param {string} siteId
    */
-  const flagsOf = (from, interval, siteId) =>
-    overview(from, {
-      interval,
-      filter: {},
-      list: list("sites"),
-      now: NOW,
-    }).sites.find((r) => r.siteId === siteId)?.concerns;
+  const flagsOf = async (from, interval, siteId) =>
+    (
+      await overview(from, {
+        interval,
+        filter: {},
+        list: list("sites"),
+        now: NOW,
+      })
+    ).sites.find((r) => r.siteId === siteId)?.concerns;
 
   /** s1's count of Issues open over 14 days in October. @param {Snapshot} from */
-  const longOpen = (from) =>
-    overview(from, {
-      interval: october,
-      filter: {},
-      list: list("sites"),
-      now: NOW,
-    }).sites.find((r) => r.siteId === "s1")?.longUnresolved;
+  const longOpen = async (from) =>
+    (
+      await overview(from, {
+        interval: october,
+        filter: {},
+        list: list("sites"),
+        now: NOW,
+      })
+    ).sites.find((r) => r.siteId === "s1")?.longUnresolved;
 
   /** @param {string} from @param {string} to exclusive */
   const days = (from, to) =>
@@ -444,50 +450,60 @@ describe("overview", () => {
       snap.dataDays,
     );
 
-  it("needs 2 or more Severe Issues for Repeated Severe Issues", () => {
+  it("needs 2 or more Severe Issues for Repeated Severe Issues", async () => {
     // Oct 1–4 holds only t1, Severe; October also holds t3.
     expect([
-      flagsOf(snap, days("2026-10-01", "2026-10-05"), "s1"),
-      flagsOf(snap, october, "s1"),
+      await flagsOf(snap, days("2026-10-01", "2026-10-05"), "s1"),
+      await flagsOf(snap, october, "s1"),
     ]).toEqual([["slowResponse"], ["repeatedSevere", "slowResponse"]]);
   });
 
   /** s1 with `count` Issues created Oct 1–10, a period under 30 days. @param {number} count */
-  const issuesInTenDays = (count) =>
-    edited((t) => {
+  const issuesInTenDays = async (count) =>
+    await edited((t) => {
       const row = t.site_days.find(
         (d) => d.siteId === "s1" && d.day === "2026-10-02",
       );
       row.issuesCreated = count - 1;
     });
 
-  it("flags Many Issues over 4 per 30 days, and still over 4 in a shorter period", () => {
+  it("flags Many Issues over 4 per 30 days, and still over 4 in a shorter period", async () => {
     const tenDays = days("2026-10-01", "2026-10-11");
     expect([
-      flagsOf(issuesInTenDays(4), tenDays, "s1")?.includes("manyIssues"),
-      flagsOf(issuesInTenDays(5), tenDays, "s1")?.includes("manyIssues"),
+      (await flagsOf(await issuesInTenDays(4), tenDays, "s1"))?.includes(
+        "manyIssues",
+      ),
+      (await flagsOf(await issuesInTenDays(5), tenDays, "s1"))?.includes(
+        "manyIssues",
+      ),
     ]).toEqual([false, true]);
   });
 
-  it("scales Many Issues to every day its Issues are counted on, today included", () => {
+  it("scales Many Issues to every day its Issues are counted on, today included", async () => {
     // Sep 21 to Nov 4 is 45 days, so 4 × 45 / 30 = 6 are allowed; 44 whole days would allow only 5.9.
     const long = days("2026-09-21", "2026-11-05");
-    const busy = (/** @type {number} */ count) =>
-      flagsOf(issuesInTenDays(count), long, "s1")?.includes("manyIssues");
+    const busy = async (/** @type {number} */ count) =>
+      (await flagsOf(await issuesInTenDays(count), long, "s1"))?.includes(
+        "manyIssues",
+      );
     // Besides those, s1 has t2 and t3 in October and t4 in November.
-    expect([busy(4), busy(5)]).toEqual([false, true]);
+    expect([await busy(4), await busy(5)]).toEqual([false, true]);
   });
 
-  it("sends the Issues per 30 days the Many Issues flag compares, so the two agree", () => {
+  it("sends the Issues per 30 days the Many Issues flag compares, so the two agree", async () => {
     const long = days("2026-09-21", "2026-11-05");
-    const rows = [3, 4, 5, 6, 7].map(
-      (count) =>
-        overview(issuesInTenDays(count), {
-          interval: long,
-          filter: { siteIds: ["s1"] },
-          list: list("sites"),
-          now: NOW,
-        }).sites[0],
+    const rows = await Promise.all(
+      [3, 4, 5, 6, 7].map(
+        async (count) =>
+          (
+            await overview(await issuesInTenDays(count), {
+              interval: long,
+              filter: { siteIds: ["s1"] },
+              list: list("sites"),
+              now: NOW,
+            })
+          ).sites[0],
+      ),
     );
     // 5 to 9 Issues over 45 days.
     expect(
@@ -501,35 +517,37 @@ describe("overview", () => {
     ]);
   });
 
-  it("spreads Issues per 30 days over the days since the records or the Site began, not the whole year", () => {
+  it("spreads Issues per 30 days over the days since the records or the Site began, not the whole year", async () => {
     const fy = parsePeriodParams(
       { period: "financialYear", startYear: "2026" },
       TEST_EVALUATED_AT,
       snap.dataDays,
     );
     /** @param {Snapshot} from */
-    const row = (from) =>
-      overview(from, {
-        interval: fy,
-        filter: { siteIds: ["s1"] },
-        list: list("sites"),
-        now: NOW,
-      }).sites[0];
+    const row = async (from) =>
+      (
+        await overview(from, {
+          interval: fy,
+          filter: { siteIds: ["s1"] },
+          list: list("sites"),
+          now: NOW,
+        })
+      ).sites[0];
     // Records begin Sep 15; s1 also logs 2 Issues on that partial first day.
-    const busy = edited((t) => {
+    const busy = await edited((t) => {
       t.site_days.find(
         (d) => d.siteId === "s1" && d.day === "2026-10-02",
       ).issuesCreated = 30;
       t.site_days.push({ siteId: "s1", day: "2026-09-15", issuesCreated: 2 });
     });
-    const addedSep25 = edited((t) => {
+    const addedSep25 = await edited((t) => {
       t.site_days.find(
         (d) => d.siteId === "s1" && d.day === "2026-10-02",
       ).issuesCreated = 30;
       t.site_days.push({ siteId: "s1", day: "2026-09-25", issuesCreated: 2 });
       t.sites[0].createdAt = "2026-09-25T20:00:00.000Z";
     });
-    const [fromRecords, fromSite] = [row(busy), row(addedSep25)];
+    const [fromRecords, fromSite] = [await row(busy), await row(addedSep25)];
     // The Checks average's start, the day after: Sep 16 to Nov 4 is 50 days,
     // not the 127 since Jul 1. Added Sep 25: Sep 26 to Nov 4 is 40 days.
     // Neither counts the 2 Issues on its partial first day.
@@ -539,16 +557,18 @@ describe("overview", () => {
     ]);
   });
 
-  it("leaves activity from before a Site was added out of its totals", () => {
-    const early = edited((t) => {
+  it("leaves activity from before a Site was added out of its totals", async () => {
+    const early = await edited((t) => {
       t.sites[0].createdAt = "2026-10-15T20:00:00.000Z";
     });
-    const row = overview(early, {
-      interval: october,
-      filter: { siteIds: ["s1"] },
-      list: list("sites"),
-      now: NOW,
-    }).sites[0];
+    const row = (
+      await overview(early, {
+        interval: october,
+        filter: { siteIds: ["s1"] },
+        list: list("sites"),
+        now: NOW,
+      })
+    ).sites[0];
     // Of s1's October Issues, only t3 (Oct 20, Severe) comes after Oct 15.
     expect([
       row.activity.issuesCreated,
@@ -557,24 +577,24 @@ describe("overview", () => {
     ]).toEqual([1, 1, 5]);
   });
 
-  it("counts the same days in totals, comparison, Trends and the Issues list for a Site added mid-period", () => {
-    const early = edited((t) => {
+  it("counts the same days in totals, comparison, Trends and the Issues list for a Site added mid-period", async () => {
+    const early = await edited((t) => {
       t.sites[0].createdAt = "2026-10-15T20:00:00.000Z";
     });
     const filter = { siteIds: ["s1"] };
-    const ov = overview(early, {
+    const ov = await overview(early, {
       interval: october,
       filter,
       list: list("sites"),
       now: NOW,
     });
-    const tr = trends(early, {
+    const tr = await trends(early, {
       interval: october,
       scope: filter,
       breakdown: "department",
       now: NOW,
     });
-    const issues = listIssues(early, {
+    const issues = await listIssues(early, {
       interval: october,
       filter,
       list: list("issues"),
@@ -584,8 +604,14 @@ describe("overview", () => {
     expect({
       totals: ov.totals.activity.issuesCreated,
       comparison: ov.comparison.change?.issuesCreated.current,
-      weeks: tr.series.current.reduce((n, b) => n + b.issuesCreated, 0),
-      categories: tr.categories.reduce((n, c) => n + c.issues, 0),
+      weeks: tr.series.current.reduce(
+        (/** @type {number} */ n, /** @type {any} */ b) => n + b.issuesCreated,
+        0,
+      ),
+      categories: tr.categories.reduce(
+        (/** @type {number} */ n, /** @type {any} */ c) => n + c.issues,
+        0,
+      ),
       breakdown: tr.breakdown?.[0].current.issuesCreated,
       list: issues.total,
     }).toEqual({
@@ -598,73 +624,78 @@ describe("overview", () => {
     });
   });
 
-  it("can flag Many Issues on a period's first day, before any whole day", () => {
-    const firstDay = edited((t, m) => {
+  it("can flag Many Issues on a period's first day, before any whole day", async () => {
+    const firstDay = await edited((t, m) => {
       m.evaluatedAt = "2026-11-01T17:00:00.000Z";
       // Nothing after Nov 1 has happened yet.
       t.site_days = t.site_days.filter((d) => d.day < "2026-11-02");
       t.site_days.push({ siteId: "s1", day: "2026-11-01", issuesCreated: 5 });
     });
-    const row = overview(firstDay, {
-      interval: november,
-      filter: { siteIds: ["s1"] },
-      list: list("sites"),
-      now: NOW,
-    }).sites[0];
+    const row = (
+      await overview(firstDay, {
+        interval: november,
+        filter: { siteIds: ["s1"] },
+        list: list("sites"),
+        now: NOW,
+      })
+    ).sites[0];
     expect([row.issuesPer30Days, row.concerns]).toEqual([5, ["manyIssues"]]);
   });
 
   /** s1's open, answered t1, created `ms` before the snapshot was evaluated. @param {number} ms */
-  const openFor = (ms) =>
-    edited((t) => {
+  const openFor = async (ms) =>
+    await edited((t) => {
       const t1 = t.issues.find((i) => i.issueId === "t1");
       t1.createdAt = new Date(Date.parse(TEST_EVALUATED_AT) - ms).toISOString();
     });
 
-  it("flags an Issue created in the period and still open over 14 days at the data update", () => {
+  it("flags an Issue created in the period and still open over 14 days at the data update", async () => {
     const fourteenDays = CONCERN_RULES.unresolvedDays * 86_400_000;
     expect([
-      longOpen(openFor(fourteenDays)),
-      longOpen(openFor(fourteenDays + 1)),
+      await longOpen(await openFor(fourteenDays)),
+      await longOpen(await openFor(fourteenDays + 1)),
     ]).toEqual([0, 1]);
   });
 
   /** s1's t1, resolved this many days after it was created. @param {number} n */
-  const resolvedAfter = (n) =>
-    edited((t) => {
+  const resolvedAfter = async (n) =>
+    await edited((t) => {
       const t1 = t.issues.find((i) => i.issueId === "t1");
       t1.resolvedAt = new Date(
         Date.parse(t1.createdAt) + n * 86_400_000,
       ).toISOString();
     });
 
-  it("times a resolved Issue to its resolution, so a past period's count stays put", () => {
-    expect([longOpen(resolvedAfter(13)), longOpen(resolvedAfter(15))]).toEqual([
-      0, 1,
-    ]);
+  it("times a resolved Issue to its resolution, so a past period's count stays put", async () => {
+    expect([
+      await longOpen(await resolvedAfter(13)),
+      await longOpen(await resolvedAfter(15)),
+    ]).toEqual([0, 1]);
   });
 
-  it("leaves overdue and late Issues out of long unresolved, so none counts twice", () => {
+  it("leaves overdue and late Issues out of long unresolved, so none counts twice", async () => {
     // t2 is Overdue and open since Oct 10; t1 was answered on time but is still open.
-    const s1 = shown({}).sites.find((r) => r.siteId === "s1");
+    const s1 = (await shown({})).sites.find((r) => r.siteId === "s1");
     expect([s1?.response.overdue, s1?.longUnresolved]).toEqual([1, 1]);
   });
 
-  it("shows only top concerns when asked, leaving out a quiet Site", () => {
+  it("shows only top concerns when asked, leaving out a quiet Site", async () => {
     expect(
-      shown({ show: "top" }, s3Contacted()).sites.map((r) => r.siteId),
+      (await shown({ show: "top" }, await s3Contacted())).sites.map(
+        (r) => r.siteId,
+      ),
     ).toEqual(["s1", "s2"]);
   });
 
-  it("doesn't count an Issue still awaiting its first response as a concern", () => {
+  it("doesn't count an Issue still awaiting its first response as a concern", async () => {
     // s1's only November Issue was created yesterday and awaits a response.
-    const s = edited((t) => {
+    const s = await edited((t) => {
       for (const c of t.site_contacts) {
         c.publicContact = "available";
         c.siteContact = "available";
       }
     });
-    const res = overview(s, {
+    const res = await overview(s, {
       interval: november,
       filter: {},
       list: list("sites", { show: "top" }),
@@ -674,10 +705,10 @@ describe("overview", () => {
   });
 
   // Sites with a perimeter to walk, so no Checks can count against them.
-  const walked = (
+  const walked = async (
     /** @type {(t: Record<string, any[]>, m: Record<string, any>) => void} */ more = () => {},
   ) =>
-    edited((t, m) => {
+    await edited((t, m) => {
       for (const site of t.sites) site.hasPerimeter = true;
       more(t, m);
     });
@@ -686,14 +717,21 @@ describe("overview", () => {
    * @param {Snapshot} from
    * @param {typeof november} interval
    */
-  const noChecks = (from, interval) =>
-    overview(from, { interval, filter: {}, list: list("sites"), now: NOW })
-      .sites.filter((r) => r.concerns.includes("fewChecks"))
+  const noChecks = async (from, interval) =>
+    (
+      await overview(from, {
+        interval,
+        filter: {},
+        list: list("sites"),
+        now: NOW,
+      })
+    ).sites
+      .filter((r) => r.concerns.includes("fewChecks"))
       .map((r) => r.siteId);
 
-  it("flags an open Site with a perimeter and no Checks in the period", () => {
+  it("flags an open Site with a perimeter and no Checks in the period", async () => {
     // s2 has no November Checks; s3 has none either, but it's closed.
-    const flagged = noChecks(walked(), november);
+    const flagged = await noChecks(await walked(), november);
     expect(flagged).toContain("s2");
     expect(flagged).not.toContain("s3");
   });
@@ -703,29 +741,30 @@ describe("overview", () => {
    * @param {number} first
    * @param {number} second
    */
-  const checksOn = (first, second) =>
-    walked((t) => {
+  const checksOn = async (first, second) =>
+    await walked((t) => {
       t.site_days.push(
         { siteId: "s1", day: "2026-10-12", completedPerimeterChecks: first },
         { siteId: "s1", day: "2026-10-13", completedPerimeterChecks: second },
       );
     });
 
-  it("flags Few Checks under 3 a day on average, and shows that average", () => {
+  it("flags Few Checks under 3 a day on average, and shows that average", async () => {
     const twoDays = days("2026-10-12", "2026-10-14");
     /** @param {Snapshot} from */
-    const row = (from) =>
-      overview(from, {
-        interval: twoDays,
-        filter: { siteIds: ["s1"] },
-        list: list("sites"),
-        now: NOW,
-      }).sites[0];
+    const row = async (from) =>
+      (
+        await overview(from, {
+          interval: twoDays,
+          filter: { siteIds: ["s1"] },
+          list: list("sites"),
+          now: NOW,
+        })
+      ).sites[0];
     expect(
-      [row(checksOn(3, 3)), row(checksOn(3, 2))].map((r) => [
-        r.checksPerDay,
-        r.concerns.includes("fewChecks"),
-      ]),
+      [await row(await checksOn(3, 3)), await row(await checksOn(3, 2))].map(
+        (r) => [r.checksPerDay, r.concerns.includes("fewChecks")],
+      ),
     ).toEqual([
       [3, false],
       [2.5, true],
@@ -737,28 +776,38 @@ describe("overview", () => {
    * @param {[number, number]} checks
    * @param {[number, number]} owes 0 for a day it owed nothing
    */
-  const owing = ([first, second], owes) =>
-    overview(
-      walked((t) => {
-        t.site_days.push(
-          { siteId: "s1", day: "2026-10-12", completedPerimeterChecks: first },
-          { siteId: "s1", day: "2026-10-13", completedPerimeterChecks: second },
-        );
-        const range = ["2026-10-12", "2026-10-13"];
-        t.checks_owed = t.checks_owed.filter(
-          (r) => r.siteId !== "s1" || !range.includes(r.day),
-        );
-        range.forEach((day, i) => {
-          if (owes[i])
-            t.checks_owed.push({ siteId: "s1", day, checksOwed: owes[i] });
-        });
-      }),
-      {
-        interval: days("2026-10-12", "2026-10-14"),
-        filter: { siteIds: ["s1"] },
-        list: list("sites"),
-        now: NOW,
-      },
+  const owing = async ([first, second], owes) =>
+    (
+      await overview(
+        await walked((t) => {
+          t.site_days.push(
+            {
+              siteId: "s1",
+              day: "2026-10-12",
+              completedPerimeterChecks: first,
+            },
+            {
+              siteId: "s1",
+              day: "2026-10-13",
+              completedPerimeterChecks: second,
+            },
+          );
+          const range = ["2026-10-12", "2026-10-13"];
+          t.checks_owed = t.checks_owed.filter(
+            (r) => r.siteId !== "s1" || !range.includes(r.day),
+          );
+          range.forEach((day, i) => {
+            if (owes[i])
+              t.checks_owed.push({ siteId: "s1", day, checksOwed: owes[i] });
+          });
+        }),
+        {
+          interval: days("2026-10-12", "2026-10-14"),
+          filter: { siteIds: ["s1"] },
+          list: list("sites"),
+          now: NOW,
+        },
+      )
     ).sites[0];
 
   /** @param {Record<string, any>} r */
@@ -768,27 +817,33 @@ describe("overview", () => {
     r.concerns.includes("fewChecks"),
   ];
 
-  it("judges Few Checks against the Site's own number a day, not a flat 3", () => {
-    expect([owing([3, 2], [2, 2]), owing([3, 3], [4, 4])].map(few)).toEqual([
+  it("judges Few Checks against the Site's own number a day, not a flat 3", async () => {
+    expect(
+      [await owing([3, 2], [2, 2]), await owing([3, 3], [4, 4])].map(few),
+    ).toEqual([
       [2.5, 2, false],
       [3, 4, true],
     ]);
   });
 
-  it("averages what the Site owed over its days, as its terms change", () => {
+  it("averages what the Site owed over its days, as its terms change", async () => {
     // Its terms rose from 2 to 4 on Oct 13, so it owed 3 a day on average.
-    expect([owing([2, 4], [2, 4]), owing([3, 2], [2, 4])].map(few)).toEqual([
+    expect(
+      [await owing([2, 4], [2, 4]), await owing([3, 2], [2, 4])].map(few),
+    ).toEqual([
       [3, 3, false],
       [2.5, 3, true],
     ]);
   });
 
-  it("averages over the days the Site owed Checks, so a day it owed nothing doesn't pull it down", () => {
+  it("averages over the days the Site owed Checks, so a day it owed nothing doesn't pull it down", async () => {
     // It owed nothing on Oct 12, so that day's Checks and its 0 don't count.
     expect(
-      [owing([0, 3], [0, 3]), owing([3, 0], [3, 0]), owing([0, 3], [3, 3])].map(
-        few,
-      ),
+      [
+        await owing([0, 3], [0, 3]),
+        await owing([3, 0], [3, 0]),
+        await owing([0, 3], [3, 3]),
+      ].map(few),
     ).toEqual([
       [3, 3, false],
       [3, 3, false],
@@ -796,9 +851,9 @@ describe("overview", () => {
     ]);
   });
 
-  it("shows the one average the flag compares, so the pages never show two", () => {
+  it("shows the one average the flag compares, so the pages never show two", async () => {
     // Its terms began Oct 13: 2 on the one day it owed 3, not 4.0 over both days.
-    const r = owing([6, 2], [0, 3]);
+    const r = await owing([6, 2], [0, 3]);
     expect([r.checksPerDay, r.checksPerOwedDay, ...few(r).slice(1)]).toEqual([
       2,
       2,
@@ -807,15 +862,17 @@ describe("overview", () => {
     ]);
   });
 
-  it("names no number and flags nothing for a Site that owed no Checks", () => {
-    expect([owing([0, 0], [0, 0]), owing([1, 0], [0, 0])].map(few)).toEqual([
+  it("names no number and flags nothing for a Site that owed no Checks", async () => {
+    expect(
+      [await owing([0, 0], [0, 0]), await owing([1, 0], [0, 0])].map(few),
+    ).toEqual([
       [0, null, false],
       [0.5, null, false],
     ]);
   });
 
-  it("rounds the average before flagging it, so 3.0 a day is never under 3", () => {
-    const busy = walked((t) => {
+  it("rounds the average before flagging it, so 3.0 a day is never under 3", async () => {
+    const busy = await walked((t) => {
       for (let d = 16; d <= 30; d++)
         t.site_days.push({
           siteId: "s1",
@@ -823,12 +880,14 @@ describe("overview", () => {
           completedPerimeterChecks: d === 16 ? 45 : 3,
         });
     });
-    const res = overview(busy, {
-      interval: days("2026-09-16", "2026-10-16"),
-      filter: { siteIds: ["s1"] },
-      list: list("sites"),
-      now: NOW,
-    }).sites[0];
+    const res = (
+      await overview(busy, {
+        interval: days("2026-09-16", "2026-10-16"),
+        filter: { siteIds: ["s1"] },
+        list: list("sites"),
+        now: NOW,
+      })
+    ).sites[0];
     // 45 + 14 × 3 + October's 2 is 89 over 30 days: 2.97, shown as 3.0.
     expect([res.checksPerDay, res.concerns.includes("fewChecks")]).toEqual([
       3,
@@ -836,26 +895,28 @@ describe("overview", () => {
     ]);
   });
 
-  it("averages over whole days only, leaving out today, which is still running", () => {
+  it("averages over whole days only, leaving out today, which is still running", async () => {
     // s1 has a Check on Nov 3 and one today, Nov 4; only Nov 1–3 are whole.
-    const today = walked((t) => {
+    const today = await walked((t) => {
       const row = t.site_days.find(
         (d) => d.siteId === "s1" && d.day === "2026-11-04",
       );
       row.completedPerimeterChecks = 1;
     });
-    const row = overview(today, {
-      interval: november,
-      filter: { siteIds: ["s1"] },
-      list: list("sites"),
-      now: NOW,
-    }).sites[0];
+    const row = (
+      await overview(today, {
+        interval: november,
+        filter: { siteIds: ["s1"] },
+        list: list("sites"),
+        now: NOW,
+      })
+    ).sites[0];
     expect(row.checksPerDay).toBe(0.3);
   });
 
-  it("averages a Site's Checks over whole days even with no perimeter on file, without flagging it", () => {
+  it("averages a Site's Checks over whole days even with no perimeter on file, without flagging it", async () => {
     // s1 completed 2 Checks in October's 31 days, s2 and s3 one each.
-    const rows = shown({ show: "all" }).sites;
+    const rows = (await shown({ show: "all" })).sites;
     expect(
       rows.map((r) => [r.checksPerDay, r.concerns.includes("fewChecks")]),
     ).toEqual([
@@ -865,82 +926,84 @@ describe("overview", () => {
     ]);
   });
 
-  it("doesn't flag no Checks without a perimeter, before the data, or before the Site existed", () => {
+  it("doesn't flag no Checks without a perimeter, before the data, or before the Site existed", async () => {
     const august = parsePeriodParams(
       { period: "month", month: "2026-08" },
       TEST_EVALUATED_AT,
       snap.dataDays,
     );
-    const lateSite = walked((t) => {
+    const lateSite = await walked((t) => {
       t.sites[1].createdAt = "2026-11-20T17:00:00.000Z";
     });
     expect([
-      noChecks(snap, november),
-      noChecks(walked(), august),
-      noChecks(lateSite, november),
+      await noChecks(snap, november),
+      await noChecks(await walked(), august),
+      await noChecks(lateSite, november),
       // s1's one Check in three whole days still flags it.
     ]).toEqual([[], [], ["s1"]]);
   });
 
-  it("flags no Checks in a period the records start partway through", () => {
+  it("flags no Checks in a period the records start partway through", async () => {
     // Records start on 2026-09-15, a part day; neither Site has a Check after it.
     const september = parsePeriodParams(
       { period: "month", month: "2026-09" },
       TEST_EVALUATED_AT,
       snap.dataDays,
     );
-    expect(noChecks(walked(), september)).toEqual(["s1", "s2"]);
+    expect(await noChecks(await walked(), september)).toEqual(["s1", "s2"]);
   });
 
-  it("doesn't count the records' first day, which is likely a part day", () => {
+  it("doesn't count the records' first day, which is likely a part day", async () => {
     const firstDay = parsePeriodParams(
       { period: "custom", from: "2026-09-15", to: "2026-09-16" },
       TEST_EVALUATED_AT,
       snap.dataDays,
     );
-    expect(noChecks(walked(), firstDay)).toEqual([]);
+    expect(await noChecks(await walked(), firstDay)).toEqual([]);
   });
 
-  it("waits for the day after a Site is added to end before flagging no Checks", () => {
+  it("waits for the day after a Site is added to end before flagging no Checks", async () => {
     // 20:00Z is noon Pacific, a part day; the evaluation day is 2026-11-04.
-    const addedOn = (/** @type {string} */ day) =>
-      walked((t) => {
+    const addedOn = async (/** @type {string} */ day) =>
+      await walked((t) => {
         t.sites[1].createdAt = `${day}T20:00:00.000Z`;
       });
     expect([
-      noChecks(addedOn("2026-11-03"), november),
-      noChecks(addedOn("2026-11-02"), november),
+      await noChecks(await addedOn("2026-11-03"), november),
+      await noChecks(await addedOn("2026-11-02"), november),
     ]).toEqual([["s1"], ["s1", "s2"]]);
   });
 
-  it("doesn't fail an Overview over a Site whose added time doesn't parse", () => {
-    const garbled = walked((t) => {
+  it("doesn't fail an Overview over a Site whose added time doesn't parse", async () => {
+    const garbled = await walked((t) => {
       t.sites[1].createdAt = "not a time";
     });
-    expect(noChecks(garbled, november)).toEqual(["s1", "s2"]);
+    expect(await noChecks(garbled, november)).toEqual(["s1", "s2"]);
   });
 
-  it("keeps every row for All Sites, quiet ones too", () => {
-    expect(shown({ show: "all" }).sites.map((r) => r.siteId)).toEqual([
+  it("keeps every row for All Sites, quiet ones too", async () => {
+    expect((await shown({ show: "all" })).sites.map((r) => r.siteId)).toEqual([
       "s1",
       "s2",
       "s3",
     ]);
   });
 
-  it("keeps Sites flagged only for few Checks in Top concerns", () => {
-    const quiet = walked((t) => {
+  it("keeps Sites flagged only for few Checks in Top concerns", async () => {
+    const quiet = await walked((t) => {
       for (const c of t.site_contacts) {
         c.publicContact = "available";
         c.siteContact = "available";
       }
     });
-    const rows = overview(quiet, {
-      interval: november,
-      filter: {},
-      list: list("sites", { show: "top" }),
-      now: NOW,
-    }).sites;
+    const rows = (
+      await overview(quiet, {
+        interval: november,
+        filter: {},
+        list: list("sites", { show: "top" }),
+        now: NOW,
+      })
+    ).sites;
     // s1's one Check over 3 whole days is 0.3 a day; s2 has none.
     expect(rows.map((r) => [r.siteId, r.concerns])).toEqual([
       ["s1", ["fewChecks"]],
@@ -948,58 +1011,57 @@ describe("overview", () => {
     ]);
   });
 
-  it("doesn't flag no Checks on the first day of a period, before any day has ended", () => {
-    const firstDay = walked((_, m) => {
+  it("doesn't flag no Checks on the first day of a period, before any day has ended", async () => {
+    const firstDay = await walked((_, m) => {
       m.evaluatedAt = "2026-11-01T17:00:00.000Z";
     });
-    expect(noChecks(firstDay, november)).toEqual([]);
+    expect(await noChecks(firstDay, november)).toEqual([]);
   });
 
-  it("never counts a missing contact as a top concern", () => {
-    const missing = s3Contacted("missing");
-    const s3 = shown({}, missing).sites.find((r) => r.siteId === "s3");
+  it("never counts a missing contact as a top concern", async () => {
+    const missing = await s3Contacted("missing");
+    const s3 = (await shown({}, missing)).sites.find((r) => r.siteId === "s3");
     expect([s3?.publicContact.state, s3?.concerns]).toEqual(["missing", []]);
-    expect(shown({ show: "top" }, missing).sites.map((r) => r.siteId)).toEqual([
-      "s1",
-      "s2",
-    ]);
+    expect(
+      (await shown({ show: "top" }, missing)).sites.map((r) => r.siteId),
+    ).toEqual(["s1", "s2"]);
     expect(s3?.concerns).not.toContain("noPublicContact");
   });
 
-  it("doesn't list a closed Site's contacts as unknown", () => {
-    const closed = edited((t) => {
+  it("doesn't list a closed Site's contacts as unknown", async () => {
+    const closed = await edited((t) => {
       const row = t.site_contacts.find((c) => c.siteId === "s3");
       row.publicContact = "unknown";
       row.siteContact = "unknown";
     });
-    const s3 = shown({}, closed).sites.find((r) => r.siteId === "s3");
+    const s3 = (await shown({}, closed)).sites.find((r) => r.siteId === "s3");
     expect(s3?.unknownEvidence).toEqual([]);
   });
 
-  it("has a row filter for every Overview filter the request accepts", () => {
+  it("has a row filter for every Overview filter the request accepts", async () => {
     expect(Object.keys(SITE_ROW_FILTERS).sort()).toEqual(
       Object.keys(LIST_FILTERS.sites).sort(),
     );
   });
 
-  it("compares periods over the Sites the filters keep, as totals do", () => {
-    const filtered = shown({ responseState: "late" });
-    const onlyKept = overview(snap, {
+  it("compares periods over the Sites the filters keep, as totals do", async () => {
+    const filtered = await shown({ responseState: "late" });
+    const onlyKept = await overview(snap, {
       interval: october,
       filter: { siteIds: filtered.sites.map((r) => r.siteId) },
       list: list("sites", {}),
       now: NOW,
     });
     expect(filtered.comparison).toEqual(onlyKept.comparison);
-    expect(filtered.comparison).not.toEqual(shown({}).comparison);
+    expect(filtered.comparison).not.toEqual((await shown({})).comparison);
   });
 
-  it("lists every Site on one page, past the old 100-row cap", () => {
-    const many = edited((t) => {
+  it("lists every Site on one page, past the old 100-row cap", async () => {
+    const many = await edited((t) => {
       for (let i = 4; i <= 150; i++)
         t.sites.push({ ...t.sites[0], siteId: `s${i}`, name: `Site ${i}` });
     });
-    const res = overview(many, {
+    const res = await overview(many, {
       interval: october,
       filter: {},
       list: list("sites", { limit: "50" }),
@@ -1009,45 +1071,51 @@ describe("overview", () => {
     expect(Object.keys(res)).not.toContain("nextCursor");
   });
 
-  it("lists open Sites with no compliance terms with the unknown data", () => {
+  it("lists open Sites with no compliance terms with the unknown data", async () => {
     // s2 keeps its terms and s3 is closed, so only s1 lists.
-    const gaps = edited((t) => {
+    const gaps = await edited((t) => {
       for (const s of t.sites) if (s.siteId !== "s2") s.hasTerms = false;
     });
     expect(
-      shown({ show: "unknown" }, gaps).sites.map((r) => [
+      (await shown({ show: "unknown" }, gaps)).sites.map((r) => [
         r.siteId,
         r.unknownEvidence,
       ]),
     ).toEqual([["s1", ["terms"]]]);
   });
 
-  it("shows Sites with unknown evidence when asked", () => {
+  it("shows Sites with unknown evidence when asked", async () => {
     expect(
-      shown({ show: "unknown" }, s3Contacted("unknown")).sites.map(
-        (r) => r.siteId,
-      ),
+      (
+        await shown({ show: "unknown" }, await s3Contacted("unknown"))
+      ).sites.map((r) => r.siteId),
     ).toEqual(["s3"]);
   });
 
-  it("filters by one response state and by each contact indicator", () => {
+  it("filters by one response state and by each contact indicator", async () => {
     expect(
-      [
-        { responseState: "late" },
-        { publicContact: "missing" },
-        { siteContact: "missing" },
-      ].map((params) => shown(params).sites.map((r) => r.siteId)),
+      await Promise.all(
+        [
+          { responseState: "late" },
+          { publicContact: "missing" },
+          { siteContact: "missing" },
+        ].map(async (params) =>
+          (await shown(params)).sites.map((r) => r.siteId),
+        ),
+      ),
     ).toEqual([["s2"], ["s2", "s3"], ["s2", "s3"]]);
   });
 
-  it("filters by several response states at once, as a Site page link sends them", () => {
+  it("filters by several response states at once, as a Site page link sends them", async () => {
     expect(
-      shown({ responseState: "overdue,late" }).sites.map((r) => r.siteId),
+      (await shown({ responseState: "overdue,late" })).sites.map(
+        (r) => r.siteId,
+      ),
     ).toEqual(["s1", "s2"]);
   });
 
-  it("counts and totals only the Sites the filters keep", () => {
-    const res = shown({ responseState: "late" });
+  it("counts and totals only the Sites the filters keep", async () => {
+    const res = await shown({ responseState: "late" });
     expect([
       res.siteCount,
       res.totals.response.late,
@@ -1058,8 +1126,8 @@ describe("overview", () => {
 });
 
 describe("siteDetail", () => {
-  it("returns one row per covered day, ending today in a partial month", () => {
-    const res = siteDetail(snap, "s1", { interval: november, now: NOW });
+  it("returns one row per covered day, ending today in a partial month", async () => {
+    const res = await siteDetail(snap, "s1", { interval: november, now: NOW });
     expect(res.days.map((d) => d.day)).toEqual([
       "2026-11-01",
       "2026-11-02",
@@ -1069,11 +1137,11 @@ describe("siteDetail", () => {
     expect(res.days[3]).toMatchObject({ unfinishedChecks: 1 });
   });
 
-  it("starts the day rows on the day the Site was added, so earlier days read as no data, not zero", () => {
-    const added = edited((t) => {
+  it("starts the day rows on the day the Site was added, so earlier days read as no data, not zero", async () => {
+    const added = await edited((t) => {
       t.sites[0].createdAt = "2026-11-02T20:00:00.000Z";
     });
-    const res = siteDetail(added, "s1", { interval: november, now: NOW });
+    const res = await siteDetail(added, "s1", { interval: november, now: NOW });
     expect(res.days.map((d) => d.day)).toEqual([
       "2026-11-02",
       "2026-11-03",
@@ -1081,20 +1149,22 @@ describe("siteDetail", () => {
     ]);
   });
 
-  it("flags the Site for the same reasons as its Overview row", () => {
-    const row = overview(snap, {
-      interval: october,
-      filter: {},
-      list: list("sites"),
-      now: NOW,
-    }).sites.find((r) => r.siteId === "s1");
-    const res = siteDetail(snap, "s1", { interval: october, now: NOW });
+  it("flags the Site for the same reasons as its Overview row", async () => {
+    const row = (
+      await overview(snap, {
+        interval: october,
+        filter: {},
+        list: list("sites"),
+        now: NOW,
+      })
+    ).sites.find((r) => r.siteId === "s1");
+    const res = await siteDetail(snap, "s1", { interval: october, now: NOW });
     expect(res.concerns).toEqual(["repeatedSevere", "slowResponse"]);
     expect(res.concerns).toEqual(row?.concerns);
   });
 
-  it("agrees with its Overview row and the report on every flag and average", () => {
-    const walkedSnap = edited((t) => {
+  it("agrees with its Overview row and the report on every flag and average", async () => {
+    const walkedSnap = await edited((t) => {
       for (const site of t.sites) site.hasPerimeter = true;
       // A day s1 owed nothing, so its owed-days average differs from its whole-days one.
       t.checks_owed = t.checks_owed.filter(
@@ -1105,17 +1175,21 @@ describe("siteDetail", () => {
         (d) => d.siteId === "s1" && d.day === "2026-10-02",
       ).completedPerimeterChecks += 15;
     });
-    const rows = overview(walkedSnap, {
-      interval: october,
-      filter: {},
-      list: list("sites"),
-      now: NOW,
-    }).sites;
-    const report = reportDataset(walkedSnap, {
-      siteIds: rows.map((r) => r.siteId),
-      interval: october,
-      now: NOW,
-    }).sites;
+    const rows = (
+      await overview(walkedSnap, {
+        interval: october,
+        filter: {},
+        list: list("sites"),
+        now: NOW,
+      })
+    ).sites;
+    const report = (
+      await reportDataset(walkedSnap, {
+        siteIds: rows.map((r) => r.siteId),
+        interval: october,
+        now: NOW,
+      })
+    ).sites;
     const pick = (/** @type {Record<string, any>} */ r) => [
       r.concerns,
       r.checksPerDay,
@@ -1125,40 +1199,52 @@ describe("siteDetail", () => {
       r.longUnresolved,
     ];
     expect(
-      rows.map((r) =>
-        pick(siteDetail(walkedSnap, r.siteId, { interval: october, now: NOW })),
+      await Promise.all(
+        rows.map(async (r) =>
+          pick(
+            await siteDetail(walkedSnap, r.siteId, {
+              interval: october,
+              now: NOW,
+            }),
+          ),
+        ),
       ),
     ).toEqual(rows.map(pick));
     expect(report.map(pick)).toEqual(rows.map(pick));
     expect(rows.map((r) => r.checksPerDay)).toEqual([0.6, 0, 0]);
   });
 
-  it("shows the Site's posted public contact, but not its Site manager's", () => {
-    const res = siteDetail(snap, "s1", { interval: october, now: NOW });
+  it("shows the Site's posted public contact, but not its Site manager's", async () => {
+    const res = await siteDetail(snap, "s1", { interval: october, now: NOW });
     expect(res.publicContact).toMatchObject({
       state: "available",
       email: "desk@example.org",
       phone: "415-555-0100",
     });
     expect(
-      siteDetail(snap, "s2", { interval: october, now: NOW }).publicContact,
+      (await siteDetail(snap, "s2", { interval: october, now: NOW }))
+        .publicContact,
     ).toMatchObject({ state: "missing", email: null, phone: null });
     expect(JSON.stringify(res)).not.toMatch(
       /primaryContact|lead@example\.org|415-555-0101|Synthetic Lead/,
     );
   });
 
-  it("counts the period's Issues by severity band, to match the Issue list", () => {
-    const res = siteDetail(snap, "s1", { interval: october, now: NOW });
+  it("counts the period's Issues by severity band, to match the Issue list", async () => {
+    const res = await siteDetail(snap, "s1", { interval: october, now: NOW });
     const bands = LIST_FILTERS.issues.severityBand;
-    const listed = bands.map(
-      (severityBand) =>
-        listIssues(snap, {
-          interval: october,
-          filter: { siteIds: ["s1"] },
-          list: list("issues", { severityBand }),
-          now: NOW,
-        }).total,
+    const listed = await Promise.all(
+      bands.map(
+        async (severityBand) =>
+          (
+            await listIssues(snap, {
+              interval: october,
+              filter: { siteIds: ["s1"] },
+              list: list("issues", { severityBand }),
+              now: NOW,
+            })
+          ).total,
+      ),
     );
     expect(bands.map((band) => res.totals.severity[band])).toEqual(listed);
     expect(res.totals.severity.severe).toBe(res.totals.activity.severeIssues);
@@ -1167,16 +1253,16 @@ describe("siteDetail", () => {
     );
   });
 
-  it("answers 404 for a Site the snapshot doesn't have", () => {
-    expect(() =>
+  it("answers 404 for a Site the snapshot doesn't have", async () => {
+    await expect(
       siteDetail(snap, "nope", { interval: october, now: NOW }),
-    ).toThrow(expect.objectContaining({ statusCode: 404 }));
+    ).rejects.toThrow(expect.objectContaining({ statusCode: 404 }));
   });
 });
 
 describe("listIssues", () => {
-  it("lists Issues created in the period, newest first", () => {
-    const res = listIssues(snap, {
+  it("lists Issues created in the period, newest first", async () => {
+    const res = await listIssues(snap, {
       interval: october,
       filter: {},
       list: list("issues"),
@@ -1186,14 +1272,14 @@ describe("listIssues", () => {
     expect(res.total).toBe(4);
   });
 
-  it("filters by severity band and by resolved", () => {
-    const severe = listIssues(snap, {
+  it("filters by severity band and by resolved", async () => {
+    const severe = await listIssues(snap, {
       interval: october,
       filter: {},
       list: list("issues", { severityBand: "severe" }),
       now: NOW,
     });
-    const resolved = listIssues(snap, {
+    const resolved = await listIssues(snap, {
       interval: october,
       filter: {},
       list: list("issues", { issueStatus: "resolved" }),
@@ -1203,81 +1289,91 @@ describe("listIssues", () => {
     expect(resolved.issues.map((i) => i.issueId)).toEqual(["t3"]);
   });
 
-  it("lists every severity band in a comma list, as the Site page asks", () => {
+  it("lists every severity band in a comma list, as the Site page asks", async () => {
     /** @param {string} severityBand */
-    const ids = (severityBand) =>
-      listIssues(snap, {
-        interval: october,
-        filter: {},
-        list: list("issues", { severityBand }),
-        now: NOW,
-      }).issues.map((i) => i.issueId);
-    const both = ids("minor,severe");
-    expect(both.length).toBeGreaterThan(ids("severe").length);
+    const ids = async (severityBand) =>
+      (
+        await listIssues(snap, {
+          interval: october,
+          filter: {},
+          list: list("issues", { severityBand }),
+          now: NOW,
+        })
+      ).issues.map((i) => i.issueId);
+    const both = await ids("minor,severe");
+    expect(both.length).toBeGreaterThan((await ids("severe")).length);
     expect([...both].sort()).toEqual(
-      [...ids("minor"), ...ids("severe")].sort(),
+      [...(await ids("minor")), ...(await ids("severe"))].sort(),
     );
   });
 
-  it("lists every response state in a comma list, as the Site page asks", () => {
+  it("lists every response state in a comma list, as the Site page asks", async () => {
     /**
      * @param {string} responseState
-     * @returns {string[]}
+     * @returns {Promise<string[]>}
      */
-    const ids = (responseState) =>
-      listIssues(snap, {
-        interval: october,
-        filter: {},
-        list: list("issues", { responseState }),
-        now: NOW,
-      }).issues.map((i) => i.issueId);
-    expect([ids("overdue"), ids("late"), ids("overdue,late")]).toEqual([
-      ["t2"],
-      ["t5"],
-      ["t2", "t5"],
-    ]);
+    const ids = async (responseState) =>
+      (
+        await listIssues(snap, {
+          interval: october,
+          filter: {},
+          list: list("issues", { responseState }),
+          now: NOW,
+        })
+      ).issues.map((i) => i.issueId);
+    expect([
+      await ids("overdue"),
+      await ids("late"),
+      await ids("overdue,late"),
+    ]).toEqual([["t2"], ["t5"], ["t2", "t5"]]);
   });
 
-  it("lists the Issues behind each concern flag, as many as the flag counted", () => {
+  it("lists the Issues behind each concern flag, as many as the flag counted", async () => {
     /** @param {string} concern @param {string} siteId */
-    const ids = (concern, siteId) =>
-      listIssues(snap, {
-        interval: october,
-        filter: { siteIds: [siteId] },
-        list: list("issues", { concern }),
-        now: NOW,
-      })
-        .issues.map((i) => i.issueId)
+    const ids = async (concern, siteId) =>
+      (
+        await listIssues(snap, {
+          interval: october,
+          filter: { siteIds: [siteId] },
+          list: list("issues", { concern }),
+          now: NOW,
+        })
+      ).issues
+        .map((i) => i.issueId)
         .sort();
     // t1 is open since Oct 2, t2 Overdue, t5 late; t1 and t3 are Severe.
     expect([
-      ids("slowResponse", "s1"),
-      ids("slowResponse", "s2"),
-      ids("repeatedSevere", "s1"),
+      await ids("slowResponse", "s1"),
+      await ids("slowResponse", "s2"),
+      await ids("repeatedSevere", "s1"),
     ]).toEqual([["t1", "t2"], ["t5"], ["t1", "t3"]]);
-    const rows = overview(snap, {
-      interval: october,
-      filter: {},
-      list: list("sites"),
-      now: NOW,
-    }).sites;
+    const rows = (
+      await overview(snap, {
+        interval: october,
+        filter: {},
+        list: list("sites"),
+        now: NOW,
+      })
+    ).sites;
     expect(
-      rows.map(
-        (r) =>
-          r.response.overdue + r.response.late + r.longUnresolved ===
-          ids("slowResponse", r.siteId).length,
+      await Promise.all(
+        rows.map(
+          async (r) =>
+            r.response.overdue + r.response.late + r.longUnresolved ===
+            (await ids("slowResponse", r.siteId)).length,
+        ),
       ),
     ).toEqual([true, true, true]);
   });
 
-  it("pages through every Issue once with a cursor", () => {
-    const first = listIssues(snap, {
+  it("pages through every Issue once with a cursor", async () => {
+    const first = await listIssues(snap, {
       interval: october,
       filter: {},
       list: list("issues", { limit: "2" }),
       now: NOW,
     });
-    const second = listIssues(snap, {
+    const second = await listIssues(snap, {
       interval: october,
       filter: {},
       list: list("issues", { limit: "2", cursor: first.nextCursor }),
@@ -1294,8 +1390,8 @@ describe("listIssues", () => {
 });
 
 describe("issueDetail and checkDetail", () => {
-  it("returns an Issue with its parent Check and Site name", () => {
-    const res = issueDetail(snap, "t1", { now: NOW });
+  it("returns an Issue with its parent Check and Site name", async () => {
+    const res = await issueDetail(snap, "t1", { now: NOW });
     expect(res.issue.responseState).toBe("onTime");
     expect(res.check?.checkId).toBe("c1");
     expect(res.site).toEqual({
@@ -1305,36 +1401,36 @@ describe("issueDetail and checkDetail", () => {
     });
   });
 
-  it("returns a Check with the Issues raised from it", () => {
-    const res = checkDetail(snap, "c1", { now: NOW });
+  it("returns a Check with the Issues raised from it", async () => {
+    const res = await checkDetail(snap, "c1", { now: NOW });
     expect(res.issues.map((i) => i.issueId)).toEqual(["t1"]);
   });
 
-  it("answers 404 for an unknown Issue", () => {
-    expect(() => issueDetail(snap, "nope", { now: NOW })).toThrow(
+  it("answers 404 for an unknown Issue", async () => {
+    await expect(issueDetail(snap, "nope", { now: NOW })).rejects.toThrow(
       expect.objectContaining({ code: "issue_not_found", statusCode: 404 }),
     );
   });
 
-  it("asks for the Site when two Sites share an Issue ID, then finds it", () => {
-    const s = edited((t) => {
+  it("asks for the Site when two Sites share an Issue ID, then finds it", async () => {
+    const s = await edited((t) => {
       t.issues.push({
         ...t.issues.find((i) => i.siteId === "s2"),
         issueId: "t1",
       });
     });
-    expect(() => issueDetail(s, "t1", { now: NOW })).toThrow(
+    await expect(issueDetail(s, "t1", { now: NOW })).rejects.toThrow(
       expect.objectContaining({ code: "site_id_required" }),
     );
-    expect(issueDetail(s, "t1", { siteId: "s2", now: NOW }).issue.siteId).toBe(
-      "s2",
-    );
+    expect(
+      (await issueDetail(s, "t1", { siteId: "s2", now: NOW })).issue.siteId,
+    ).toBe("s2");
   });
 });
 
 describe("listChecks", () => {
-  it("dates completed Checks by completion and unfinished ones by start", () => {
-    const res = listChecks(snap, {
+  it("dates completed Checks by completion and unfinished ones by start", async () => {
+    const res = await listChecks(snap, {
       interval: november,
       filter: {},
       list: list("checks"),
@@ -1346,8 +1442,8 @@ describe("listChecks", () => {
     ]);
   });
 
-  it("filters to single-issue reports", () => {
-    const res = listChecks(snap, {
+  it("filters to single-issue reports", async () => {
+    const res = await listChecks(snap, {
       interval: october,
       filter: {},
       list: list("checks", { source: "single-problem" }),
@@ -1358,8 +1454,8 @@ describe("listChecks", () => {
 });
 
 describe("scopeOptions", () => {
-  it("counts Sites in each group value, without a list of Sites", () => {
-    const res = scopeOptions(snap, { now: NOW });
+  it("counts Sites in each group value, without a list of Sites", async () => {
+    const res = await scopeOptions(snap, { now: NOW });
     expect(res.groups.department).toEqual([
       { value: "Example Department", sites: 2 },
       { value: "Other Department", sites: 1 },
@@ -1367,8 +1463,8 @@ describe("scopeOptions", () => {
     expect(Object.keys(res)).not.toContain("sites");
   });
 
-  it("lists only each Site's ID and name when a screen asks for them", () => {
-    const res = scopeOptions(snap, { now: NOW, include: "sites" });
+  it("lists only each Site's ID and name when a screen asks for them", async () => {
+    const res = await scopeOptions(snap, { now: NOW, include: "sites" });
     expect(res.sites?.[0]).toEqual({
       siteId: "s1",
       name: "Synthetic Site 1",
@@ -1376,11 +1472,11 @@ describe("scopeOptions", () => {
     expect(res.sites).toHaveLength(3);
   });
 
-  it("lists each Issue category in the data once, in order", () => {
-    const s = edited((t) => {
+  it("lists each Issue category in the data once, in order", async () => {
+    const s = await edited((t) => {
       t.issues[0].category = null;
     });
-    expect(scopeOptions(s, { now: NOW }).categories).toEqual([
+    expect((await scopeOptions(s, { now: NOW })).categories).toEqual([
       "Debris",
       "Unsecured gate",
     ]);
@@ -1388,8 +1484,8 @@ describe("scopeOptions", () => {
 });
 
 describe("trends", () => {
-  it("splits a month into weeks from its first day, current and prior", () => {
-    const res = trends(snap, {
+  it("splits a month into weeks from its first day, current and prior", async () => {
+    const res = await trends(snap, {
       interval: october,
       scope: { siteIds: ["s1"] },
       breakdown: "department",
@@ -1407,8 +1503,8 @@ describe("trends", () => {
     expect(res.series.prior[0].start).toBe("2026-09-01");
   });
 
-  it("flags a week that starts before the first record", () => {
-    const res = trends(snap, {
+  it("flags a week that starts before the first record", async () => {
+    const res = await trends(snap, {
       interval: parsePeriodParams(
         { period: "custom", from: "2026-09-10", to: "2026-10-10" },
         TEST_EVALUATED_AT,
@@ -1426,13 +1522,13 @@ describe("trends", () => {
     ]);
   });
 
-  it("uses months for a year and marks the month still running as partial", () => {
+  it("uses months for a year and marks the month still running as partial", async () => {
     const year = parsePeriodParams(
       { period: "year", year: "2026" },
       TEST_EVALUATED_AT,
       snap.dataDays,
     );
-    const res = trends(snap, { interval: year, scope: {}, now: NOW });
+    const res = await trends(snap, { interval: year, scope: {}, now: NOW });
     expect(res.series.granularity).toBe("month");
     expect(res.series.current.at(-1)).toMatchObject({
       start: "2026-11-01",
@@ -1441,13 +1537,13 @@ describe("trends", () => {
     expect(res.series.current[0]).toMatchObject({ noData: true });
   });
 
-  it("uses weeks for a long custom period, so current and prior pair up", () => {
+  it("uses weeks for a long custom period, so current and prior pair up", async () => {
     const custom = parsePeriodParams(
       { period: "custom", from: "2026-01-31", to: "2026-05-11" },
       TEST_EVALUATED_AT,
       snap.dataDays,
     );
-    const res = trends(snap, { interval: custom, scope: {}, now: NOW });
+    const res = await trends(snap, { interval: custom, scope: {}, now: NOW });
     expect(res.series.granularity).toBe("week");
     expect(res.series.prior).toHaveLength(res.series.current.length);
     expect(res.series.current[0]).toMatchObject({
@@ -1456,8 +1552,8 @@ describe("trends", () => {
     });
   });
 
-  it("combines picked Sites with Sites matching every chosen group", () => {
-    const res = trends(snap, {
+  it("combines picked Sites with Sites matching every chosen group", async () => {
+    const res = await trends(snap, {
       interval: october,
       scope: { siteIds: ["s3"], groups: { department: ["Other Department"] } },
       now: NOW,
@@ -1465,8 +1561,8 @@ describe("trends", () => {
     expect(res.scope.siteIds).toEqual(["s2", "s3"]);
   });
 
-  it("needs a Site to match every group, not just one", () => {
-    const res = trends(snap, {
+  it("needs a Site to match every group, not just one", async () => {
+    const res = await trends(snap, {
       interval: october,
       scope: {
         groups: { department: ["Other Department"], siteType: ["shelter"] },
@@ -1476,14 +1572,14 @@ describe("trends", () => {
     expect(res.scope.siteIds).toEqual([]);
   });
 
-  it("compares each group over the same days as the top comparison", () => {
-    const res = trends(snap, {
+  it("compares each group over the same days as the top comparison", async () => {
+    const res = await trends(snap, {
       interval: november,
       scope: { siteIds: ["s1", "s2"] },
       breakdown: "providerId",
       now: NOW,
     });
-    const alone = trends(snap, {
+    const alone = await trends(snap, {
       interval: november,
       scope: { siteIds: ["s1"] },
       now: NOW,
@@ -1498,8 +1594,8 @@ describe("trends", () => {
     ]);
   });
 
-  it("counts Issues by category for the scope", () => {
-    const res = trends(snap, {
+  it("counts Issues by category for the scope", async () => {
+    const res = await trends(snap, {
       interval: october,
       scope: { siteIds: ["s1"] },
       now: NOW,
@@ -1510,8 +1606,8 @@ describe("trends", () => {
     ]);
   });
 
-  it("breaks totals down by group, current and prior", () => {
-    const res = trends(snap, {
+  it("breaks totals down by group, current and prior", async () => {
+    const res = await trends(snap, {
       interval: october,
       scope: {},
       breakdown: "department",
@@ -1529,18 +1625,20 @@ describe("trends", () => {
 describe("exportRows", () => {
   it.each(["issues", "checks", "sites"])(
     "counts %s the same as the rows it builds",
-    (dataset) => {
+    async (dataset) => {
       const req = {
         dataset: /** @type {any} */ (dataset),
         interval: october,
         filter: { status: "active" },
         list: list(/** @type {any} */ (dataset)),
       };
-      expect(exportRowCount(snap, req)).toBe(exportRows(snap, req).rows.length);
+      expect(await exportRowCount(snap, req)).toBe(
+        (await exportRows(snap, req)).rows.length,
+      );
     },
   );
 
-  it("counts October's rows for active Sites", () => {
+  it("counts October's rows for active Sites", async () => {
     const req = (/** @type {any} */ dataset) => ({
       dataset,
       interval: october,
@@ -1548,13 +1646,15 @@ describe("exportRows", () => {
       list: list(dataset),
     });
     expect(
-      ["issues", "checks", "sites"].map((d) => exportRowCount(snap, req(d))),
+      await Promise.all(
+        ["issues", "checks", "sites"].map((d) => exportRowCount(snap, req(d))),
+      ),
     ).toEqual([4, 4, 2]);
   });
 
   it.each(Object.keys(SORTS.sites))(
     "writes Sites in the order Overview shows them, sorted by %s",
-    (sort) => {
+    async (sort) => {
       /** @param {string} dir */
       const args = (dir) => ({
         interval: october,
@@ -1565,23 +1665,29 @@ describe("exportRows", () => {
         rows.map((r) => r.siteId);
       // An export that skipped sorting would write table order, so test a direction that differs.
       const tableOrder = ids(snap.tables.sites);
-      const dir = ["asc", "desc"].find(
-        (d) =>
-          ids(overview(snap, { ...args(d), now: NOW }).sites).join() !==
-          tableOrder.join(),
-      );
+      /** @type {string | undefined} */
+      let dir;
+      for (const d of ["asc", "desc"]) {
+        const order = ids(
+          (await overview(snap, { ...args(d), now: NOW })).sites,
+        );
+        if (order.join() !== tableOrder.join()) {
+          dir = d;
+          break;
+        }
+      }
       expect(dir).toBeDefined();
-      const shown = overview(snap, { ...args(String(dir)), now: NOW }).sites;
-      const written = exportRows(snap, {
-        dataset: "sites",
-        ...args(String(dir)),
-      }).rows;
+      const shown = (await overview(snap, { ...args(String(dir)), now: NOW }))
+        .sites;
+      const written = (
+        await exportRows(snap, { dataset: "sites", ...args(String(dir)) })
+      ).rows;
       expect(ids(written)).toEqual(ids(shown));
     },
   );
 
-  it("returns every matching row, not one page", () => {
-    const res = exportRows(snap, {
+  it("returns every matching row, not one page", async () => {
+    const res = await exportRows(snap, {
       dataset: "issues",
       interval: october,
       filter: {},
@@ -1591,8 +1697,8 @@ describe("exportRows", () => {
     expect(res.columns).toContain("Response state");
   });
 
-  it("writes Issues under plain headers, in the list's order, with words for states", () => {
-    const res = exportRows(snap, {
+  it("writes Issues under plain headers, in the list's order, with words for states", async () => {
+    const res = await exportRows(snap, {
       dataset: "issues",
       interval: october,
       filter: {},
@@ -1627,8 +1733,8 @@ describe("exportRows", () => {
     });
   });
 
-  it("writes Checks with the Issue IDs each raised, and no device", () => {
-    const res = exportRows(snap, {
+  it("writes Checks with the Issue IDs each raised, and no device", async () => {
+    const res = await exportRows(snap, {
       dataset: "checks",
       interval: october,
       filter: {},
@@ -1652,7 +1758,7 @@ describe("exportRows", () => {
     });
   });
 
-  it("dates a completed Check with no finish time as the list does", () => {
+  it("dates a completed Check with no finish time as the list does", async () => {
     // Apart from the start time, so a CSV that read startedAt would fail.
     const placedAt = "2026-10-02T16:55:00.000Z";
     const changed = indexSnapshot({
@@ -1672,18 +1778,18 @@ describe("exportRows", () => {
       filter: {},
       list: list("checks", { source: "perimeter" }),
     };
-    const row = exportRows(changed, { dataset: "checks", ...req }).rows.find(
-      (r) => r["Check ID"] === "c1",
-    );
-    const listed = listChecks(changed, { ...req, now: NOW }).checks.find(
-      (c) => c.checkId === "c1",
-    );
+    const row = (
+      await exportRows(changed, { dataset: "checks", ...req })
+    ).rows.find((r) => r["Check ID"] === "c1");
+    const listed = (
+      await listChecks(changed, { ...req, now: NOW })
+    ).checks.find((c) => c.checkId === "c1");
     expect(row?.["Recorded state"]).toBe("Completed");
     expect(row?.["Completed or started"]).toBe(placedAt);
     expect(listed?.activityAt).toBe(placedAt);
   });
 
-  it("labels an Issue the Resolved filter keeps as Resolved, even with an empty time", () => {
+  it("labels an Issue the Resolved filter keeps as Resolved, even with an empty time", async () => {
     const changed = indexSnapshot({
       prefix: "p1",
       manifest,
@@ -1694,7 +1800,7 @@ describe("exportRows", () => {
         ),
       },
     });
-    const { rows } = exportRows(changed, {
+    const { rows } = await exportRows(changed, {
       dataset: "issues",
       interval: october,
       filter: {},
@@ -1708,20 +1814,27 @@ describe("exportRows", () => {
     { responseState: "late" },
     { show: "top" },
     { siteContact: "missing" },
-  ])("writes the same Sites to the CSV as Overview shows for %j", (params) => {
-    const args = { interval: october, filter: {}, list: list("sites", params) };
-    const shown = overview(snap, { ...args, now: NOW }).sites.map(
-      (r) => r.siteId,
-    );
-    const req = { dataset: /** @type {const} */ ("sites"), ...args };
-    expect([
-      exportRowCount(snap, req),
-      exportRows(snap, req).rows.map((r) => r.siteId),
-    ]).toEqual([shown.length, shown]);
-  });
+  ])(
+    "writes the same Sites to the CSV as Overview shows for %j",
+    async (params) => {
+      const args = {
+        interval: october,
+        filter: {},
+        list: list("sites", params),
+      };
+      const shown = (await overview(snap, { ...args, now: NOW })).sites.map(
+        (r) => r.siteId,
+      );
+      const req = { dataset: /** @type {const} */ ("sites"), ...args };
+      expect([
+        await exportRowCount(snap, req),
+        (await exportRows(snap, req)).rows.map((r) => r.siteId),
+      ]).toEqual([shown.length, shown]);
+    },
+  );
 
-  it("flattens Overview rows for the Sites CSV", () => {
-    const res = exportRows(snap, {
+  it("flattens Overview rows for the Sites CSV", async () => {
+    const res = await exportRows(snap, {
       dataset: "sites",
       interval: october,
       filter: {},
@@ -1751,8 +1864,8 @@ describe("exportRows", () => {
 });
 
 describe("reportDataset", () => {
-  it("lists every Severe Issue created in the period for each Site", () => {
-    const res = reportDataset(snap, {
+  it("lists every Severe Issue created in the period for each Site", async () => {
+    const res = await reportDataset(snap, {
       siteIds: ["s1"],
       interval: october,
       now: NOW,
@@ -1764,8 +1877,8 @@ describe("reportDataset", () => {
     expect(res.sites[0].totals.response.overdue).toBe(1);
   });
 
-  it("gives each Site its current public contact, or the No public contact flag", () => {
-    const res = reportDataset(snap, {
+  it("gives each Site its current public contact, or the No public contact flag", async () => {
+    const res = await reportDataset(snap, {
       siteIds: ["s1", "s2", "s3"],
       interval: october,
       now: NOW,
@@ -1789,8 +1902,8 @@ describe("reportDataset", () => {
     );
   });
 
-  it("leaves out Severe Issues from outside the period", () => {
-    const res = reportDataset(snap, {
+  it("leaves out Severe Issues from outside the period", async () => {
+    const res = await reportDataset(snap, {
       siteIds: ["s1"],
       interval: november,
       now: NOW,

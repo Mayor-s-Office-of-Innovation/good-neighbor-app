@@ -220,7 +220,9 @@ describe("designB", () => {
     }[query]();
     const b = await designB(base, req);
     try {
-      expect(answer[query](await b.run(query))).toEqual(answer[query](want));
+      expect(answer[query](await b.run(query))).toEqual(
+        answer[query](await want),
+      );
     } finally {
       b.close();
     }

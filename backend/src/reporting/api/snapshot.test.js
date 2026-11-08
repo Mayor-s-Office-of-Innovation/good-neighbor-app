@@ -55,7 +55,7 @@ function fakeSource(manifest = {}) {
 }
 
 describe("indexSnapshot", () => {
-  it("finds Issues, Checks and Sites by ID", () => {
+  it("finds Issues, Checks and Sites by ID", async () => {
     const { manifest, tables } = syntheticProjection();
     const snap = indexSnapshot({ prefix: "p", manifest, tables });
     const issue = tables.issues[0];
@@ -66,9 +66,9 @@ describe("indexSnapshot", () => {
     expect(snap.sitesById.get("s1")?.name).toBe("Synthetic Site 1");
   });
 
-  it("gives the same Overview whatever order the projection's rows come in", () => {
+  it("gives the same Overview whatever order the projection's rows come in", async () => {
     /** @param {boolean} reversed */
-    const october = (reversed) => {
+    const october = async (reversed) => {
       const { manifest, tables } = syntheticProjection();
       if (reversed) for (const rows of Object.values(tables)) rows.reverse();
       const snap = indexSnapshot({ prefix: "p", manifest, tables });
@@ -82,10 +82,10 @@ describe("indexSnapshot", () => {
         now: Date.parse(manifest.evaluatedAt),
       });
     };
-    expect(october(true)).toEqual(october(false));
+    expect(await october(true)).toEqual(await october(false));
   });
 
-  it("counts a day once however many Sites have data on it, so launch week opens on the running month", () => {
+  it("counts a day once however many Sites have data on it, so launch week opens on the running month", async () => {
     // Three Sites a day from Oct 26 to Nov 6: six days in each month.
     const { manifest, tables } = syntheticProjection();
     tables.site_days = ["s1", "s2", "s3"].flatMap((siteId) =>
@@ -101,7 +101,7 @@ describe("indexSnapshot", () => {
     ).toMatchObject({ startDay: "2026-11-01" });
   });
 
-  it("starts coverage on the earliest day with any record", () => {
+  it("starts coverage on the earliest day with any record", async () => {
     const { manifest, tables } = syntheticProjection();
     const first = tables.site_days.map((d) => d.day).sort()[0];
     expect(indexSnapshot({ prefix: "p", manifest, tables }).coverageStart).toBe(

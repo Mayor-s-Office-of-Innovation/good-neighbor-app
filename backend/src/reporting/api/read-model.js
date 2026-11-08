@@ -689,7 +689,7 @@ export function sortSiteRows(rows, sort) {
  * @param {Snapshot} snap
  * @param {{ interval: Interval, filter: SiteFilter, list: ListQuery, now: number }} req
  */
-export function overview(snap, { interval, filter, list, now }) {
+export async function overview(snap, { interval, filter, list, now }) {
   const { rows, ids } = filteredSiteRows(snap, interval, filter, list.filters);
   return {
     meta: meta(snap, interval, now),
@@ -768,7 +768,7 @@ function siteSummary(snap, siteId, { interval, now }) {
  * @param {string} siteId
  * @param {{ interval: Interval, now: number }} req
  */
-export function siteDetail(snap, siteId, { interval, now }) {
+export async function siteDetail(snap, siteId, { interval, now }) {
   const summary = siteSummary(snap, siteId, { interval, now });
   const byDay = new Map(
     (snap.daysBySite.get(siteId) ?? []).map((row) => [row.day, row]),
@@ -849,7 +849,7 @@ const matchingIssues = (snap, interval, filter, filters) =>
  * @param {Snapshot} snap
  * @param {{ interval: Interval, filter: SiteFilter, list: ListQuery, now: number }} req
  */
-export function listIssues(snap, { interval, filter, list, now }) {
+export async function listIssues(snap, { interval, filter, list, now }) {
   const rows = sortRows(
     matchingIssues(snap, interval, filter, list.filters),
     list.sort,
@@ -904,7 +904,7 @@ const matchingChecks = (snap, interval, filter, filters) =>
  * @param {Snapshot} snap
  * @param {{ interval: Interval, filter: SiteFilter, list: ListQuery, now: number }} req
  */
-export function listChecks(snap, { interval, filter, list, now }) {
+export async function listChecks(snap, { interval, filter, list, now }) {
   const rows = sortRows(
     matchingChecks(snap, interval, filter, list.filters),
     list.sort,
@@ -957,7 +957,7 @@ const siteRef = (snap, siteId) => ({
  * @param {string} issueId
  * @param {{ siteId?: string, now?: number }} req
  */
-export function issueDetail(snap, issueId, { siteId, now = Date.now() }) {
+export async function issueDetail(snap, issueId, { siteId, now = Date.now() }) {
   const issue = findOne(snap.issuesById, issueId, siteId, "issue_not_found");
   const check = issue.checkId
     ? ((snap.checksById.get(issue.checkId) ?? []).find(
@@ -977,7 +977,7 @@ export function issueDetail(snap, issueId, { siteId, now = Date.now() }) {
  * @param {string} checkId
  * @param {{ siteId?: string, now?: number }} req
  */
-export function checkDetail(snap, checkId, { siteId, now = Date.now() }) {
+export async function checkDetail(snap, checkId, { siteId, now = Date.now() }) {
   const check = findOne(snap.checksById, checkId, siteId, "check_not_found");
   return {
     meta: meta(snap, null, now),
@@ -995,7 +995,7 @@ export function checkDetail(snap, checkId, { siteId, now = Date.now() }) {
  * @param {Snapshot} snap
  * @param {{ now: number, include?: string }} req `include: "sites"` adds each Site's ID and name
  */
-export function scopeOptions(snap, { now, include }) {
+export async function scopeOptions(snap, { now, include }) {
   /** @type {Record<string, { value: string, sites: number }[]>} */
   const groups = {};
   for (const dim of SITE_DIMENSIONS) {
@@ -1077,7 +1077,7 @@ function buckets(snap, interval, granularity, ids) {
  * @param {Snapshot} snap
  * @param {{ interval: Interval, scope: TrendScope, breakdown?: string, now: number }} req
  */
-export function trends(snap, { interval, scope, breakdown, now }) {
+export async function trends(snap, { interval, scope, breakdown, now }) {
   const sites = scopeSites(snap, scope);
   const ids = new Set(sites.map((s) => s.siteId));
   // Only a year's prior has the same months; a custom one would pair unequal months.
@@ -1232,9 +1232,12 @@ export const EXPORT_COLUMNS = Object.freeze({
 /**
  * @param {Snapshot} snap
  * @param {{ dataset: "issues" | "checks" | "sites", interval: Interval, filter: SiteFilter, list: ListQuery }} req
- * @returns {number}
+ * @returns {Promise<number>}
  */
-export function exportRowCount(snap, { dataset, interval, filter, list }) {
+export async function exportRowCount(
+  snap,
+  { dataset, interval, filter, list },
+) {
   if (dataset === "issues")
     return issuesIn(snap, interval, filter, list.filters).length;
   if (dataset === "checks")
@@ -1248,9 +1251,9 @@ export function exportRowCount(snap, { dataset, interval, filter, list }) {
 /**
  * @param {Snapshot} snap
  * @param {{ dataset: "issues" | "checks" | "sites", interval: Interval, filter: SiteFilter, list: ListQuery }} req
- * @returns {{ columns: string[], rows: Record<string, any>[] }}
+ * @returns {Promise<{ columns: string[], rows: Record<string, any>[] }>}
  */
-export function exportRows(snap, { dataset, interval, filter, list }) {
+export async function exportRows(snap, { dataset, interval, filter, list }) {
   const columns = [...EXPORT_COLUMNS[dataset]];
   /**
    * @param {CsvFormat} format
@@ -1322,7 +1325,7 @@ export function exportRows(snap, { dataset, interval, filter, list }) {
  * @param {Snapshot} snap
  * @param {{ siteIds: string[], interval: Interval, now: number }} req
  */
-export function reportDataset(snap, { siteIds, interval, now }) {
+export async function reportDataset(snap, { siteIds, interval, now }) {
   return {
     meta: meta(snap, interval, now),
     sites: siteIds.map((siteId) => {
