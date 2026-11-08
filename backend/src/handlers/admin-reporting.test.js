@@ -14,10 +14,14 @@ const { ddbSend, logServerError } = vi.hoisted(() => ({
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../lib/log-server-error.js", () => ({ logServerError }));
 
-const { createReportingHandlers } = await import("./admin-reporting.js");
+const { MAX_TRENDS_BODY_BYTES, createReportingHandlers } = await import(
+  "./admin-reporting.js"
+);
 const { createSnapshotStore } = await import("../reporting/api/snapshot.js");
 const { memoryJobStore } = await import("../reporting/api/jobs.js");
-const { LIMITS } = await import("../reporting/api/requests.js");
+const { LIMITS, SITE_DIMENSIONS } = await import(
+  "../reporting/api/requests.js"
+);
 
 const { syntheticProjection, writeSyntheticProjection } = await import(
   "../reporting/api/test-projection.js"
@@ -174,6 +178,27 @@ describe("reads", () => {
     expect(logServerError).toHaveBeenCalledOnce();
   });
 
+  it("answers 503 without a log line per request when a snapshot file has expired", async () => {
+    const { h } = setup({
+      source: {
+        latest: async () => ({ prefix: "p1", snapshotId: "snap1" }),
+        load: async () => {
+          throw Object.assign(new Error("snapshot_unavailable"), {
+            code: "snapshot_unavailable",
+            statusCode: 503,
+            expiredKey: "p1/issues.parquet",
+          });
+        },
+      },
+    });
+    const res = await h.getOverview(event());
+    expect([res.statusCode, json(res).error]).toEqual([
+      503,
+      "snapshot_unavailable",
+    ]);
+    expect(logServerError).not.toHaveBeenCalled();
+  });
+
   it("answers 400 without logging, since the caller's request was wrong", async () => {
     const { h } = setup();
     await h.getOverview(event({ query: { period: "week" } }));
@@ -279,6 +304,56 @@ describe("reads", () => {
       event({ body: { scope: { groups: { email: ["x"] } } } }),
     );
     expect(json(res).error).toBe("invalid_group");
+  });
+
+  it("refuses a Trends body over its byte limit before parsing it, since the WAF lets it through", async () => {
+    const { h } = setup();
+    const res = await h.postTrends({
+      ...event(),
+      body: `{${" ".repeat(MAX_TRENDS_BODY_BYTES)}`,
+    });
+    expect([res.statusCode, json(res).error]).toEqual([
+      413,
+      "request_too_large",
+    ]);
+    expect(logServerError).not.toHaveBeenCalled();
+  });
+
+  it("measures a base64 Trends body once decoded, as the assessment route does", async () => {
+    const { h } = setup();
+    const res = await h.postTrends({
+      ...event(),
+      isBase64Encoded: true,
+      body: Buffer.from("{}".padEnd(MAX_TRENDS_BODY_BYTES + 1, " ")).toString(
+        "base64",
+      ),
+    });
+    expect(res.statusCode).toBe(413);
+  });
+
+  it("takes the largest Trends body LIMITS allow, in three-byte characters", async () => {
+    const { h } = setup();
+    // The widest UTF-8 a value can use without JSON escapes.
+    const value = (/** @type {number} */ i) =>
+      `${i}`.padEnd(LIMITS.maxFilterLength, "€");
+    const values = Array.from({ length: LIMITS.maxGroupValues }, (_, i) =>
+      value(i),
+    );
+    const body = {
+      period: "custom",
+      from: "2026-10-01",
+      to: "2026-10-31",
+      breakdown: "providerId",
+      scope: {
+        siteIds: Array.from({ length: LIMITS.maxTrendSites }, (_, i) =>
+          value(i),
+        ),
+        groups: Object.fromEntries(SITE_DIMENSIONS.map((dim) => [dim, values])),
+      },
+    };
+    const res = await h.postTrends(event({ body }));
+    // Past the byte limit and JSON.parse, to the check that the Sites exist.
+    expect(json(res).error).toBe("unknown_site");
   });
 
   it("refuses a body that isn't JSON", async () => {

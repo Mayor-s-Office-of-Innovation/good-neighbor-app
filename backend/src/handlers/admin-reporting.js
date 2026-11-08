@@ -57,6 +57,8 @@ const FRESH_ONLY_REFRESH_WAIT_MS = 20_000;
 // A Lambda's first load answers 503 past this, leaving the report time inside 29 s.
 const LAMBDA_FIRST_LOAD_WAIT_MS = 20_000;
 const EXPORT_DATASETS = ["issues", "checks", "sites"];
+// The WAF skips this route. Fits 50 Sites and 6 groups of 50 values at 200 three-byte characters.
+export const MAX_TRENDS_BODY_BYTES = 256 * 1024;
 // Params a request may carry; anything else is dropped before it's stored.
 const PERIOD_PARAMS = [
   "period",
@@ -208,10 +210,10 @@ export function createReportingHandlers({
 
   // One gate for every route, so none can skip the capability check.
   /**
-   * @param {Event} event
-   * @param {(ctx: { params: Record<string, unknown>, ownerKey: string }) => Promise<{ statusCode?: number, body: unknown }>} work
+   * @param {number} maxBodyBytes
+   * @returns {(event: Event, work: (ctx: { params: Record<string, unknown>, ownerKey: string }) => Promise<{ statusCode?: number, body: unknown }>) => Promise<import("aws-lambda").APIGatewayProxyResult>}
    */
-  const guarded = async (event, work) => {
+  const guardedUpTo = (maxBodyBytes) => async (event, work) => {
     const principal = adminPrincipal(event);
     if (!principal.capabilities.viewInsights)
       return jsonResponse(403, { error: "forbidden" });
@@ -226,6 +228,11 @@ export function createReportingHandlers({
       /** @type {Record<string, unknown>} */
       let params = { ...(event.queryStringParameters ?? {}) };
       if (event.body) {
+        // Decoded bytes, checked before JSON.parse, like the assessment route.
+        const bytes = event.isBase64Encoded
+          ? Buffer.from(event.body, "base64").length
+          : Buffer.byteLength(event.body, "utf8");
+        if (bytes > maxBodyBytes) throw requestError("request_too_large", 413);
         let body;
         try {
           body = readJsonBody(event);
@@ -243,8 +250,9 @@ export function createReportingHandlers({
       return jsonResponse(statusCode, body);
     } catch (err) {
       if (isRequestError(err)) {
-        // A 503 like snapshot_contract_mismatch is ours to fix, so log it.
-        if (err.statusCode >= 500)
+        // A 503 like snapshot_contract_mismatch is ours to fix, so log it. The
+        // snapshot store logs an expired file once itself.
+        if (err.statusCode >= 500 && !(/** @type {any} */ (err).expiredKey))
           logServerError("admin-reporting", err, {
             extra: { routeKey: /** @type {any} */ (event).routeKey },
           });
@@ -256,6 +264,7 @@ export function createReportingHandlers({
       return jsonResponse(502, { error: "reporting_failed" });
     }
   };
+  const guarded = guardedUpTo(Infinity);
 
   /**
    * @param {Event} event
@@ -366,7 +375,7 @@ export function createReportingHandlers({
 
     /** @param {Event} event */
     postTrends: (event) =>
-      guarded(event, async ({ params }) => {
+      guardedUpTo(MAX_TRENDS_BODY_BYTES)(event, async ({ params }) => {
         const snap = await snapshots.current();
         const raw = /** @type {Record<string, any>} */ (params.scope ?? {});
         if (typeof raw !== "object" || Array.isArray(raw))

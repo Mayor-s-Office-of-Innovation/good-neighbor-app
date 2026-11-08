@@ -1445,10 +1445,8 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
-  # Assessments, CSV previews and Insights reports and trends exceed the managed
-  # 8 KiB body limit. Only these exact POST routes are exempt; their handlers enforce
-  # 64 KiB, 1 MiB / 500 rows, 2,000 Sites, and 50 Sites with 50 values per group.
-  # Preserve the rule name and metric for existing dashboards and log queries.
+  # Only these exact POST routes may pass 8 KiB; their handlers set their own limits.
+  # Dashboards and log queries use this rule's name and metric.
   rule {
     name     = "BodySizeRestrictionsOutsideAssessmentEvaluation"
     priority = 10
