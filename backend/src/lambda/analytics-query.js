@@ -29,8 +29,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   ...reportingRoutes,
 });
 
-// The infra PR sets batch size 1, so a large file gets the whole timeout; a bad
-// message goes back to SQS, then the DLQ.
+// Batch size 1 gives a large file the whole timeout; a bad message goes back
+// to SQS, then the DLQ.
 /**
  * @param {{ Records: { messageId: string, body: string }[] }} event
  * @returns {Promise<{ batchItemFailures: { itemIdentifier: string }[] }>}
