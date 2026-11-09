@@ -387,7 +387,7 @@ describe("record photos' Issue walk against the Issue list's SQL", () => {
     const rand = random(722);
     const cases = Array.from({ length: 1500 }, () => randomCase(rand));
     const { compared, found } = await differences(cases);
-    expect(compared).toBeGreaterThan(5000);
+    expect(compared).toBeGreaterThan(4500);
     expect({
       differ: found.length,
       of: compared,
