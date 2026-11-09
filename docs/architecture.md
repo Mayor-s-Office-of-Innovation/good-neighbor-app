@@ -455,6 +455,20 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
 
 ## Edge routing contract (SPA fallback vs API routes)
 
+Known email/social webviews stop at a browser-opening screen before setup mounts
+or invitation and Home Screen grants are stripped or redeemed. The screen keeps
+the original URL intact and offers copy-link and manual-copy instructions; it
+does not assume a new window opens an external browser. Detection uses known
+user-agent markers only, so ordinary and unrecognized browsers retain their
+normal startup flow. Webviews that disguise themselves as ordinary browsers can
+still evade detection; real email-app testing remains necessary. This prevents
+new enrollment in detected webviews, but does not transfer access already stored
+in one or restore a consumed invitation.
+
+The invitation screen's Open the app recovery link uses `data-reload` to bypass
+SPA navigation and restart session loading from local storage. Setup pauses its
+route subscription, so changing the URL alone cannot restore a saved session.
+
 Frontend publication uses `scripts/publish-web-assets.sh` for both the provider
 and admin builds. Hashed assets upload first with immutable caching, other
 resources next, and entry HTML last with revalidation. Publication retains old

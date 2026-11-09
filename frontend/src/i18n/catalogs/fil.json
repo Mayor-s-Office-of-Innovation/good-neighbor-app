@@ -1728,5 +1728,12 @@
   "webview.banner.title": "Maaaring hindi magbukas ang camera dito.",
   "access.showCode": "Ipakita ang code",
   "access.codeGuidance": "Kung hindi gumagana ang code o link, maaari kayong magpakita ng code sa inyong kasamahan para ilagay niya sa screen ng pag-sign in. Makikita lang ang code hanggang isara ninyo ang view na ito.",
-  "access.displayCode": "Ipakita ang code ngayon"
+  "access.displayCode": "Ipakita ang code ngayon",
+  "webview.gate.copied": "Nakopya ang link. Buksan ang inyong browser at i-paste ito sa address bar. Panatilihing pribado ang link ng imbitasyong ito.",
+  "webview.gate.copy": "Kopyahin ang link",
+  "webview.gate.instructions": "Gamitin ang menu ng app na ito upang buksan ang pahinang ito sa inyong browser, kung may ganoong opsyon. Kung wala, kopyahin ang link sa ibaba, buksan ang Safari, Chrome, o ang karaniwan ninyong browser, at i-paste ito sa address bar.",
+  "webview.gate.link": "Link na bubuksan sa inyong browser",
+  "webview.gate.manualCopy": "Hindi available ang awtomatikong pagkopya. Piliin at kopyahin ang buong link sa ibaba, pagkatapos ay i-paste ito sa address bar ng inyong browser. Panatilihing pribado ang link ng imbitasyong ito.",
+  "webview.gate.message": "Tinitingnan ninyo ang Good Neighbor sa loob ng ibang app. Lumipat sa inyong browser bago mag-sign in o gumamit ng imbitasyon upang manatili ang inyong access sa browser na gagamitin ninyo sa trabaho.",
+  "webview.gate.title": "Buksan ang Good Neighbor sa inyong browser"
 }

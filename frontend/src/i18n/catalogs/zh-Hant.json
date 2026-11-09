@@ -1728,5 +1728,12 @@
   "webview.banner.title": "相機可能無法在此開啟。",
   "access.showCode": "顯示代碼",
   "access.codeGuidance": "如果代碼或連結無法使用，您可以向團隊成員顯示代碼，讓他們在登入畫面輸入。此代碼只會顯示到您關閉此視窗為止。",
-  "access.displayCode": "顯示代碼內容"
+  "access.displayCode": "顯示代碼內容",
+  "webview.gate.copied": "已複製連結。請開啟瀏覽器，並貼到網址列。請勿公開此邀請連結。",
+  "webview.gate.copy": "複製連結",
+  "webview.gate.instructions": "如果這個應用程式的選單有在瀏覽器中開啟的選項，請用它開啟此頁面。否則，請複製下方連結，自行開啟 Safari、Chrome 或您慣用的瀏覽器，再貼到網址列。",
+  "webview.gate.link": "在瀏覽器中開啟的連結",
+  "webview.gate.manualCopy": "無法自動複製。請選取並複製下方完整連結，再貼到瀏覽器的網址列。請勿公開此邀請連結。",
+  "webview.gate.message": "您正在另一個應用程式內查看 Good Neighbor。請先切換至瀏覽器，再登入或使用邀請，讓您的存取權保留在工作時使用的瀏覽器中。",
+  "webview.gate.title": "在您的瀏覽器中開啟 Good Neighbor"
 }
