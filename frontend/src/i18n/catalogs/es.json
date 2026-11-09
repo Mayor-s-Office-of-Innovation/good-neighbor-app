@@ -1704,5 +1704,12 @@
   "analysis.deleteDialog.refresh": "Actualizar lista",
   "access.showCode": "Mostrar código",
   "access.codeGuidance": "Si el código o el enlace no funciona, puede mostrar un código a su compañero de equipo para que lo introduzca en la pantalla de inicio de sesión. Este código solo será visible hasta que cierre esta vista.",
-  "access.displayCode": "Ver código"
+  "access.displayCode": "Ver código",
+  "webview.gate.copied": "Enlace copiado. Abra su navegador y péguelo en la barra de direcciones. Mantenga privado este enlace de invitación.",
+  "webview.gate.copy": "Copiar enlace",
+  "webview.gate.instructions": "Use el menú de esta aplicación para abrir esta página en su navegador, si esa opción está disponible. Si no, copie el enlace de abajo, abra Safari, Chrome o su navegador habitual y péguelo en la barra de direcciones.",
+  "webview.gate.link": "Enlace para abrir en su navegador",
+  "webview.gate.manualCopy": "No se puede copiar automáticamente. Seleccione y copie el enlace completo de abajo y péguelo en la barra de direcciones de su navegador. Mantenga privado este enlace de invitación.",
+  "webview.gate.message": "Está viendo Good Neighbor dentro de otra aplicación. Cambie a su navegador antes de iniciar sesión o usar una invitación para que su acceso permanezca en el navegador que usará para trabajar.",
+  "webview.gate.title": "Abra Good Neighbor en su navegador"
 }

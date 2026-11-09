@@ -1704,5 +1704,12 @@
   "analysis.deleteDialog.refresh": "Làm mới danh sách",
   "access.showCode": "Hiện mã",
   "access.codeGuidance": "Nếu mã hoặc liên kết không hoạt động, bạn có thể hiển thị mã cho thành viên trong nhóm để họ nhập trên màn hình đăng nhập. Mã này chỉ hiển thị cho đến khi bạn đóng cửa sổ này.",
-  "access.displayCode": "Hiển thị mã"
+  "access.displayCode": "Hiển thị mã",
+  "webview.gate.copied": "Đã sao chép liên kết. Mở trình duyệt và dán vào thanh địa chỉ. Giữ riêng tư liên kết mời này.",
+  "webview.gate.copy": "Sao chép liên kết",
+  "webview.gate.instructions": "Dùng menu của ứng dụng này để mở trang này trong trình duyệt, nếu có tùy chọn đó. Nếu không, hãy sao chép liên kết bên dưới, tự mở Safari, Chrome hoặc trình duyệt bạn thường dùng, rồi dán vào thanh địa chỉ.",
+  "webview.gate.link": "Liên kết để mở trong trình duyệt",
+  "webview.gate.manualCopy": "Không thể sao chép tự động. Chọn và sao chép toàn bộ liên kết bên dưới, rồi dán vào thanh địa chỉ của trình duyệt. Giữ riêng tư liên kết mời này.",
+  "webview.gate.message": "Bạn đang xem Good Neighbor bên trong một ứng dụng khác. Hãy chuyển sang trình duyệt trước khi đăng nhập hoặc dùng lời mời để quyền truy cập của bạn được lưu trong trình duyệt bạn sẽ dùng để làm việc.",
+  "webview.gate.title": "Mở Good Neighbor trong trình duyệt của bạn"
 }

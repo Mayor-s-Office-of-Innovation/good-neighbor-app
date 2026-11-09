@@ -7,12 +7,12 @@
   re-entry codes can behave oddly. We can't fix a webview from inside it, but
   we can detect the common ones and hand the user to the real browser:
 
-  - iOS: any `target="_blank"` link opens in Safari from every known webview.
-  - Android WebView: `target="_blank"` often stays trapped, so we hand off an
-    `intent://` URL whose `S.browser_fallback_url` opens the default browser.
+  New windows and Android intents are best-effort only: the host app controls
+  navigation. Startup uses explicit browser-opening instructions and copying
+  the original link instead of assuming a new window escapes the webview.
 
-  Detection is user-agent sniffing, so it's "warn on known-bad agents," never a
-  hard block — the caller's copy should say "may not open," not "won't."
+  Detection is conservative user-agent sniffing. Only recognized webviews get
+  the startup gate; unknown agents and normal browsers keep their usual flow.
 */
 
 const IOS_WEBVIEW_PATTERNS = [

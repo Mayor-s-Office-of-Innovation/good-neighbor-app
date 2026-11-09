@@ -1704,5 +1704,12 @@
   "webview.banner.dismiss.aria": "Dismiss",
   "webview.banner.message": "You're inside another app's browser. Open in your browser instead for the camera to work.",
   "webview.banner.open": "Open in browser",
-  "webview.banner.title": "Camera may not open here."
+  "webview.banner.title": "Camera may not open here.",
+  "webview.gate.copied": "Link copied. Open your browser and paste it into the address bar. Keep this invitation link private.",
+  "webview.gate.copy": "Copy link",
+  "webview.gate.instructions": "Use this app's menu to open this page in your browser, if that option is available. Otherwise, copy the link below, open Safari, Chrome, or your usual browser yourself, and paste it into the address bar.",
+  "webview.gate.link": "Link to open in your browser",
+  "webview.gate.manualCopy": "Automatic copying isn't available. Select and copy the full link below, then paste it into your browser's address bar. Keep this invitation link private.",
+  "webview.gate.message": "You're viewing Good Neighbor inside another app. Switch to your browser before signing in or using an invitation so your access stays in the browser you'll use for your work.",
+  "webview.gate.title": "Open Good Neighbor in your browser"
 }

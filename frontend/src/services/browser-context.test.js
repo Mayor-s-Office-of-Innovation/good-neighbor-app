@@ -47,7 +47,7 @@ describe("isInAppBrowser", () => {
 });
 
 describe("escapeUrlForPlatform", () => {
-  it("hands iOS a plain https URL (target=_blank → Safari)", () => {
+  it("hands iOS a plain https URL without guaranteeing an external browser", () => {
     vi.stubGlobal("location", {
       href: "https://gnp.example.org/check?code=ABC123",
     });
