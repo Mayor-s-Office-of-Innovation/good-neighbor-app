@@ -5,6 +5,7 @@ import {
   $$,
   click,
   fill,
+  mountPage,
   pageError,
   pageText,
   routeTo,
@@ -14,22 +15,54 @@ import {
   window,
   missing,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { providerData } from "../../e2e/admin-tests/providers-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
+import "./pages/directory/directory-page.js";
+import "./pages/provider/provider-page.js";
 
 const managers = /^providers\/v1\/manager-memberships$/;
 
+/** The Provider page's reads and its manager writes; any other request fails a page test. */
+const providerCalls = [
+  /^GET providers\/[^/]+$/,
+  /^GET providers\/[^/]+\/(manager-memberships|grants)$/,
+  /^GET people$/,
+  /^(POST|PATCH|DELETE) providers\/[^/]+\/manager-memberships(\/[^/]+){0,2}$/,
+  /^POST providers\/[^/]+\/manager-enrollments\/[^/]+\/revoke$/,
+];
+
 /**
+ * <admin-provider-page> alone, without <admin-app>, following the provider routes.
+ * Its errors show through pageError(), as <admin-app>'s error line would show them.
  * @param {string} path
- * @param {Parameters<typeof mountAdmin>[1]} [options]
+ * @param {Partial<Parameters<typeof mountPage>[2]>} [options]
  */
-const openProvider = (path, options = {}) =>
-  mountAdmin(path, { data: providerData(), ...options });
+const openProviderPage = (path, options = {}) =>
+  mountPage("admin-provider-page", path, {
+    calls: providerCalls,
+    follow: ["provider", "provider-new", "provider-manager"],
+    recordErrors: true,
+    data: providerData(),
+    ...options,
+  });
+
+/**
+ * <admin-directory-page> on the Provider managers list, which reads each provider's managers.
+ * @param {string} path
+ * @param {Partial<Parameters<typeof mountPage>[2]>} [options]
+ */
+const openManagerDirectory = (path, options = {}) =>
+  mountPage("admin-directory-page", path, {
+    calls: [/^GET providers\/[^/]+\/manager-memberships$/],
+    follow: ["provider-managers"],
+    sites: true,
+    data: providerData(),
+    ...options,
+  });
 
 const rows = () => $$("[data-provider-manager-row]");
-const heading = () => $("admin-app h1").textContent.trim();
+const heading = () => $("admin-provider-page h1").textContent.trim();
 const url = () => window.location.pathname + window.location.search;
 const dialogForm = "#add-provider-manager-dialog form";
 
@@ -55,7 +88,7 @@ function escape(selector) {
 
 test("a supervisor adds a provider manager from the dialog", async () => {
   const data = providerData();
-  const { api } = await openProvider("/providers/v1", {
+  const { api } = await openProviderPage("/providers/v1", {
     data,
     setup: (api) =>
       api.on("POST", managers, (request) => {
@@ -90,7 +123,7 @@ test("a supervisor adds a provider manager from the dialog", async () => {
 });
 
 test("a failed manager save keeps the dialog draft and a closed dialog resets it", async () => {
-  await openProvider("/providers/v1", {
+  await openProviderPage("/providers/v1", {
     setup: (api) =>
       api.fail("POST", managers, 409, "provider_manager_already_assigned"),
   });
@@ -112,7 +145,7 @@ test("a failed manager save keeps the dialog draft and a closed dialog resets it
 
 test("Escape cannot close the manager dialog while a save is running", async () => {
   const held = gate();
-  await openProvider("/providers/v1", {
+  await openProviderPage("/providers/v1", {
     setup: (api) =>
       api.on("POST", managers, {
         delay: held.promise,
@@ -132,7 +165,7 @@ test("Escape cannot close the manager dialog while a save is running", async () 
 });
 
 test("an idle manager dialog may be dismissed", async () => {
-  await openProvider("/providers/v1");
+  await openProviderPage("/providers/v1");
   await click("#add-provider-manager");
   assert.equal(escape("#add-provider-manager-dialog"), false);
   assert.equal($("#add-provider-manager-dialog").open, false);
@@ -140,7 +173,7 @@ test("an idle manager dialog may be dismissed", async () => {
 
 test("a supervisor assigns an existing person as provider manager", async () => {
   const data = providerData();
-  const { api } = await openProvider("/providers/v1", {
+  const { api } = await openProviderPage("/providers/v1", {
     data,
     setup: (api) =>
       api.on("POST", managers, (request) => {
@@ -163,7 +196,7 @@ test("a supervisor assigns an existing person as provider manager", async () => 
 });
 
 test("assigning without a person asks the user to choose one", async () => {
-  const { api } = await openProvider("/providers/v1");
+  const { api } = await openProviderPage("/providers/v1");
   await submit("[data-assign-existing-provider-person]");
   assert.equal(
     $(
@@ -176,7 +209,7 @@ test("assigning without a person asks the user to choose one", async () => {
 
 test("an assignment that finishes after leaving the provider does not redraw it", async () => {
   const held = gate();
-  const { api } = await openProvider("/providers/v1", {
+  const { api } = await openProviderPage("/providers/v1", {
     setup: (api) => {
       // Stored, so the held reread lists a manager the old page must not draw.
       api.on("POST", managers, (request) => {
@@ -212,9 +245,44 @@ test("an assignment that finishes after leaving the provider does not redraw it"
   assert.equal(rows().length, 0);
 });
 
+test("a manager reread that finishes after leave() isn't drawn, even at the same address", async () => {
+  const held = gate();
+  const { api, page } = await openProviderPage("/providers/v1", {
+    setup: (api) => {
+      // Stored, so the held reread lists a manager the left page must not draw.
+      api.on("POST", managers, (request) => {
+        const manager = {
+          ...request.body,
+          membershipId: "v1-pm3",
+          providerId: "v1",
+          status: "active",
+        };
+        api.data.providerManagers.push(manager);
+        return { status: 201, json: { manager } };
+      });
+      api.on("GET", managers, async () => {
+        if (api.calls("POST", managers).length) await held.promise;
+        return undefined;
+      });
+    },
+  });
+  const before = rows().length;
+  await fill(
+    "[data-assign-existing-provider-person] wa-select[name='person-id']",
+    "u2",
+  );
+  await click("[data-assign-existing-provider-person] button[type='submit']");
+  assert.equal(api.calls("POST", managers).length, 1);
+  // <admin-app> calls leave() as the user goes; the page mustn't wait for the URL to change.
+  page.leave();
+  held.release();
+  await settle();
+  assert.equal(rows().length, before);
+});
+
 test("removing a manager deactivates the membership and revokes their devices", async () => {
   const data = providerData();
-  const { api } = await openProvider("/providers/v1", {
+  const { api } = await openProviderPage("/providers/v1", {
     data,
     setup: (api) => {
       api.on("DELETE", /^providers\/v1\/manager-memberships\/m1$/, () => {
@@ -238,7 +306,7 @@ test("removing a manager deactivates the membership and revokes their devices", 
 });
 
 test("a failed manager removal shows the error", async () => {
-  await openProvider("/providers/v1", {
+  await openProviderPage("/providers/v1", {
     setup: (api) =>
       api.fail("DELETE", /manager-memberships\/m1$/, 500, "membership_locked"),
   });
@@ -249,7 +317,7 @@ test("a failed manager removal shows the error", async () => {
 
 test("the manager record saves edits and reinstates a former manager", async () => {
   const data = providerData();
-  const { api } = await openProvider("/provider-managers/v1/m1", {
+  const { api } = await openProviderPage("/provider-managers/v1/m1", {
     data,
     setup: (api) =>
       api.on("PATCH", /manager-memberships\/m1$/, (request) => ({
@@ -295,9 +363,9 @@ test("the manager record saves edits and reinstates a former manager", async () 
 });
 
 test("a manager record that was removed elsewhere says so", async () => {
-  await openProvider("/provider-managers/v1/missing");
+  await openProviderPage("/provider-managers/v1/missing");
   assert.ok(
-    $$("admin-app [role='alert']").some(
+    $$("admin-provider-page [role='alert']").some(
       (alert) =>
         alert.textContent.trim() === t("admin.providerManagers.notFound"),
     ),
@@ -306,7 +374,7 @@ test("a manager record that was removed elsewhere says so", async () => {
 
 test("a manager save that lands after switching providers is dropped", async () => {
   const held = gate();
-  const { api } = await openProvider("/provider-managers/v1/m1", {
+  const { api } = await openProviderPage("/provider-managers/v1/m1", {
     setup: (api) =>
       api.on("PATCH", /manager-memberships\/m1$/, {
         delay: held.promise,
@@ -321,7 +389,6 @@ test("a manager save that lands after switching providers is dropped", async () 
   await click("#provider-manager-record-form [data-save-button]");
   assert.equal(api.calls("PATCH", /m1$/).length, 1);
   await routeTo("/providers/v2");
-  await click("#site-unsaved-dialog button[value='discard']");
   assert.equal($("#provider-title").textContent.trim(), "Second Provider");
   held.release();
   await settle();
@@ -332,7 +399,7 @@ test("a manager save that lands after switching providers is dropped", async () 
 test("transferring a manager needs their email, then opens the new record", async () => {
   const data = providerData();
   data.providers[1].status = "active";
-  const { api } = await openProvider("/provider-managers/v1/m1", {
+  const { api } = await openProviderPage("/provider-managers/v1/m1", {
     data,
     setup: (api) =>
       api.on("POST", /manager-memberships\/m1\/transfer$/, () => {
@@ -362,7 +429,7 @@ test("transferring a manager needs their email, then opens the new record", asyn
 
 test("removing one manager's access from their record needs their email", async () => {
   const data = providerData();
-  const { api } = await openProvider("/provider-managers/v1/m1", {
+  const { api } = await openProviderPage("/provider-managers/v1/m1", {
     data,
     setup: (api) =>
       api.on("DELETE", /manager-memberships\/m1$/, () => {
@@ -388,7 +455,7 @@ test("removing one manager's access from their record needs their email", async 
 });
 
 test("a confirmation edited away after enabling submit is not sent", async () => {
-  const { api } = await openProvider("/provider-managers/v1/m1");
+  const { api } = await openProviderPage("/provider-managers/v1/m1");
   const button = () =>
     $("[data-revoke-provider-devices] button[type='submit']");
   await fillIn(
@@ -424,7 +491,7 @@ test("the provider manager directory lists, searches and links managers", async 
       status: "active",
     },
   );
-  const { api } = await openProvider("/provider-managers", {
+  const { api } = await openManagerDirectory("/provider-managers", {
     data,
     setup: (api) =>
       api.on("GET", /^providers(\?|$)/, (request) => ({
@@ -455,10 +522,10 @@ test("the provider manager directory lists, searches and links managers", async 
   assert.ok(pageText().includes(t("admin.providerManagers.none")));
 });
 
-test("a compliance manager cannot open provider manager pages", async () => {
-  await openProvider("/provider-managers", { role: "compliance-manager" });
-  assert.equal(url(), "/sites");
-  await routeTo("/provider-managers/v1/m1");
+test("a compliance manager cannot open the provider manager list", async () => {
+  await openManagerDirectory("/provider-managers", {
+    role: "compliance-manager",
+  });
   assert.equal(url(), "/sites");
 });
 
@@ -470,7 +537,7 @@ test("a directory of one manager counts one, and a sparse reply adds none", asyn
     name: "Third Provider",
     status: "active",
   });
-  await openProvider("/provider-managers", {
+  await openManagerDirectory("/provider-managers", {
     data,
     setup: (api) => {
       api.on("GET", /^providers\/v3\/manager-memberships$/, { json: {} });
@@ -486,17 +553,64 @@ test("a directory of one manager counts one, and a sparse reply adds none", asyn
 
 test("a provider read that finishes after leaving is not shown", async () => {
   const held = gate();
-  const { api } = await openProvider("/providers/v1", {
+  // Opened on another provider first, since mountPage() waits for the first read.
+  const { api } = await openProviderPage("/providers/v2", {
     setup: (api) =>
       api.on("GET", /^providers\/v1$/, async () => {
         await held.promise;
         return undefined;
       }),
   });
+  await routeTo("/providers/v1");
   assert.equal(api.calls("GET", /^providers\/v1$/).length, 1);
   await routeTo("/providers/v2");
   assert.equal($("#provider-title").textContent.trim(), "Second Provider");
   held.release();
   await settle();
   assert.equal($("#provider-title").textContent.trim(), "Second Provider");
+});
+
+/**
+ * Call after the redraws, since each render() replaces the dialog element.
+ * @param {any} page
+ */
+function countManagerDialogOpens(page) {
+  const opens = { count: 0 };
+  page.querySelector("#add-provider-manager-dialog").showModal = () =>
+    (opens.count += 1);
+  return opens;
+}
+
+test("the add-manager button still opens its dialog after the page redraws", async () => {
+  const { page } = await openProviderPage("/providers/v1");
+  page.render();
+  page.render();
+  page.render();
+  await click("#add-provider-manager");
+  assert.equal($("#add-provider-manager-dialog").open, true);
+});
+
+test("after several redraws one click opens the add-manager dialog once", async () => {
+  const { page } = await openProviderPage("/providers/v1");
+  page.render();
+  page.render();
+  const opens = countManagerDialogOpens(page);
+  await click("#add-provider-manager");
+  assert.equal(opens.count, 1);
+});
+
+test("a removed Provider page no longer answers its controls", async () => {
+  const { page } = await openProviderPage("/providers/v1");
+  const opens = countManagerDialogOpens(page);
+  const button = $("#add-provider-manager");
+  page.remove();
+  await click(button);
+  assert.equal(opens.count, 0);
+});
+
+test("a Provider page left for another route draws nothing", async () => {
+  const { page } = await openProviderPage("/providers/v1");
+  await routeTo("/sites");
+  page.render();
+  assert.equal(page.innerHTML, "");
 });

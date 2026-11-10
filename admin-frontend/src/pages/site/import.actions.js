@@ -1,17 +1,18 @@
-// main.js adds these to AdminApp, so they can use this.state and render().
-import { adminCatalog } from "../../admin-catalog.js";
+// Site import actions, mixed into <admin-site-import-page> so tests can mount it alone.
 import { actionFeedback, notifyAdmin } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
-import { currentRoute } from "../../router.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 
 export const siteImportActions = {
+  /**
+   * Read the import in the URL and past imports; false when open() or leave() ran again first.
+   * @returns {Promise<boolean>}
+   */
   async openSiteImport() {
-    let path = location.pathname + location.search;
-    if (this.state.importBusy) {
-      this.render();
-      return;
-    }
+    const visit = this.visit;
+    // A running apply keeps its own state, so a return only redraws it.
+    this.focusHeading = !this.state.importBusy;
+    if (this.state.importBusy) return true;
     const importId = new URLSearchParams(window.location.search).get(
       "importId",
     );
@@ -24,7 +25,7 @@ export const siteImportActions = {
     if (importId && this.state.importPreview?.importId !== importId) {
       this.state.importNotice = null;
       const result = await adminApi.getSiteImport(importId);
-      if (location.pathname + location.search !== path) return;
+      if (visit !== this.visit) return false;
       if (result.import.status === "complete") {
         this.state.importPreview = {
           importId,
@@ -55,13 +56,9 @@ export const siteImportActions = {
     const history = await adminApi
       .listSiteImports()
       .catch(() => ({ imports: [] }));
-    if (location.pathname + location.search !== path) return;
+    if (visit !== this.visit) return false;
     this.state.importHistory = history.imports || [];
-    this.state.provider = null;
-    this.state.site = null;
-    this.state.siteManager = null;
-    this.render();
-    queueMicrotask(() => this.querySelector("h1")?.focus());
+    return true;
   },
   async previewSiteImport(form) {
     const input = /** @type {HTMLInputElement | null} */ (
@@ -70,15 +67,19 @@ export const siteImportActions = {
     const file = input?.files?.[0];
     if (!file) return;
     if (file.size > 1024 * 1024) throw new Error("invalid_file_size");
+    const visit = this.visit;
     this.state.importBusy = true;
-    this.state.error = "";
+    this.clearPageError();
     this.state.importNotice = null;
     this.render();
     try {
-      this.state.importPreview = await adminApi.previewSiteImport(
+      const importPreview = await adminApi.previewSiteImport(
         file.name,
         await file.text(),
       );
+      // Once the user leaves, the address belongs to the page they went to.
+      if (visit !== this.visit) return;
+      this.state.importPreview = importPreview;
       this.state.importResult = null;
       this.state.importApplyKey = crypto.randomUUID();
       sessionStorage.setItem(
@@ -92,7 +93,7 @@ export const siteImportActions = {
       );
     } finally {
       this.state.importBusy = false;
-      this.render();
+      if (visit === this.visit) this.render();
     }
   },
   async applySiteImport() {
@@ -169,8 +170,8 @@ export const siteImportActions = {
           } catch {
             notifyAdmin("admin.import.historyRefreshFailed", "info");
           }
-          adminCatalog.invalidate();
-          if (currentRoute().name === "site-import")
+          this.catalog.invalidate();
+          if (this.showing)
             window.history.replaceState(
               {},
               "",
@@ -179,7 +180,7 @@ export const siteImportActions = {
         }
       } finally {
         this.state.importBusy = false;
-        if (currentRoute().name === "site-import") this.render();
+        if (this.showing) this.render();
       }
     } catch (error) {
       feedback.failure(error);
@@ -194,7 +195,7 @@ export const siteImportActions = {
     this.state.importNotice = null;
     this.state.importApplyKey = "";
     this.state.importBusy = false;
-    this.state.error = "";
+    this.clearPageError();
     window.history.replaceState({}, "", "/sites/import");
     this.render();
     queueMicrotask(() =>

@@ -20,7 +20,7 @@ export function newProviderView() {
   return `<section class="creation-page" aria-labelledby="new-provider-title">
     <a href="${inSiteFlow ? "/sites/new" : "/providers"}" data-route class="site-back-link"><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${inSiteFlow ? "Add new site" : "Providers"}</a>
     <div><h1 id="new-provider-title" tabindex="-1">Add new provider</h1><p class="muted">Create the provider record. ${inSiteFlow ? "You’ll return to the new Site flow afterward." : ""}</p></div>
-    <form id="provider-form" class="site-details-form">
+    <form id="provider-form" data-new-provider-form class="site-details-form">
       ${formInput("provider-name", "Provider name", "", { required: true, autocomplete: "organization" })}
       <button class="btn-primary" type="submit">Add provider</button>
     </form>
@@ -61,7 +61,7 @@ export function providerView(state) {
           ? providerAccessView(state)
           : ""
         : `
-    <form id="provider-details-form" class="site-details-form" data-dirty-form>
+    <form id="provider-details-form" data-provider-details-form class="site-details-form" data-dirty-form>
       ${formInput("provider-name", "Provider name", provider.name, { required: true, autocomplete: "organization" })}
       <button class="btn-primary" type="submit" data-save-button disabled>Save changes</button>
     </form>
@@ -73,7 +73,7 @@ export function providerView(state) {
         <a class="btn-link" href="/programs/new?providerId=${encodeURIComponent(provider.providerId)}&returnTo=provider" data-route>Create a new program</a>
       </div>
       ${linkedPrograms.length ? `<ul class="site-directory-list">${linkedPrograms.map((program) => `<li><a class="site-directory-row" href="/programs/${encodeURIComponent(program.programId)}" data-route><span class="site-directory-row__text"><strong>${escapeHtml(program.name)}</strong><span>Program</span></span><span class="site-directory-row__caret" aria-hidden="true">›</span></a></li>`).join("")}</ul>` : '<p class="empty-state">No programs are linked to this provider.</p>'}
-      <form id="provider-program-form" class="inline-form">
+      <form id="provider-program-form" data-provider-program-form class="inline-form">
         <wa-select name="program-id" label="Add program" required placeholder="Choose a program" ${availablePrograms.length ? "" : "disabled"}>
           ${availablePrograms.map((program) => `<wa-option value="${escapeHtml(program.programId)}">${escapeHtml(program.name)}</wa-option>`).join("")}
         </wa-select>
@@ -92,7 +92,7 @@ export function providerView(state) {
 /** @param {AdminState} state */
 function providerManagerPanel(state) {
   return `<section class="subsection" aria-labelledby="provider-managers-title">
-    <div class="panel__head"><h2 id="provider-managers-title">${escapeHtml(t("admin.providerManagers.title"))}</h2><button class="btn-primary" id="add-provider-manager" type="button" aria-haspopup="dialog">${escapeHtml(t("admin.providers.addManager"))}</button></div>
+    <div class="panel__head"><h2 id="provider-managers-title">${escapeHtml(t("admin.providerManagers.title"))}</h2><button class="btn-primary" id="add-provider-manager" data-add-provider-manager type="button" aria-haspopup="dialog">${escapeHtml(t("admin.providers.addManager"))}</button></div>
     <p class="muted">${escapeHtml(t("admin.enrollment.providerDefinition"))}</p>
     ${state.providerManagers
       .filter((manager) => manager.status === "active")
@@ -233,7 +233,7 @@ function providerManagerEnrollmentList(enrollments, managers) {
 
 /** @param {string} providerName */
 function deactivateProviderDialog(providerName) {
-  return `<dialog id="deactivate-provider-dialog" class="places-modal" aria-labelledby="deactivate-provider-title" aria-describedby="deactivate-provider-copy">
+  return `<dialog id="deactivate-provider-dialog" data-deactivate-provider-dialog class="places-modal" aria-labelledby="deactivate-provider-title" aria-describedby="deactivate-provider-copy">
     <form class="places-modal__card" method="dialog">
       <div class="places-modal__copy">
         <h2 class="places-modal__title" id="deactivate-provider-title">Deactivate ${escapeHtml(providerName)}?</h2>
