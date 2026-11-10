@@ -2,7 +2,7 @@
 // Site manager controls for the signed-in role.
 
 /**
- * @typedef {import("./main.js").AdminState} AdminState
+ * @typedef {import("./admin-types.js").AdminState} AdminState
  */
 
 /** @param {AdminState} state */

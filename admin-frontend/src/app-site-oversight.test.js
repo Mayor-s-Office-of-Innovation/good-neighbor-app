@@ -14,7 +14,7 @@ import {
 } from "../test-support/admin-dom.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// pages/site/save-error-messages.js and main.js have no catalog key for this copy, so tests match their English.
+// pages/site/record.actions.js and save-error-messages.js have no catalog key for this copy, so tests match their English.
 const saveError = (form) => $(`${form} [data-form-save-error]`).textContent;
 
 const OVERSIGHT = "/sites/s1?section=oversight";
