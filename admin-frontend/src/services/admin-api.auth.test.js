@@ -1,6 +1,6 @@
+// @vitest-environment node
 import assert from "node:assert/strict";
-import test from "node:test";
-import { connectionSnapshot } from "../../../frontend/src/services/backend-health.js";
+import { test, vi } from "vitest";
 
 class MemoryStorage {
   values = new Map();
@@ -15,9 +15,8 @@ class MemoryStorage {
   }
 }
 
-let fixtureId = 0;
-async function fixture(t, options = {}) {
-  globalThis.window = {
+async function fixture(options = {}) {
+  vi.stubGlobal("window", {
     GOOD_NEIGHBOR_ADMIN_CONFIG: {
       cognitoDomain: "https://login.example.test",
       clientId: "admin-client",
@@ -27,23 +26,23 @@ async function fixture(t, options = {}) {
         : "https://admin.example.test",
       localDebugAdmin: options.debug || false,
     },
-  };
-  globalThis.sessionStorage = new MemoryStorage();
-  globalThis.localStorage = new MemoryStorage();
+  });
+  vi.stubGlobal("sessionStorage", new MemoryStorage());
+  vi.stubGlobal("localStorage", new MemoryStorage());
   const redirects = [];
   let redirected;
   const navigation = new Promise((resolve) => {
     redirected = resolve;
   });
-  globalThis.location = {
+  vi.stubGlobal("location", {
     hostname: "localhost",
     assign(url) {
       redirects.push(url);
       redirected();
     },
-  };
+  });
   const calls = [];
-  t.mock.method(globalThis, "fetch", async (url, init) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
     calls.push({ url, init });
     if (options.networkError) throw new TypeError("offline");
     if (options.responseBody !== undefined)
@@ -59,8 +58,13 @@ async function fixture(t, options = {}) {
       blob: async () => "csv",
     };
   });
-  const { adminApi } = await import(`./admin-api.js?auth-test=${++fixtureId}`);
-  return { adminApi, redirects, navigation, calls };
+  // A fresh backend-health.js too: an earlier test's disconnect must not carry over.
+  vi.resetModules();
+  const { adminApi } = await import("./admin-api.js");
+  const { connectionSnapshot } = await import(
+    "../../../frontend/src/services/backend-health.js"
+  );
+  return { adminApi, connectionSnapshot, redirects, navigation, calls };
 }
 
 function saveSession({ expired = false, accessExpired = false } = {}) {
@@ -85,10 +89,10 @@ for (const mode of [
   test(
     `redirects ${mode} to login once without completing failed operations`,
     { timeout: 2000 },
-    async (t) => {
+    async () => {
       const rejectedRefresh = mode === "refresh-rejected";
       const api401 = mode.endsWith("401");
-      const f = await fixture(t, {
+      const f = await fixture({
         status: rejectedRefresh ? 400 : api401 ? 401 : 200,
         error: rejectedRefresh ? "invalid_grant" : "unauthorized",
       });
@@ -144,8 +148,8 @@ for (const mode of [
 }
 
 for (const status of [403, 429, 500]) {
-  test(`does not redirect a ${status} response`, async (t) => {
-    const f = await fixture(t, { status });
+  test(`does not redirect a ${status} response`, async () => {
+    const f = await fixture({ status });
     saveSession();
     await assert.rejects(f.adminApi.getSession(), { message: "admin_error" });
     assert.equal(f.redirects.length, 0);
@@ -164,10 +168,10 @@ for (const [status, responseBody, code] of [
   ],
   [403, "null", "request_blocked"],
 ]) {
-  test(`import rejection ${status} (${responseBody}) keeps connectivity and session`, async (t) => {
-    const f = await fixture(t, { status, responseBody });
+  test(`import rejection ${status} (${responseBody}) keeps connectivity and session`, async () => {
+    const f = await fixture({ status, responseBody });
     saveSession();
-    assert.equal(connectionSnapshot().disconnected, false);
+    assert.equal(f.connectionSnapshot().disconnected, false);
     await assert.rejects(
       f.adminApi.previewSiteImport("sites.csv", "synthetic"),
       {
@@ -175,23 +179,23 @@ for (const [status, responseBody, code] of [
         status,
       },
     );
-    assert.equal(connectionSnapshot().disconnected, false);
+    assert.equal(f.connectionSnapshot().disconnected, false);
     assert.equal(f.redirects.length, 0);
     assert.ok(localStorage.getItem("good-neighbor-admin-session"));
     assert.equal(f.calls.length, 1);
   });
 }
 
-test("transient refresh failures retain the session and do not redirect", async (t) => {
-  const f = await fixture(t, { networkError: true });
+test("transient refresh failures retain the session and do not redirect", async () => {
+  const f = await fixture({ networkError: true });
   saveSession({ accessExpired: true });
   await assert.rejects(f.adminApi.getSession(), /offline/);
   assert.equal(f.redirects.length, 0);
   assert.ok(localStorage.getItem("good-neighbor-admin-session"));
 });
 
-test("local debug access works without Cognito tokens", async (t) => {
-  const f = await fixture(t, { debug: true });
+test("local debug access works without Cognito tokens", async () => {
+  const f = await fixture({ debug: true });
   await f.adminApi.getSession();
   assert.equal(f.redirects.length, 0);
   assert.equal(
@@ -200,8 +204,8 @@ test("local debug access works without Cognito tokens", async (t) => {
   );
 });
 
-test("exposes a throttle cooldown without retrying or redirecting", async (t) => {
-  const f = await fixture(t, { status: 429, retryAfter: "300" });
+test("exposes a throttle cooldown without retrying or redirecting", async () => {
+  const f = await fixture({ status: 429, retryAfter: "300" });
   saveSession();
   await assert.rejects(f.adminApi.getSession(), {
     status: 429,

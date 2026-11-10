@@ -1,5 +1,6 @@
+// @vitest-environment node
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test, vi } from "vitest";
 import { phoneExtensionField } from "./phone-extension.js";
 
 test("create and empty edit fields hide extension until requested", () => {
@@ -26,7 +27,7 @@ test("existing extensions are visible without requesting them", () => {
   assert.doesNotMatch(html, /data-phone-extension hidden/);
 });
 
-test("removing an extension clears its value, marks the form changed, and allows adding it again", async (t) => {
+test("removing an extension clears its value, marks the form changed, and allows adding it again", async () => {
   const { bindPhoneExtensions } = await import("./phone-extension.js");
   class Element {
     hidden = false;
@@ -42,12 +43,7 @@ test("removing an extension clears its value, marks the form changed, and allows
       this.focused = true;
     }
   }
-  const original = globalThis.HTMLElement;
-  globalThis.HTMLElement = Element;
-  t.after(() => {
-    if (original) globalThis.HTMLElement = original;
-    else delete globalThis.HTMLElement;
-  });
+  vi.stubGlobal("HTMLElement", Element);
   const add = new Element(),
     remove = new Element(),
     field = new Element();

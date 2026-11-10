@@ -198,18 +198,55 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  e2e-admin:
+    name: E2E admin dashboard
+    runs-on: ubuntu-latest
+    container:
+      # Keep the image version aligned with @playwright/test in e2e/package.json.
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Rewrite git protocol for npm git deps
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
+      - name: Install
+        run: npm ci
+
+      # Runs against a mocked /admin/v1, so it needs no emulator stack.
+      - name: Test admin dashboard flows
+        run: npm run test:admin:e2e
+
+      - name: Upload admin test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-admin-results
+          path: e2e/test-results/admin-dashboard/
+          retention-days: 7
+          if-no-files-found: ignore
+
   e2e:
     # Preserve the required check name while covering every shard and UI suite.
     name: E2E (Playwright)
     if: always()
-    needs: [e2e-main, e2e-ui]
+    needs: [e2e-main, e2e-ui, e2e-admin]
     runs-on: ubuntu-latest
     steps:
       - name: Require all E2E jobs to pass
         env:
           MAIN_RESULT: ${{ needs.e2e-main.result }}
           UI_RESULT: ${{ needs.e2e-ui.result }}
-        run: test "$MAIN_RESULT" = success && test "$UI_RESULT" = success
+          ADMIN_RESULT: ${{ needs.e2e-admin.result }}
+        run: test "$MAIN_RESULT" = success && test "$UI_RESULT" = success && test "$ADMIN_RESULT" = success
 
   perf:
     name: Performance budgets
