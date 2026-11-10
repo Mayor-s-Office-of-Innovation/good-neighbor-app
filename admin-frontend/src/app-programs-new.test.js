@@ -14,7 +14,7 @@ import {
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { providerData } from "../../e2e/admin-tests/providers-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
-import { adminCatalog, createAdminCatalog } from "./admin-catalog.js";
+import { createAdminCatalog } from "./admin-catalog.js";
 import { currentRoute } from "./router.js";
 import "./pages/program/program-page.js";
 
@@ -75,11 +75,10 @@ test("a new Program asks only for a name and an active provider", async () => {
   });
 });
 
-test("the mounted Program page lists a new Program in its own catalog, not adminCatalog", async () => {
+test("the mounted Program page lists a new Program in its own catalog", async () => {
   const { catalog } = await openNewProgramPage("/programs/new?providerId=v1");
   await createProgram("Own Catalog");
   assert.ok(catalog.programs.some((p) => p.programId === "v1-own-catalog"));
-  assert.deepEqual(adminCatalog.programs, []);
 });
 
 test("a page mount given a catalog shows that catalog's providers", async () => {
@@ -192,4 +191,27 @@ test("a new Program makes the manager directory reload", async () => {
   catalog.markManagersLoaded(catalog.managersVersion);
   await createProgram("Harbor Outreach");
   assert.equal(catalog.managersLoaded, false);
+});
+
+test("a search in the new Program address still reads the manager directory", async () => {
+  // A ?q= in the URL preloads the manager directory, so its reads are this page's calls too.
+  const { api, catalog } = await openNewProgramPage("/programs/new?q=Alex", {
+    calls: [
+      /^GET programs\/[^/]+$/,
+      /^GET sites\/[^/]+\/manager-memberships$/,
+      /^GET sites\/[^/]+\?roster=1$/,
+      // The manager read needs the Site list first.
+      /^GET (providers\?directory=1|programs|oversight-options|program-managers)$/,
+      /^GET people$/,
+    ],
+  });
+  assert.ok(focused("#new-program-title"));
+  assert.equal(api.calls("GET", /^people$/).length, 1);
+  // Without the Site list first, the search would show Alex with no Sites.
+  assert.deepEqual(
+    catalog.managers.map((/** @type {any} */ manager) =>
+      manager.assignedSites.map((/** @type {any} */ site) => site.siteId),
+    ),
+    [["s1"]],
+  );
 });

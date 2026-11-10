@@ -3,21 +3,22 @@
 import { START_UP_LISTS } from "../../admin-catalog.js";
 import { mixActions } from "../../mix-actions.js";
 import { visibleRecords } from "../../record-navigation.js";
+import { hasDirtyForm } from "../../form-state.js";
 import { siteManagerEditorView } from "./manager.templates.js";
 import { applySiteCapabilities } from "./site-capabilities.js";
 import { listenForControls, pageState } from "../page-events.js";
+import { confirmDiscardChanges } from "../shared.templates.js";
 import { pageMessages } from "./page-support.js";
 import { prepareSiteManager, siteManagerEvents } from "./manager.bindings.js";
-import {
-  siteManagerActions,
-  siteManagerRecordActions,
-} from "./manager.actions.js";
+import { siteManagerRecordActions } from "./manager.actions.js";
+import { loadManagers } from "./manager-directory-read.js";
+import { appMessageError } from "../../admin-error-messages.js";
 
 /**
  * @typedef {{ name: string, id?: string }} Route
  * @typedef {import("../../admin-catalog.js").AdminCatalog} AdminCatalog
  * @typedef {import("../../admin-session.js").AdminSession} AdminSession
- * @typedef {AdminSiteManagerPage & typeof pageMessages & typeof siteManagerRecordActions & Pick<typeof siteManagerActions, "fetchSiteManagers"> & { ownManagerRead: typeof siteManagerActions.loadSiteManagers }} ManagerPageElement
+ * @typedef {AdminSiteManagerPage & typeof pageMessages & typeof siteManagerRecordActions} ManagerPageElement
  */
 
 export class AdminSiteManagerPage extends HTMLElement {
@@ -28,11 +29,6 @@ export class AdminSiteManagerPage extends HTMLElement {
       siteSaveMessage: "",
       siteSaveError: "",
     });
-    /**
-     * <admin-app> sets this to the managers directory's read, so a visit never reads twice.
-     * @type {((force?: boolean) => Promise<void>) | null}
-     */
-    this.loadManagers = null;
     // Bumped by open() and leave(), so a read or save from an earlier visit stops there.
     this.visit = 0;
     // The visit render() last drew, so a reattach on the same visit keeps the form.
@@ -47,12 +43,9 @@ export class AdminSiteManagerPage extends HTMLElement {
     this.session = /** @type {any} */ (null);
   }
 
-  /** @param {boolean} [force] */
+  /** The directory page shares this manager read, so a visit never reads it twice. @param {boolean} [force] */
   loadSiteManagers(force) {
-    const page = /** @type {ManagerPageElement} */ (this);
-    return this.loadManagers
-      ? this.loadManagers(force)
-      : page.ownManagerRead(force);
+    return loadManagers(this.catalog, force);
   }
 
   connectedCallback() {
@@ -63,7 +56,7 @@ export class AdminSiteManagerPage extends HTMLElement {
       Object.keys(siteManagerEvents),
       true,
     );
-    // <admin-app>'s render() reattaches this page; redrawing it then would reset unsaved form edits.
+    // A shell redraw, such as sign-in hiding this page, reattaches it; a redraw would reset unsaved edits.
     if (this.renderedVisit !== this.visit) this.render();
   }
 
@@ -92,7 +85,7 @@ export class AdminSiteManagerPage extends HTMLElement {
     return true;
   }
 
-  /** <admin-app> calls this when the user goes to a route this page doesn't show. */
+  /** Called by <admin-app> on route changes and when it drops pages. */
   leave() {
     this.visit++;
     this.route = null;
@@ -113,11 +106,21 @@ export class AdminSiteManagerPage extends HTMLElement {
     return visibleRecords(this.state, route).siteManager;
   }
 
+  /** <admin-app> asks this before any route change, to warn before edits are lost. */
+  hasUnsavedChanges() {
+    return hasDirtyForm(this);
+  }
+
+  /** Ask in this page's own dialog whether to drop its edits; true when the user discards. */
+  confirmLeave() {
+    return confirmDiscardChanges(this);
+  }
+
   focusOnOpen() {
     if (this.route?.name !== "manager") return;
     if (this.managerMissing) {
       this.managerMissing = false;
-      this.reportError(new Error("Site manager not found."));
+      this.reportError(appMessageError("Site manager not found."));
     }
     queueMicrotask(() => this.querySelector("h1")?.focus());
   }
@@ -137,10 +140,6 @@ export class AdminSiteManagerPage extends HTMLElement {
   }
 }
 
-mixActions(AdminSiteManagerPage, pageMessages, siteManagerRecordActions, {
-  // Used when no <admin-app> sets loadManagers, as in page tests.
-  ownManagerRead: siteManagerActions.loadSiteManagers,
-  fetchSiteManagers: siteManagerActions.fetchSiteManagers,
-});
+mixActions(AdminSiteManagerPage, pageMessages, siteManagerRecordActions);
 
 customElements.define("admin-site-manager-page", AdminSiteManagerPage);

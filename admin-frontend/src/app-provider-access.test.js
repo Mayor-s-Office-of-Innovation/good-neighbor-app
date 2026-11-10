@@ -219,8 +219,7 @@ test("other invitation failures show their error", async () => {
     setup: (api) => api.fail("POST", grants, 500, "grant_store_down"),
   });
   await click(issueButton("link"));
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "grant_store_down");
+  assert.equal(pageError(), t("admin.toast.requestFailed"));
 });
 
 test("an invitation whose refresh lands after leaving the provider is not redrawn", async () => {
@@ -270,8 +269,7 @@ test("a failed cancellation shows the error", async () => {
       ),
   });
   await click("[data-cancel-provider-manager-grant='g1']");
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "provider_manager_grant_conflict");
+  assert.equal(pageError(), t("admin.enrollment.conflict"));
 });
 
 test("revoking one enrolled device refreshes the device list", async () => {
@@ -300,8 +298,7 @@ test("a failed device revocation shows the error", async () => {
       ),
   });
   await click("[data-revoke-provider-enrollment='e2']");
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "revoke_failed");
+  assert.equal(pageError(), t("admin.toast.requestFailed"));
 });
 
 test("removing all provider access revokes every live device and skips ones already gone", async () => {

@@ -3,12 +3,17 @@
 import { START_UP_LISTS } from "../../admin-catalog.js";
 import { mixActions } from "../../mix-actions.js";
 import { escapeHtml, formatTimestamp } from "../../dom.js";
+import { hasDirtyForm, syncSiteDetailsForm } from "../../form-state.js";
 import {
   bindEnrollmentCodeExpiry,
   clearEnrollmentCodeView,
 } from "../../enrollment-code-view.js";
 import { syncEnrollmentRequests } from "../../enrollment-request.js";
-import { discardChangesDialog, entityBreadcrumb } from "../shared.templates.js";
+import {
+  confirmDiscardChanges,
+  discardChangesDialog,
+  entityBreadcrumb,
+} from "../shared.templates.js";
 import { siteSectionNav, siteSectionView } from "./record.templates.js";
 import { bindAddressLookup } from "./address-lookup.js";
 import { bindManagerAssignmentSearch } from "./manager-assignment-search.js";
@@ -34,10 +39,8 @@ import { currentSiteSection, siteRecordActions } from "./record.actions.js";
 import { siteOversightActions } from "./oversight.actions.js";
 import { siteComplianceActions } from "./compliance.actions.js";
 import { siteAccessActions } from "./access.actions.js";
-import {
-  enrollmentCodeActions,
-  siteManagerAccessActions,
-} from "./manager.actions.js";
+import { siteManagerAccessActions } from "./manager.actions.js";
+import { enrollmentCodeActions } from "../enrollment-code.actions.js";
 
 /**
  * @typedef {{ name: string, id?: string }} Route
@@ -76,10 +79,6 @@ export class AdminSitePage extends HTMLElement {
       perimeterMessage: "",
       perimeterError: "",
       revocationMessage: "",
-      physicalDeviceRevocationPreview: null,
-      emergencyRevocationSites: [],
-      emergencyRevocationPreview: null,
-      suspensionTarget: null,
       managerMembershipRemovalTarget: null,
     });
     // Bumped by open() and leave(), so a read or save from an earlier visit stops there.
@@ -103,14 +102,14 @@ export class AdminSitePage extends HTMLElement {
       true,
     );
     window.addEventListener("pagehide", this.clearDisplayedEnrollmentCodes);
-    // <admin-app>'s render() reattaches this page; redrawing it then would reset unsaved form edits.
+    // A shell redraw reattaches this page on the same visit; redrawing would lose unsaved edits.
     if (this.renderedVisit !== this.visit) this.render();
   }
 
   disconnectedCallback() {
     this.stopListening?.();
     window.removeEventListener("pagehide", this.clearDisplayedEnrollmentCodes);
-    // <admin-app>'s render() reattaches this page at once; only a real removal stops its work.
+    // A shell redraw reattaches this page at once; only a real removal stops its work.
     queueMicrotask(() => {
       if (this.isConnected) return;
       this.deviceRevocationController?.abort();
@@ -141,6 +140,19 @@ export class AdminSitePage extends HTMLElement {
     this.endVisit();
     this.state.site = null;
     this.route = null;
+  }
+
+  /** <admin-app> asks this before any route change, to warn before edits are lost. */
+  hasUnsavedChanges() {
+    const details = this.querySelector("#site-details-form");
+    // syncSiteDetailsForm() sets data-is-dirty from the edited sections, so read it fresh.
+    if (details instanceof HTMLFormElement) syncSiteDetailsForm(details);
+    return hasDirtyForm(this);
+  }
+
+  /** Ask in this page's own dialog whether to drop its edits; true when the user discards. */
+  confirmLeave() {
+    return confirmDiscardChanges(this);
   }
 
   /**

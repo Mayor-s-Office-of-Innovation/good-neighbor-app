@@ -1,4 +1,4 @@
-// Types shared by main.js and the files in pages/, so pages/ files never import main.js.
+// Types shared across admin-frontend/src, so pages/ files never import admin-app.js for them.
 
 /**
  * @typedef {ReturnType<typeof import("./config.js").getAdminConfig>} AdminConfig
@@ -41,10 +41,6 @@
  * @property {string} perimeterMessage
  * @property {string} perimeterError
  * @property {string} revocationMessage
- * @property {any | null} physicalDeviceRevocationPreview
- * @property {any[]} emergencyRevocationSites
- * @property {any | null} emergencyRevocationPreview
- * @property {any | null} suspensionTarget
  * @property {any | null} managerMembershipRemovalTarget
  */
 
@@ -65,36 +61,6 @@
 
 /**
  * @typedef {AdminOwnState & Readonly<AdminSharedState>} AdminState
- */
-
-/**
- * Keeps only an object literal's real keys, so an editor flags a misspelled
- * app.method(). No npm script type-checks admin-frontend yet.
- * @template T
- * @typedef {{ [K in keyof T]: T[K] }} Closed
- */
-
-/**
- * @typedef {Closed<typeof import("./pages/admin-user/admin-user.actions.js").adminUserActions>
- *   & Closed<typeof import("./pages/site/manager.actions.js").siteManagerActions>
- *   & Closed<typeof import("./pages/site/new.actions.js").newSiteActions>
- *   & Closed<typeof import("./pages/site/import.actions.js").siteImportActions>
- *   & Closed<typeof import("./pages/provider/provider.actions.js").providerActions>
- *   & Closed<typeof import("./pages/site/oversight.actions.js").siteOversightActions>
- *   & Closed<typeof import("./pages/site/record.actions.js").siteRecordActions>
- *   & Closed<typeof import("./pages/site/compliance.actions.js").siteComplianceActions>
- *   & Closed<typeof import("./pages/site/access.actions.js").siteAccessActions>
- *   & Closed<typeof import("./pages/directory/directory.actions.js").directoryActions>} AdminActions
- * @typedef {object} AdminShell
- * @property {AdminState} state
- * @property {(loading?: boolean) => void} render
- * @property {() => Promise<void>} openRoute
- * @property {{ schedule: () => void, cancel: () => void }} [directorySearchDebounce]
- * @property {() => void} [managerSearchCleanup]
- * @property {string | null} [letterResendPending]
- * @property {string} [pendingSiteDestination]
- * @property {string} [lastRenderedPath]
- * @typedef {HTMLElement & AdminShell & AdminActions} AdminAppElement
  */
 
 export {};

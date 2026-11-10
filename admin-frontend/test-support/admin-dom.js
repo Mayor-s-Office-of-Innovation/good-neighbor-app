@@ -9,6 +9,8 @@ import {
 } from "../../e2e/admin-tests/admin-mock.js";
 import { getToasts, onToastsChange } from "../../frontend/src/state/toasts.js";
 import { quietInspect } from "./quiet-inspect.js";
+import { errorLineText } from "../src/admin-error-messages.js";
+import { t } from "../../frontend/src/i18n/i18n.js";
 
 /**
  * @typedef {import("../src/admin-catalog.js").AdminCatalog} AdminCatalog
@@ -22,8 +24,7 @@ quietInspect(window);
 // rejection escapes the test that caused it instead of failing that test.
 window.happyDOM.settings.disableErrorCapturing = false;
 
-const FIELD_TAGS =
-  "wa-input,wa-select,wa-textarea,wa-number-input,wa-checkbox,wa-switch";
+const FIELD_TAGS = "wa-input,wa-select,wa-textarea,wa-number-input,wa-checkbox";
 
 /** A stand-in for Web Awesome's form controls: a value, a checked state and focus. */
 class FakeControl extends window.HTMLElement {
@@ -41,21 +42,17 @@ class FakeControl extends window.HTMLElement {
     if (this._value !== undefined) return this._value;
     if (this.localName === "wa-checkbox")
       return this.getAttribute("value") ?? "on";
-    const multiple = this.hasAttribute("multiple");
-    if (this.hasAttribute("value") || this.localName !== "wa-select") {
-      const value = this.getAttribute("value") ?? "";
-      return multiple ? value.split(" ").filter(Boolean) : value;
-    }
-    const chosen = [...this.querySelectorAll("wa-option")]
-      .filter((option) => option.selected)
-      .map((option) => option.getAttribute("value") ?? "");
-    return multiple ? chosen : (chosen[0] ?? "");
+    if (this.hasAttribute("value") || this.localName !== "wa-select")
+      return this.getAttribute("value") ?? "";
+    const chosen = [...this.querySelectorAll("wa-option")].find(
+      (option) => option.selected,
+    );
+    return chosen?.getAttribute("value") ?? "";
   }
   set value(next) {
     this._value = next;
-    const values = Array.isArray(next) ? next : [next];
     for (const option of this.querySelectorAll("wa-option"))
-      option.selected = values.includes(option.getAttribute("value") ?? "");
+      option.selected = (option.getAttribute("value") ?? "") === next;
   }
   get checked() {
     return this._checked ?? this.hasAttribute("checked");
@@ -94,7 +91,6 @@ class FakeControl extends window.HTMLElement {
   reportValidity() {
     return this.checkValidity();
   }
-  setCustomValidity() {}
 }
 // happy-dom has no prompt; each test answers confirm() itself.
 window.confirm = () => false;
@@ -129,8 +125,6 @@ class FormDataWithControls extends window.FormData {
       if (!control.name || control.hasAttribute("disabled")) continue;
       if (control.localName === "wa-checkbox") {
         if (control.checked) this.append(control.name, control.value);
-      } else if (Array.isArray(control.value)) {
-        for (const value of control.value) this.append(control.name, value);
       } else this.append(control.name, String(control.value ?? ""));
     }
   }
@@ -299,9 +293,6 @@ export async function teardown() {
     unfollow();
     current?.remove();
     current = null;
-    // Whole-app mounts fill the module-wide adminCatalog and adminSession, which outlive <admin-app>.
-    adminCatalog.clear();
-    adminSession.clear();
     // Toasts close first: clearing a timer from an earlier fake clock removes a live one.
     closeToasts();
     vi.useRealTimers();
@@ -353,30 +344,11 @@ export async function settle() {
     throw new Error("settle(): fetches kept starting for 400 turns");
 }
 
-/**
- * Wait for work settle() can't see, such as a digest off the event loop.
- * The deadline is wall-clock time, since the fake clock doesn't move it.
- * @param {() => unknown} predicate
- * @param {{ timeout?: number }} [options] milliseconds
- */
-export async function waitFor(predicate, { timeout = 1000 } = {}) {
-  const deadline = performance.now() + timeout;
-  while (!predicate()) {
-    if (performance.now() > deadline)
-      throw new Error(`waitFor(): condition still false after ${timeout} ms`);
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-}
-
-const { adminCatalog, createAdminCatalog, directorySites } = await import(
+const { createAdminCatalog, directorySites } = await import(
   "../src/admin-catalog.js"
 );
-const { adminSession, createAdminSession } = await import(
-  "../src/admin-session.js"
-);
+const { createAdminSession } = await import("../src/admin-session.js");
 const { currentRoute } = await import("../src/router.js");
-// Catches a page pushing to or splicing a shared list instead of calling adminCatalog.
-adminCatalog.freezeLists();
 document.body.append(document.createElement("app-toasts"));
 
 /** @type {any} */
@@ -482,7 +454,8 @@ export async function mountPage(tag, path, options) {
   current.session = session;
   // <admin-app> shows page-error events in its error line; with no app, the test reads or fails on them.
   current.addEventListener("page-error", (/** @type {any} */ event) => {
-    pageErrorLine = event.detail.message;
+    // The text <admin-app> would show, so pageError() reads the same with or without it.
+    pageErrorLine = errorLineText(event.detail, t);
     // Pages send an empty message to clear <admin-app>'s error line; it isn't an error.
     if (!event.detail.message) return;
     if (options.recordErrors) errors.push(event.detail.message);
@@ -558,8 +531,6 @@ export async function startMount(path, options) {
   pageErrorLine = "";
   current?.remove();
   closeToasts();
-  adminCatalog.clear();
-  adminSession.clear();
   const api = fakeAdminApi(
     { role: options.role, data: options.data || adminData() },
     settle,
@@ -576,9 +547,6 @@ export async function startMount(path, options) {
   };
   return api;
 }
-
-// CSS class: back links share the brand link's href and data-route.
-export const brandLink = "a.brand";
 
 /** @param {string} selector @returns {any} */
 export function $(selector) {
@@ -646,7 +614,7 @@ export function userEvent(type) {
 /**
  * Set a field's value and fire the events a user's typing fires.
  * @param {string | Element} target
- * @param {string | string[] | boolean} value
+ * @param {string | boolean} value
  */
 export async function fill(target, value) {
   const element = typeof target === "string" ? $(target) : target;
@@ -657,19 +625,6 @@ export async function fill(target, value) {
   else element.value = value;
   for (const type of ["input", "change"])
     element.dispatchEvent(userEvent(type));
-  await settle();
-}
-
-/** @param {string | Element} target @param {string} key */
-export async function press(target, key) {
-  const element = typeof target === "string" ? $(target) : target;
-  element.dispatchEvent(
-    new window.KeyboardEvent("keydown", {
-      key,
-      bubbles: true,
-      cancelable: true,
-    }),
-  );
   await settle();
 }
 
@@ -723,13 +678,6 @@ export function toastCount(fragment) {
     .length;
 }
 
-/** Text of every alert on the page, such as a failed action's notice. */
-export function alertText() {
-  return $$('[role="alert"]')
-    .map((alert) => alert.textContent.replace(/\s+/g, " ").trim())
-    .join(" ");
-}
-
 /** The page-level error banner's text, or "" when none shows. A page mounted alone has no banner, so its last error stands in. */
 export function pageError() {
   const banner = document.querySelector('#main-content > [role="alert"]');
@@ -740,7 +688,7 @@ export function pageError() {
       : pageErrorLine;
 }
 
-/** Move to a route the way main.js's router does, without a page load. @param {string} path */
+/** Move to a route the way router.js's navigate() does, without a page load. @param {string} path */
 export async function routeTo(path) {
   window.history.pushState({}, "", path);
   window.dispatchEvent(new window.PopStateEvent("popstate"));

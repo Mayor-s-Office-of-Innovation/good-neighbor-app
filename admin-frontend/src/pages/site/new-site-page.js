@@ -30,8 +30,6 @@ export class NewSitePage extends HTMLElement {
     // render() draws this route, not the URL path, so a late redraw shows the right page.
     /** @type {Route | null} */
     this.route = null;
-    /** Set by <admin-app>, which holds the Site manager read a new Site makes stale. */
-    this.dropManagerLoad = () => {};
   }
 
   connectedCallback() {
@@ -58,7 +56,7 @@ export class NewSitePage extends HTMLElement {
     return this.shows(route);
   }
 
-  /** <admin-app> calls this when the user goes to a route this page doesn't show. */
+  /** Called by <admin-app> on route changes and when it drops pages. */
   leave() {
     this.visit++;
     this.route = null;
@@ -91,7 +89,7 @@ export class NewSitePage extends HTMLElement {
     );
     // bindAddressLookup attaches to the new address fields after every render, as on the Site record.
     bindAddressLookup(this);
-    // Hide create links from anyone who can't create records, as <admin-app> does.
+    // Without createEntities the user can't save a new record, so don't offer one.
     if (this.session.capabilities.createEntities) return;
     this.querySelectorAll(
       'a[href="/sites/new"], a[href^="/providers/new"], a[href^="/programs/new"]',

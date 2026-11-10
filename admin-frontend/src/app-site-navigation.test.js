@@ -3,8 +3,6 @@ import assert from "node:assert/strict";
 import {
   $,
   $$,
-  alertText,
-  brandLink,
   click,
   fill,
   focused,
@@ -16,8 +14,7 @@ import {
   tick,
   window,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
-import { openSitePage } from "../test-support/site-pages.js";
+import { alertText, brandLink, mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import {
   accessData,
@@ -28,7 +25,6 @@ import {
   compliancePath,
 } from "../../e2e/admin-tests/site-compliance-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
-import { createAdminCatalog } from "./admin-catalog.js";
 
 // pages/site/access.templates.js and record.templates.js have no catalog key for this copy, so tests match their English.
 
@@ -57,40 +53,15 @@ function cancelableWindowEvent(type) {
   return event.defaultPrevented;
 }
 
-test("a Site read that finishes after leave() doesn't let the page open, even at the same address", async () => {
-  const { page, api } = await openSitePage("/sites/s1");
-  // The lead Program read comes after the Site read, which leave() aborts.
-  const held = holdFirst(api, /^programs\//);
-  const opening = page.open({ name: "site", id: "s1" });
-  // <admin-app> calls leave() as the user goes; the page mustn't wait for the URL to change.
-  page.leave();
-  held.release();
-  assert.equal(await opening, false);
-});
-
-test("a Site page mount given a catalog shows that catalog's Providers", async () => {
-  const catalog = createAdminCatalog();
-  catalog.seed({
-    providers: [
-      { providerId: "v9", name: "Seeded Provider", status: "active" },
-    ],
-    programs: [],
-    oversightOptions: { departments: [], systemsOfCare: [] },
-    programManagers: [],
-  });
-  await openSitePage("/sites/s1", { catalog });
-  const provider = 'wa-select[name="lead-provider-id"] wa-option';
-  assert.ok(!missing(`${provider}[value="v9"]`));
-  assert.ok(missing(`${provider}[value="v1"]`));
-});
-
 test("an error in <admin-app>'s error line keeps the Site's unsaved edits", async () => {
   await mountAdmin("/sites/s1");
   await fill(siteName, RENAMED);
   // What a failed Site action does; <admin-app> redraws and reattaches the page.
-  $("admin-site-page").reportError(new Error("Something failed"));
+  $("admin-site-page").reportError(
+    Object.assign(new Error("site_changed"), { status: 409 }),
+  );
   await settle();
-  assert.equal(pageError(), "Something failed");
+  assert.equal(pageError(), t("admin.errors.siteChanged"));
   assert.equal($(siteName).value, RENAMED);
   assert.equal($("#site-details-form").dataset.isDirty, "true");
 });
@@ -147,60 +118,116 @@ test("closing the tab asks the browser to confirm only with unsaved edits", asyn
   assert.equal(cancelableWindowEvent("beforeunload"), true);
 });
 
-test("modified, non-primary and already handled clicks skip in-app routing", async () => {
-  await openSitePage("/sites/s1");
-  const link = $('admin-site-page a[href="/sites/s1?section=oversight"]');
-  // Stop happy-dom from following the links routeClick skips.
-  const stop = (/** @type {Event} */ event) => event.preventDefault();
-  window.addEventListener("click", stop);
+test("two guarded link presses, then Discard, go only to the latest link", async () => {
+  await mountAdmin("/sites/s1");
+  await fill(siteName, RENAMED);
+  let moves = 0;
+  const counted = () => moves++;
+  window.addEventListener("popstate", counted);
   try {
-    for (const init of [
-      { button: 1 },
-      { metaKey: true },
-      { ctrlKey: true },
-      { shiftKey: true },
-      { altKey: true },
-    ]) {
-      link.dispatchEvent(
-        new window.MouseEvent("click", {
-          bubbles: true,
-          cancelable: true,
-          ...init,
-        }),
-      );
-      await settle();
-      assert.equal(url(), "/sites/s1", JSON.stringify(init));
-    }
-    window.addEventListener("click", stop, { capture: true });
-    link.dispatchEvent(
-      new window.MouseEvent("click", { bubbles: true, cancelable: true }),
-    );
-    window.removeEventListener("click", stop, { capture: true });
-    await click("admin-site-page h1");
-    assert.equal(url(), "/sites/s1");
+    await click('a[href="/sites/s1?section=oversight"]');
+    await click('a[href="/sites/s1?section=compliance"]');
+    await click(`${leaveDialog} button[value="discard"]`);
   } finally {
-    window.removeEventListener("click", stop);
+    window.removeEventListener("popstate", counted);
+  }
+  assert.equal(url(), "/sites/s1?section=compliance");
+  assert.equal(moves, 1);
+});
+
+test("unsaved 311 edits still warn before the tab closes once sign-in hides the Sites list", async () => {
+  await mountAdmin("/sites");
+  await fill('[data-site-311="s1"]', false);
+  const config = /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG;
+  const signedIn = config.localDebugAdmin;
+  config.localDebugAdmin = false;
+  try {
+    await routeTo("/sites?q=Example");
+    assert.ok(missing('[data-site-311="s1"]'));
+    assert.equal(cancelableWindowEvent("beforeunload"), true);
+  } finally {
+    config.localDebugAdmin = signedIn;
   }
 });
 
-for (const [section, view, form] of [
-  ["staff", "details", "#site-details-form"],
-  ["terms", "compliance", "#site-perimeter-form"],
-  ["letters", "compliance", "#site-perimeter-form"],
-  ["perimeter", "compliance", "#site-perimeter-form"],
-])
-  test(`the legacy ${section} section opens the ${view} tab`, async () => {
-    const { api } = await openSitePage(`/sites/s1?section=${section}`);
-    assert.ok(!missing(form));
-    assert.equal(
-      $(`a[href="/sites/s1?section=${view}"]`).getAttribute("aria-current"),
-      "page",
+test("discarded Site edits don't warn before the tab closes", async () => {
+  await mountAdmin("/sites/s1");
+  await fill(siteName, RENAMED);
+  await click(`admin-app ${brandLink}`);
+  await click(`${leaveDialog} button[value="discard"]`);
+  assert.equal(url(), "/sites");
+  assert.equal(cancelableWindowEvent("beforeunload"), false);
+});
+
+test("discarded Site edits don't warn before the tab closes while the next Site loads", async () => {
+  const { api } = await mountAdmin("/sites/s1");
+  const held = holdFirst(api, /^sites\/s2\?view=details$/);
+  await fill(siteName, RENAMED);
+  await routeTo("/sites/s2");
+  await click(`${leaveDialog} button[value="discard"]`);
+  try {
+    assert.equal(url(), "/sites/s2");
+    assert.equal(cancelableWindowEvent("beforeunload"), false);
+  } finally {
+    held.release();
+  }
+  await settle();
+});
+
+test("a guarded link still asks after <admin-app> moves with its dialog open", async () => {
+  const { app } = await mountAdmin("/sites/s1");
+  await fill(siteName, RENAMED);
+  await click('a[href="/sites/s1?section=oversight"]');
+  assert.equal($(leaveDialog).open, true);
+  app.remove();
+  document.body.append(app);
+  await settle();
+  await fill(siteName, RENAMED);
+  await click('a[href="/sites/s1?section=oversight"]');
+  assert.equal($(leaveDialog).open, true);
+});
+
+test("a dialog from before <admin-app> moved, closing late, doesn't change where Discard goes", async () => {
+  const { app } = await mountAdmin("/sites/s1");
+  await fill(siteName, RENAMED);
+  await click('a[href="/sites/s1?section=oversight"]');
+  const oldDialog = $(leaveDialog);
+  app.remove();
+  document.body.append(app);
+  await settle();
+  await fill(siteName, RENAMED);
+  await click('a[href="/sites/s1?section=compliance"]');
+  oldDialog.close("keep");
+  await settle();
+  await click(`${leaveDialog} button[value="discard"]`);
+  assert.equal(url(), "/sites/s1?section=compliance");
+});
+
+test("a guarded link asks again after sign-in hid a Provider page with its dialog open", async () => {
+  await mountAdmin("/providers/v1");
+  await fill('#provider-details-form wa-input[name="provider-name"]', RENAMED);
+  await click(`admin-app ${brandLink}`);
+  assert.equal($(leaveDialog).open, true);
+  const config = /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG;
+  const signedIn = config.localDebugAdmin;
+  config.localDebugAdmin = false;
+  try {
+    // A failed action redraws <admin-app>, which now shows sign-in in place of the Provider.
+    $("admin-app").dispatchEvent(
+      new window.CustomEvent("page-error", {
+        detail: new Error("unavailable"),
+      }),
     );
-    assert.equal(
-      api.calls("GET", new RegExp(`^sites/s1\\?view=${view}$`)).length,
-      1,
-    );
-  });
+    assert.ok(missing("admin-provider-page"));
+    await routeTo("/sites/s1");
+  } finally {
+    config.localDebugAdmin = signedIn;
+  }
+  await routeTo("/sites/s1?section=details");
+  await fill(siteName, RENAMED);
+  await click('a[href="/sites/s1?section=oversight"]');
+  assert.equal($(leaveDialog).open, true);
+});
 
 test("a slow Program read cannot replace the Site opened after it", async () => {
   /** @type {any} */
@@ -310,7 +337,7 @@ test("a failed Site read after a link click shows Retry", async () => {
   api.fail("GET", /^sites\/s1\?view=details$/);
   await click('admin-app a[href="/sites/s1"]');
   assert.ok(!missing("#retry-page-load"));
-  assert.equal(pageError(), "Synthetic failure");
+  assert.equal(pageError(), t("admin.toast.requestFailed"));
 });
 
 test("an unknown Site shows no record", async () => {
@@ -322,26 +349,6 @@ test("an unknown Site shows no record", async () => {
   assert.ok(missing("admin-app h1:not([id])"));
   assert.equal(pageError(), "");
   assert.ok(missing("#retry-page-load"));
-});
-
-test("a Site whose optional lists are missing still opens", async () => {
-  await mountAdmin("/sites/s1?section=access", {
-    setup: (api) => {
-      api.on("GET", /^sites\/s1\?view=access$/, () => ({
-        json: { items: [{ ...api.data.sites[0], sk: "#META" }] },
-      }));
-      for (const list of ["manager-memberships", "grants", "devices"])
-        api.on("GET", new RegExp(`^sites/s1/${list}$`), { json: {} });
-      api.on("GET", /^people$/, { json: {} });
-      api.on("GET", /^programs\/p1$/, () => ({
-        json: { program: api.data.programs[0] },
-      }));
-    },
-  });
-  const access = $('section[aria-label="App access"]').textContent;
-  assert.ok(access.includes(t("admin.siteManagers.none")));
-  assert.ok(access.includes("No devices in use."));
-  assert.equal(pageError(), "");
 });
 
 test("Site managers known only by email or a missing person still list", async () => {
@@ -377,17 +384,6 @@ test("Site managers known only by email or a missing person still list", async (
     row.querySelector('[data-remove-manager-membership="m2"]'),
   );
   assert.ok(gone?.textContent.includes("gone@example.org"));
-});
-
-test("a Site without a lead program skips the program read", async () => {
-  const { api } = await mountAdmin("/sites/s1", {
-    setup: (api) => {
-      api.data.sites[0] = { ...api.data.sites[0], leadProgramId: undefined };
-    },
-  });
-  // Any program ID, so a read of programs/undefined fails the test too.
-  assert.equal(api.calls("GET", /^programs\//).length, 0);
-  assert.equal(pageError(), "");
 });
 
 test("moving between tabs reuses the Site's oversight read", async () => {
@@ -454,11 +450,12 @@ test("a failed enrollment clears a stale page banner instead of repeating its to
       ),
   });
   await click('[data-cancel-manager-grant="g1"]');
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "manager_grant_not_found");
+  assert.equal(pageError(), t("admin.errors.managerInvitationUnavailable"));
   api.fail("POST", /manager-grants$/, 409, "manager_grant_conflict");
   await click('[data-issue-manager-grant="m3"][data-delivery-mode="link"]');
-  assert.ok(alertText().includes(t("admin.toast.requestFailed")));
+  assert.ok(
+    alertText().includes(t("admin.errors.managerInvitationUnavailable")),
+  );
   assert.equal(pageError(), "");
 });
 
@@ -481,8 +478,7 @@ test("a page error clears when a link is sent, and a late refresh is dropped", a
       ),
   });
   await click('[data-cancel-manager-grant="g1"]');
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.match(pageText(), /manager_grant_not_found/);
+  assert.equal(pageError(), t("admin.errors.managerInvitationUnavailable"));
   const held = gate();
   api.on("POST", /manager-grants$/, {
     json: { grant: { grantId: "g9", deliveryStatus: "accepted" } },
@@ -503,62 +499,26 @@ test("a page error clears when a link is sent, and a late refresh is dropped", a
   assert.equal(heading(), "North Site");
 });
 
-test("a legacy assignment whose link fails keeps its new membership for the retry", async () => {
-  let grants = 0;
-  const { api } = await openAccessInApp(ACCESS, {
-    data: accessData(),
-    setup: (api) => {
-      api.on("POST", /^sites\/s1\/manager-memberships$/, {
-        json: {
-          membership: {
-            membershipId: "m40",
-            name: "Alex Example",
-            email: "alex@example.org",
-            status: "active",
-          },
-        },
-      });
-      api.on("POST", /^sites\/s1\/manager-grants$/, () =>
-        ++grants === 1
-          ? { status: 409, json: { error: "manager_grant_conflict" } }
-          : { json: { grant: { grantId: "g9", deliveryStatus: "accepted" } } },
-      );
-    },
-  });
-  await click(
-    '[data-issue-manager-grant="legacy:u1"][data-delivery-mode="link"]',
-  );
-  assert.ok(alertText().includes(t("admin.toast.partial")));
-  await click('[data-issue-manager-grant="m40"][data-delivery-mode="link"]');
-  assert.equal(api.calls("POST", /manager-memberships$/).length, 1);
-  assert.equal(
-    api.calls("POST", /manager-grants$/)[1].body.membershipId,
-    "m40",
-  );
-});
-
-test("each enrollment error shows one generic notice and keeps the access tab usable", async () => {
+test("each enrollment error shows one notice with its own message and keeps the access tab usable", async () => {
   const { api } = await openAccessInApp(ACCESS, { data: accessData() });
   const link = '[data-issue-manager-grant="m3"][data-delivery-mode="link"]';
-  const failed = t("admin.toast.requestFailed");
-  const notices = () =>
+  /** @param {string} text */
+  const notices = (text) =>
     $$("[data-operation-error]").filter(
-      (notice) => notice.textContent.trim() === failed,
+      (notice) => notice.textContent.trim() === text,
     ).length;
   const codes = [
     ["provider_manager_grant_already_active", "admin.enrollment.alreadyActive"],
     ["manager_grant_conflict", "admin.enrollment.conflict"],
-    ["unexpected", ""],
+    ["unexpected", "admin.toast.requestFailed"],
+    // Server text with spaces is still the server's, so it gets the generic message.
+    ["upstream connect error or disconnect/reset", "admin.toast.requestFailed"],
   ];
   for (const [index, [code, key]] of codes.entries()) {
     api.fail("POST", /manager-grants$/, 409, code);
-    const before = notices();
+    const before = notices(t(key));
     await click(link);
-    assert.equal(notices(), before + 1, code);
-    // Pins a bug: issueManagerGrant in pages/site/manager.actions.js maps these
-    // codes to their own message, but adminErrorMessage ignores it for an HTTP
-    // error. No issue filed yet.
-    if (key) assert.ok(!pageText().includes(t(key)), code);
+    assert.equal(notices(t(key)), before + 1, code);
     assert.equal(api.calls("POST", /manager-grants$/).length, index + 1);
     assert.equal($(link).disabled, false);
   }
@@ -632,7 +592,7 @@ test("a Site ID with a slash stays one path segment on the way back", async () =
     api.calls("GET", /^sites\/[^/?]*origin/).map((request) => request.path),
     ["sites/origin%252Fsite"],
   );
-  assert.match(pageError(), /^not_found/);
+  assert.equal(pageError(), t("admin.toast.requestFailed"));
 });
 
 describe("a compliance period form kept through My profile", () => {

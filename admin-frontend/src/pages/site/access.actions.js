@@ -43,9 +43,10 @@ export const siteAccessActions = {
   /**
    * Revoke a registered site device.
    * @param {string} deviceId
+   * @param {HTMLButtonElement} [button]
    * @returns {Promise<void>}
    */
-  async revokeDevice(deviceId) {
+  async revokeDevice(deviceId, button) {
     const feedback = actionFeedback("admin.toast.accessRemoved");
     this.deviceRevocationController?.abort();
     const controller = new AbortController();
@@ -72,6 +73,8 @@ export const siteAccessActions = {
         this.state.site?.siteId !== siteId
       )
         return;
+      // Disabled only after the dialog, so Cancel can return focus to the button.
+      if (button) button.disabled = true;
       await adminApi.revokeDevice(siteId, deviceId);
       feedback.success();
       if ((await this.refreshSiteAccess(siteId, false, visit)) === false)
@@ -84,6 +87,7 @@ export const siteAccessActions = {
       feedback.failure(error);
       throw error;
     } finally {
+      if (button) button.disabled = false;
       if (this.deviceRevocationController === controller)
         this.deviceRevocationController = null;
     }
@@ -111,111 +115,6 @@ export const siteAccessActions = {
         result.status === "complete"
           ? `Operation ${result.operationId}: all Site credentials invalidated and ${result.affectedCount} device record${result.affectedCount === 1 ? "" : "s"} reconciled.`
           : `Operation ${result.operationId}: canonical Site credentials were invalidated, but ${result.failedCount} device record${result.failedCount === 1 ? "" : "s"} could not be reconciled. Follow the revocation runbook.`;
-      this.render();
-    } catch (error) {
-      feedback.failure(error);
-      throw error;
-    }
-  },
-  async revokePhysicalDeviceEverywhere(form) {
-    const feedback = actionFeedback("admin.toast.accessRemoved");
-    try {
-      if (!this.state.site || !this.state.physicalDeviceRevocationPreview)
-        return;
-      const preview = this.state.physicalDeviceRevocationPreview;
-      const siteId = this.state.site.siteId;
-      const visit = this.visit;
-      const confirmation = formValue(new FormData(form), "confirmation");
-      const result = await adminApi.revokePhysicalDeviceEverywhere(
-        preview.physicalDeviceId,
-        confirmation,
-      );
-      feedback.success();
-      if ((await this.refreshSiteAccess(siteId, false, visit)) === false)
-        return;
-      this.state.revocationMessage = result.alreadyRevoked
-        ? "This physical device was already revoked."
-        : `Operation ${result.operationId}: physical device revoked across ${result.affectedCount} Site binding${result.affectedCount === 1 ? "" : "s"}.`;
-      this.render();
-    } catch (error) {
-      feedback.failure(error);
-      throw error;
-    }
-  },
-  async beginEmergencySiteRevocation() {
-    const result = await adminApi.listEmergencyRevocationSites();
-    this.state.emergencyRevocationSites = result.sites || [];
-    this.state.emergencyRevocationPreview = null;
-    this.render();
-    queueMicrotask(() =>
-      this.querySelector("#emergency-site-selection")?.focus(),
-    );
-  },
-  async previewEmergencySiteRevocation(form) {
-    const siteIds = new FormData(form)
-      .getAll("site-id")
-      .map((value) => String(value));
-    if (siteIds.length < 2 || siteIds.length > 20) {
-      this.reportError(
-        new Error(
-          "Select between two and 20 Sites for an emergency revocation.",
-        ),
-      );
-      return;
-    }
-    this.state.emergencyRevocationPreview =
-      await adminApi.previewEmergencySiteRevocation(siteIds);
-    this.render();
-    queueMicrotask(() =>
-      this.querySelector("#emergency-revocation-confirmation")?.focus(),
-    );
-  },
-  async startEmergencySiteRevocation(form) {
-    const feedback = actionFeedback("admin.toast.revocationStarted");
-    try {
-      const preview = this.state.emergencyRevocationPreview;
-      if (!preview) return;
-      const confirmation = formValue(new FormData(form), "confirmation");
-      const result = await adminApi.startEmergencySiteRevocation(
-        preview.sites.map((site) => site.siteId),
-        confirmation,
-      );
-      feedback.success(
-        result.enqueueFailedCount
-          ? "admin.toast.revocationPartial"
-          : "admin.toast.revocationStarted",
-        "info",
-      );
-      this.state.emergencyRevocationSites = [];
-      this.state.emergencyRevocationPreview = null;
-      this.state.revocationMessage = `Operation ${result.operationId}: credentials invalidated across ${result.affectedSiteCount} Sites; ${result.queuedSiteCount} Site reconciliation job${result.queuedSiteCount === 1 ? "" : "s"} queued${result.enqueueFailedCount ? ` and ${result.enqueueFailedCount} require runbook follow-up` : ""}.`;
-      this.render();
-    } catch (error) {
-      feedback.failure(error);
-      throw error;
-    }
-  },
-  async suspendDeviceBinding(form) {
-    const feedback = actionFeedback("admin.toast.deviceSuspended");
-    try {
-      if (!this.state.site || !this.state.suspensionTarget) return;
-      const reason = formValue(new FormData(form), "reason");
-      const bindingId =
-        this.state.suspensionTarget.bindingId ||
-        this.state.suspensionTarget.deviceId;
-      const siteId = this.state.site.siteId;
-      const visit = this.visit;
-      const result = await adminApi.suspendDeviceBinding(
-        siteId,
-        bindingId,
-        reason,
-      );
-      feedback.success();
-      if ((await this.refreshSiteAccess(siteId, false, visit)) === false)
-        return;
-      this.state.revocationMessage = result.alreadySuspended
-        ? "This binding was already suspended."
-        : `${result.binding.label || "Device binding"} suspended. Existing credentials are invalid; re-enrollment requires a new single-Site grant.`;
       this.render();
     } catch (error) {
       feedback.failure(error);

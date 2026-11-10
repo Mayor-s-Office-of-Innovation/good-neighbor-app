@@ -14,14 +14,16 @@ import {
   window,
   missing,
   focused,
+  adminData,
 } from "../test-support/admin-dom.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import {
   importPreview as preview,
   importRows as rows,
 } from "../../e2e/admin-tests/site-import-helpers.js";
+import { managerData } from "../../e2e/admin-tests/site-access-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
-import { adminCatalog } from "./admin-catalog.js";
+import "./pages/directory/directory-page.js";
 import "./pages/site/site-import-page.js";
 
 // pages/site/import.templates.js has no catalog key for this copy, so tests match its English.
@@ -307,7 +309,7 @@ test("a failed apply keeps the preview and shows the error", async () => {
   await choosePreview();
   await click("#apply-site-import");
   // An API code is not something a user can act on, so it never shows.
-  assert.equal(pageError(), t("admin.toast.requestFailed"));
+  assert.equal(pageError(), t("admin.errors.importStale"));
   assert.ok(!missing("#review-title"));
   assert.equal($("#apply-site-import").disabled, false);
 });
@@ -349,7 +351,7 @@ test("an apply that fails after the user leaves still shows the error", async ()
   await routeTo("/providers");
   held.release();
   await settle();
-  assert.equal(pageError(), t("admin.toast.requestFailed"));
+  assert.equal(pageError(), t("admin.errors.importStale"));
 });
 
 test("past imports that arrive after leave() don't let the page open, even at the same address", async () => {
@@ -399,8 +401,7 @@ test("the conflict report downloads, or reports a failure", async () => {
   assert.deepEqual(downloads, ["site-import-i1-conflicts.csv"]);
   api.fail("GET", /^site-imports\/i1\/conflicts\.csv$/);
   await click("#download-import-conflicts");
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "conflict_report_failed");
+  assert.equal(pageError(), t("admin.errors.importConflictReport"));
 });
 
 test("apply progress updates while rows are still applying", async () => {
@@ -592,24 +593,49 @@ test("an import history reply without a list empties the table", async () => {
   assert.match(pastImports().textContent, /No past imports\./);
 });
 
-test("a finished import marks the page's own catalog out of date, not adminCatalog", async () => {
-  const { catalog } = await openImportPage((api) => {
-    api.on("POST", /^site-imports\/preview$/, {
-      json: { ...preview, counts: { create: 2 }, rows: rows.slice(0, 2) },
+test("after a finished import, the Site managers list reads its managers again", async () => {
+  /** Mount the Site managers list against `data`, sharing `shared`'s lists and role. @param {any} data @param {any} [shared] */
+  const openManagers = (data, shared = {}) =>
+    mountPage("admin-directory-page", "/managers", {
+      calls: [
+        /^GET programs\/[^/]+$/,
+        /^GET sites\/[^/]+\/manager-memberships$/,
+        /^GET sites\/[^/]+\?roster=1$/,
+        /^GET people$/,
+        // A finished import marks every catalog list out of date.
+        /^GET (providers\?directory=1|programs|oversight-options|program-managers)$/,
+      ],
+      sites: true,
+      data,
+      ...shared,
     });
-    api.on("POST", /^site-imports\/i1\/apply$/, {
-      json: {
-        status: "complete",
-        resultStatus: "succeeded",
-        outcomes: { applied: 2 },
-      },
-    });
+  const { catalog, session } = await openManagers(adminData());
+  assert.ok(missing('a[href="/managers/u3"]'));
+  await mountPage("admin-site-import-page", "/sites/import", {
+    calls: [/^(GET|POST) site-imports(\/|$)/],
+    recordErrors: true,
+    catalog,
+    session,
+    setup: (api) => {
+      api.on("POST", /^site-imports\/preview$/, {
+        json: { ...preview, counts: { create: 2 }, rows: rows.slice(0, 2) },
+      });
+      api.on("POST", /^site-imports\/i1\/apply$/, {
+        json: {
+          status: "complete",
+          resultStatus: "succeeded",
+          outcomes: { applied: 2 },
+        },
+      });
+    },
   });
-  const [own, shared] = [catalog.managersVersion, adminCatalog.managersVersion];
   await choosePreview();
   await click("#apply-site-import");
-  assert.equal(catalog.managersVersion, own + 1);
-  assert.equal(adminCatalog.managersVersion, shared);
+  // managerData() adds Morgan (u3) as a manager of Example Site, as an import could.
+  await openManagers(managerData(), { catalog, session });
+  assert.ok(
+    !missing('[aria-labelledby="managers-title"] a[href="/managers/u3"]'),
+  );
 });
 
 test("an apply that finishes after leave() doesn't rewrite the address, even on the import route", async () => {

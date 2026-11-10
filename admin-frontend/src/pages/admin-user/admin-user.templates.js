@@ -139,14 +139,14 @@ function adminUserRow(user) {
   const username = escapeHtml(user.username);
   const actions =
     status === "suspended"
-      ? `<button class="btn-secondary" type="button" data-admin-user-action="reinstate" data-username="${username}">Reinstate</button>`
+      ? `<button class="btn-secondary" type="button" data-admin-user-action="reinstate" data-username="${username}">${escapeHtml(t("admin.users.reinstate"))}</button>`
       : `${
           status === "invited"
             ? `<button class="btn-secondary" type="button" data-admin-user-action="reinvite" data-username="${username}">Re-invite</button>`
             : user.canResetPassword
               ? `<button class="btn-secondary" type="button" data-admin-user-action="reset" data-username="${username}">Reset password</button>`
               : ""
-        }<button class="btn-danger" type="button" data-admin-user-action="suspend" data-username="${username}">Suspend</button>`;
+        }<button class="btn-danger" type="button" data-admin-user-action="suspend" data-username="${username}">${escapeHtml(t("admin.users.suspend"))}</button>`;
   return `<tr><td>${escapeHtml(user.name || "—")}</td><td>${escapeHtml(user.email)}</td><td class="admin-user-role"><wa-select aria-label="Role for ${escapeHtml(user.email)}" data-admin-role data-username="${username}" value="${escapeHtml(user.role)}"><wa-option value="compliance-manager">Manager</wa-option><wa-option value="compliance-supervisor">Supervisor</wa-option></wa-select></td><td>${escapeHtml(statusLabel)}</td><td><div class="admin-user-actions">${actions}</div></td></tr>`;
 }
 

@@ -47,50 +47,14 @@ export const siteAccessEvents = {
         syncRevokeAll(page, form);
       }
     },
-    "#physical-device-revocation": (page, form, event) => {
-      event.preventDefault();
-      page
-        .revokePhysicalDeviceEverywhere(form)
-        .catch((err) => page.reportError(err));
-    },
-    "#emergency-site-selection": (page, form, event) => {
-      event.preventDefault();
-      page
-        .previewEmergencySiteRevocation(form)
-        .catch((err) => page.reportError(err));
-    },
-    "#emergency-site-confirmation": (page, form, event) => {
-      event.preventDefault();
-      page
-        .startEmergencySiteRevocation(form)
-        .catch((err) => page.reportError(err));
-    },
   },
   click: {
     "[data-issue-contact-code]": (page, button) =>
       page.issueSetupCodeForEmail(dataAttr(button, "data-issue-contact-code")),
-    "[data-revoke-device]": async (page, button) => {
-      button.disabled = true;
-      try {
-        await page.revokeDevice(button.dataset.revokeDevice);
-      } catch (err) {
-        page.reportError(err);
-      } finally {
-        button.disabled = false;
-      }
-    },
-    "#cancel-physical-device-revocation": (page) => {
-      page.state.physicalDeviceRevocationPreview = null;
-      page.render();
-    },
-    "#begin-emergency-site-revocation": (page) => {
-      page.beginEmergencySiteRevocation().catch((err) => page.reportError(err));
-    },
-    "[data-cancel-emergency-revocation]": (page) => {
-      page.state.emergencyRevocationSites = [];
-      page.state.emergencyRevocationPreview = null;
-      page.render();
-    },
+    "[data-revoke-device]": (page, button) =>
+      page
+        .revokeDevice(dataAttr(button, "data-revoke-device"), button)
+        .catch((err) => page.reportError(err)),
   },
   input: {
     "#revoke-all-site-devices wa-input": (page, input) =>

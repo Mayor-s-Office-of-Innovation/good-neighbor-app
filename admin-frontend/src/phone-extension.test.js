@@ -1,7 +1,11 @@
 // @vitest-environment node
 import assert from "node:assert/strict";
 import { test, vi } from "vitest";
-import { phoneExtensionField } from "./phone-extension.js";
+import {
+  addExtension,
+  phoneExtensionField,
+  removeExtension,
+} from "./phone-extension.js";
 
 test("create and empty edit fields hide extension until requested", () => {
   const html = phoneExtensionField(
@@ -28,14 +32,9 @@ test("existing extensions are visible without requesting them", () => {
 });
 
 test("removing an extension clears its value, marks the form changed, and allows adding it again", async () => {
-  const { bindPhoneExtensions } = await import("./phone-extension.js");
   class Element {
     hidden = false;
-    listeners = {};
     attributes = {};
-    addEventListener(type, fn) {
-      this.listeners[type] = fn;
-    }
     setAttribute(key, value) {
       this.attributes[key] = value;
     }
@@ -61,18 +60,14 @@ test("removing an extension clears its value, marks the form changed, and allows
   add.parentElement = { querySelector: () => field };
   remove.closest = () => field;
   add.hidden = true;
-  bindPhoneExtensions({
-    querySelectorAll: (selector) =>
-      selector === "[data-add-extension]" ? [add] : [remove],
-  });
-  remove.listeners.click();
+  removeExtension(remove);
   assert.equal(input.value, "");
   assert.deepEqual(events, ["input", "change"]);
   assert.equal(field.hidden, true);
   assert.equal(add.hidden, false);
   assert.equal(add.focused, true);
   assert.equal(add.attributes["aria-expanded"], "false");
-  add.listeners.click();
+  addExtension(add);
   assert.equal(field.hidden, false);
   assert.equal(add.hidden, true);
 });

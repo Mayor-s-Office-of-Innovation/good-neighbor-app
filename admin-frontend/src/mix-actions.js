@@ -1,4 +1,4 @@
-// Lets each page element take the methods in its own *.actions.js file, as <admin-app> does.
+// Lets each page element take the methods in its own *.actions.js file.
 
 /**
  * Copy each action onto the class, non-enumerable like a class method. Throws on a

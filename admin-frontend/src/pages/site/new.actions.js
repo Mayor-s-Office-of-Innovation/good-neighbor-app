@@ -6,6 +6,7 @@ import { controlValue, formValue, syncDirtyForm } from "../../form-state.js";
 import { navigate } from "../../router.js";
 import { siteManagerRoster } from "../../site-managers.js";
 import { siteSaveErrorMessage } from "./save-error-messages.js";
+import { restartManagerLoad } from "./manager-directory-read.js";
 
 export const newSiteActions = {
   async createSiteFromFlow(form) {
@@ -92,7 +93,7 @@ export const newSiteActions = {
       }
       this.catalog.addSite(savedSite);
       this.catalog.invalidate("managers");
-      this.dropManagerLoad();
+      restartManagerLoad(this.catalog);
       syncDirtyForm(form, true);
       delete form.dataset.saving;
       feedback.success();
