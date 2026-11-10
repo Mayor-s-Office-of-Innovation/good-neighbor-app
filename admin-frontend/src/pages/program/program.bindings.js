@@ -1,59 +1,54 @@
-// AdminApp.bind() adds these again after each render() replaces the HTML.
+// Program page actions, keyed by event type and the control's data attribute.
+// <admin-program-page> listens once per event type, so a redraw can't drop or double a handler.
 import { asForm } from "../../dom.js";
+import { addExtension, removeExtension } from "../../phone-extension.js";
+import { saveWithFeedback } from "../../save-feedback.js";
 
 /**
- * @typedef {import("../../admin-types.js").AdminAppElement} AdminAppElement
+ * @typedef {import("./program-page.js").ProgramPageElement} ProgramPageElement
+ * @typedef {(page: ProgramPageElement, control: HTMLElement, event: Event) => void} ProgramAction
  */
 
-/** @param {AdminAppElement} app */
-export function bindProgram(app) {
-  app
-    .querySelector("#program-details-form")
-    ?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const form = asForm(event.currentTarget);
-      void app.saveWithFeedback(form, () => app.updateProgramDetails(form));
-    });
-  app.querySelector("#program-form")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const form = asForm(e.currentTarget);
-    void app.saveWithFeedback(form, () => app.createProgram(form));
-  });
-  app
-    .querySelector("#add-program-staff")
-    ?.addEventListener("click", () =>
-      app.querySelector("#add-program-staff-dialog")?.showModal(),
-    );
-  app
-    .querySelector("#cancel-program-staff")
-    ?.addEventListener("click", () =>
-      app.querySelector("#add-program-staff-dialog")?.close(),
-    );
-  app
-    .querySelector("#program-staff-form")
-    ?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      app.addProgramStaff(asForm(event.currentTarget)).catch((error) => {
-        app.state.error = error.message;
-        app.render();
-      });
-    });
-  app.querySelectorAll("[data-edit-program-staff]").forEach((button) => {
-    button.addEventListener("click", () =>
-      app
+/** @type {Record<string, Record<string, ProgramAction>>} */
+export const programEvents = {
+  click: {
+    "data-add-program-staff": (page) =>
+      page.querySelector("#add-program-staff-dialog")?.showModal(),
+    "data-cancel-program-staff": (page) =>
+      page.querySelector("#add-program-staff-dialog")?.close(),
+    "data-edit-program-staff": (page, button) =>
+      page
         .querySelector(
-          `#edit-program-staff-${CSS.escape(button.dataset.editProgramStaff)}`,
+          `#edit-program-staff-${CSS.escape(button.dataset.editProgramStaff || "")}`,
         )
         ?.showModal(),
-    );
-  });
-  app.querySelectorAll("[data-cancel-program-staff-edit]").forEach((button) => {
-    button.addEventListener("click", () => button.closest("dialog")?.close());
-  });
-  app.querySelectorAll("[data-program-staff-edit-form]").forEach((form) => {
-    form.addEventListener("submit", (event) => {
+    "data-cancel-program-staff-edit": (page, button) =>
+      button.closest("dialog")?.close(),
+    "data-add-extension": (page, button) => addExtension(button),
+    "data-remove-extension": (page, button) => removeExtension(button),
+  },
+  submit: {
+    "data-program-details-form": (page, control, event) => {
       event.preventDefault();
-      app.saveProgramStaff(asForm(form));
-    });
-  });
-}
+      const form = asForm(control);
+      void saveWithFeedback(form, () => page.updateProgramDetails(form));
+    },
+    "data-new-program-form": (page, control, event) => {
+      event.preventDefault();
+      const form = asForm(control);
+      void saveWithFeedback(form, () => page.createProgram(form));
+    },
+    "data-program-staff-form": (page, form, event) => {
+      event.preventDefault();
+      page
+        .addProgramStaff(asForm(form))
+        .catch((error) => page.reportError(error));
+    },
+    "data-program-staff-edit-form": (page, form, event) => {
+      event.preventDefault();
+      page
+        .saveProgramStaff(asForm(form))
+        .catch((error) => page.reportError(error));
+    },
+  },
+};

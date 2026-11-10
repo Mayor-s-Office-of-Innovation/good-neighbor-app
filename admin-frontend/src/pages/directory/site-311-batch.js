@@ -1,4 +1,5 @@
 import { t } from "../../../../frontend/src/i18n/i18n.js";
+import { adminCatalog } from "../../admin-catalog.js";
 import { escapeHtml } from "../../dom.js";
 
 import {
@@ -72,11 +73,7 @@ export function bind311Batch(root, state, api) {
       await save311Batch(
         batch,
         api,
-        (site) => {
-          state.sites = state.sites.map((s) =>
-            s.siteId === site.siteId ? { ...s, ...site } : s,
-          );
-        },
+        (site) => adminCatalog.updateSite(site.siteId, site),
         () => batch.refresh?.(),
       );
       header

@@ -6,12 +6,12 @@ import {
   adminData,
   click,
   fill,
-  mountAdmin,
   pageText,
   settle,
   toastText,
   missing,
 } from "../test-support/admin-dom.js";
+import { mountAdmin } from "../test-support/app-mount.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
 // pages/site/save-error-messages.js has no catalog key for this copy, so tests match its English.

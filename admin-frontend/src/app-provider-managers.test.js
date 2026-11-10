@@ -5,7 +5,6 @@ import {
   $$,
   click,
   fill,
-  mountAdmin,
   pageError,
   pageText,
   routeTo,
@@ -15,6 +14,7 @@ import {
   window,
   missing,
 } from "../test-support/admin-dom.js";
+import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { providerData } from "../../e2e/admin-tests/providers-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";

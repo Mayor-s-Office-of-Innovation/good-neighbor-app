@@ -12,45 +12,43 @@ export function phoneExtensionField(
   return `<div class="phone-field">${phoneHtml}<button type="button" class="btn-outline phone-field__add" data-add-extension aria-expanded="${expanded}" ${expanded ? "hidden" : ""}>${label}</button><div data-phone-extension ${expanded ? "" : "hidden"}>${extensionHtml}<button type="button" class="btn-outline phone-field__add" data-remove-extension>${removeLabel}</button></div></div>`;
 }
 
+/** @param {Element} button */
+export function addExtension(button) {
+  const field = button.parentElement?.querySelector("[data-phone-extension]");
+  if (!(field instanceof HTMLElement)) return;
+  field.hidden = false;
+  button.setAttribute("aria-expanded", "true");
+  /** @type {HTMLElement} */ (button).hidden = true;
+  /** @type {HTMLElement | null} */ (field.querySelector("wa-input"))?.focus();
+}
+
+/** @param {Element} button */
+export function removeExtension(button) {
+  const field = button.closest("[data-phone-extension]");
+  const add = field?.parentElement?.querySelector("[data-add-extension]");
+  const input = field?.querySelector("wa-input");
+  if (
+    !(field instanceof HTMLElement) ||
+    !(add instanceof HTMLElement) ||
+    !input ||
+    input.disabled
+  )
+    return;
+  input.value = "";
+  input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+  field.hidden = true;
+  add.hidden = false;
+  add.setAttribute("aria-expanded", "false");
+  add.focus();
+}
+
 /** @param {ParentNode} root */
 export function bindPhoneExtensions(root) {
   root.querySelectorAll("[data-add-extension]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const field = button.parentElement?.querySelector(
-        "[data-phone-extension]",
-      );
-      if (!(field instanceof HTMLElement)) return;
-      field.hidden = false;
-      button.setAttribute("aria-expanded", "true");
-      /** @type {HTMLElement} */ (button).hidden = true;
-      /** @type {HTMLElement | null} */ (
-        field.querySelector("wa-input")
-      )?.focus();
-    });
+    button.addEventListener("click", () => addExtension(button));
   });
   root.querySelectorAll("[data-remove-extension]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const field = button.closest("[data-phone-extension]");
-      const add = field?.parentElement?.querySelector("[data-add-extension]");
-      const input = field?.querySelector("wa-input");
-      if (
-        !(field instanceof HTMLElement) ||
-        !(add instanceof HTMLElement) ||
-        !input ||
-        input.disabled
-      )
-        return;
-      input.value = "";
-      input.dispatchEvent(
-        new Event("input", { bubbles: true, composed: true }),
-      );
-      input.dispatchEvent(
-        new Event("change", { bubbles: true, composed: true }),
-      );
-      field.hidden = true;
-      add.hidden = false;
-      add.setAttribute("aria-expanded", "false");
-      add.focus();
-    });
+    button.addEventListener("click", () => removeExtension(button));
   });
 }

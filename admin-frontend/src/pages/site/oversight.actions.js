@@ -1,4 +1,5 @@
 // main.js adds these to AdminApp, so they can use this.state and render().
+import { adminCatalog } from "../../admin-catalog.js";
 import { actionFeedback } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
 import {
@@ -43,7 +44,7 @@ export const siteOversightActions = {
           : "admin.toast.invitationSent",
       );
       const result = await adminApi.listCityProgramManagers();
-      this.state.programManagers = result.programManagers || [];
+      adminCatalog.setProgramManagers(result.programManagers || []);
       const manager = this.state.programManagers.find(
         (item) => String(item.email || "").toLowerCase() === email,
       );
@@ -162,10 +163,7 @@ export const siteOversightActions = {
       });
       feedback.success();
       const key = type === "department" ? "departments" : "systemsOfCare";
-      this.state.oversightOptions[key] = [
-        ...this.state.oversightOptions[key],
-        result.option,
-      ].sort((a, b) => a.name.localeCompare(b.name));
+      adminCatalog.addOversightOption(key, result.option);
       const target =
         form.dataset.targetSelect ||
         (type === "department"
@@ -254,11 +252,7 @@ export const siteOversightActions = {
             assignmentResult.assignments || [];
         }
         this.state.site = { ...this.state.site, ...result.site };
-        this.state.sites = this.state.sites.map((site) =>
-          site.siteId === this.state.site?.siteId
-            ? { ...site, ...this.state.site }
-            : site,
-        );
+        adminCatalog.updateSite(this.state.site.siteId, this.state.site);
         feedback.success();
         this.state.siteSaveMessage = "";
         return true;
