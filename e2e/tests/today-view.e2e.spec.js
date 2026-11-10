@@ -20,6 +20,11 @@ test.describe("today view", () => {
     }) => {
       await page.setViewportSize({ width, height: 891 });
       await bindSite(page);
+      // Exercise scrolling even when earlier tests have not populated a long
+      // worklist. The fixed menu repositions as the page scrolls.
+      await page.evaluate(() => {
+        document.body.style.minHeight = "3000px";
+      });
       const trigger = page.locator("#home-action-menu-trigger");
       const menu = page.locator("#home-action-menu");
       const care = page.locator("#view-care-work");
@@ -40,7 +45,9 @@ test.describe("today view", () => {
 
       await trigger.click();
       await refreshHome(page);
-      await page.locator(".home-lead").click({ position: { x: 1, y: 1 } });
+      // The lead also contains the menu, so a click on that ancestor can hit
+      // the menu itself while scrolling. Use a separate outside element.
+      await page.locator(".home-identity").click();
       await expect(menu).toBeHidden();
       await trigger.click();
       await care.focus();

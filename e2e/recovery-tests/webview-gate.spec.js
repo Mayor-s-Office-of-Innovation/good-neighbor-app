@@ -28,6 +28,7 @@ for (const agent of [
       viewport: { width: 390, height: 844 },
     });
     const page = await context.newPage();
+    /** @type {string[]} */
     const mutations = [];
     page.on("request", (request) => {
       if (request.method() === "POST") mutations.push(request.url());
@@ -71,8 +72,10 @@ test("copy success preserves invitation credentials without redeeming them", asy
     Object.defineProperty(window.navigator, "clipboard", {
       configurable: true,
       value: {
-        writeText: async (value) => {
-          window.__copiedLink = value;
+        writeText: async (/** @type {string} */ value) => {
+          /** @type {Window & { __copiedLink?: string }} */ (
+            window
+          ).__copiedLink = value;
         },
       },
     });
@@ -86,7 +89,13 @@ test("copy success preserves invitation credentials without redeeming them", asy
   });
   await page.locator("#webview-copy").click();
   await expect
-    .poll(() => page.evaluate(() => window.__copiedLink))
+    .poll(() =>
+      page.evaluate(
+        () =>
+          /** @type {Window & { __copiedLink?: string }} */ (window)
+            .__copiedLink,
+      ),
+    )
     .toBe(original);
   await expect(page.locator("#webview-link")).toBeHidden();
   await expect(page.locator("site-setup")).toHaveCount(0);
@@ -137,12 +146,20 @@ test("used invitation recovery reloads and enters the saved browser session", as
       token: "synthetic-token",
       tokenExpiresAt: Date.now() / 1000 + 3600,
     });
-    window.__beforeRecovery = true;
+    /** @type {Window & { __beforeRecovery?: boolean }} */ (
+      window
+    ).__beforeRecovery = true;
   });
   await page.locator("#confirm-enrollment").click();
   await expect(page.locator("#enrollment-form [role=alert]")).toBeVisible();
   await page.locator("#enrollment-open-app").click();
   await expect(page.locator("today-view")).toBeVisible();
-  expect(await page.evaluate(() => window.__beforeRecovery)).toBeUndefined();
+  expect(
+    await page.evaluate(
+      () =>
+        /** @type {Window & { __beforeRecovery?: boolean }} */ (window)
+          .__beforeRecovery,
+    ),
+  ).toBeUndefined();
   await expect(page.locator("site-setup")).toHaveCount(0);
 });

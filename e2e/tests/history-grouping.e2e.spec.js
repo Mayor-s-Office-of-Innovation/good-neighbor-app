@@ -38,6 +38,7 @@ for (const width of [393, 1178]) {
     await expect(page.locator(".analysis-tray__check-title")).toHaveText(
       "Sep 1",
     );
+    await expect(select.locator("#listbox")).toBeHidden();
     await expect(control).toBeFocused();
     await control.press("ArrowDown");
     await control.press("End");
@@ -45,6 +46,7 @@ for (const width of [393, 1178]) {
     await expect(page.locator(".analysis-tray__check-title")).toHaveText(
       "Litter",
     );
+    await expect(select.locator("#listbox")).toBeHidden();
     await expect(control).toBeFocused();
     await expect(page.locator(".history-card__row")).toContainText(
       "Scattered paper",

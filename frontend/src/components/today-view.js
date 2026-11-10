@@ -1550,6 +1550,16 @@ class TodayView extends HTMLElement {
     if (grouping) {
       void import("./history-grouping.js");
     }
+    // A queued select-opening frame can focus an option after our change
+    // handler restores the input. Once closing finishes, return focus from
+    // the hidden options, but never steal it from another control.
+    grouping?.addEventListener("wa-after-hide", () => {
+      if (
+        grouping instanceof HTMLElement &&
+        grouping.contains(document.activeElement)
+      )
+        grouping.focus({ preventScroll: true });
+    });
     grouping?.addEventListener("change", async () => {
       this._historyGrouping = /** @type {any} */ (grouping).value;
       this._renderHome(this._homeModel);
