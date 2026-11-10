@@ -8,11 +8,10 @@ import {
   fill,
   pageText,
   submit,
-  unhandledRejection,
   missing,
-  routeTo,
+  revisitPage,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
+import { openSitePage } from "../test-support/site-pages.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
 // pages/site/record.actions.js and save-error-messages.js have no catalog key for this copy, so tests match their English.
@@ -60,7 +59,7 @@ function oversightData() {
 const save = () => $("#site-oversight-form [data-save-button]");
 
 test("oversight save sends the department and system of care", async () => {
-  const { api } = await mountAdmin(OVERSIGHT, { data: oversightData() });
+  const { api } = await openSitePage(OVERSIGHT, { data: oversightData() });
   assert.equal(save().disabled, true);
   assert.ok(!missing('#site-oversight-form wa-option[value="Custom System"]'));
   await fill('wa-select[name="managing-system-of-care"]', "BHS-PBH");
@@ -78,7 +77,7 @@ test("oversight save sends the department and system of care", async () => {
 });
 
 test("changed program managers are saved with the oversight", async () => {
-  const { api } = await mountAdmin(OVERSIGHT, {
+  const { api } = await openSitePage(OVERSIGHT, {
     data: oversightData(),
     setup: (api) =>
       api.on("PUT", /^sites\/s1\/compliance-managers$/, (request) => ({
@@ -114,7 +113,7 @@ test("changed program managers are saved with the oversight", async () => {
 });
 
 test("oversight errors stay on the form", async () => {
-  await mountAdmin(OVERSIGHT, {
+  await openSitePage(OVERSIGHT, {
     data: oversightData(),
     setup: (api) => api.fail("PATCH", /^sites\/s1$/, 400, "invalid_oversight"),
   });
@@ -127,7 +126,7 @@ test("oversight errors stay on the form", async () => {
 });
 
 test("more than two program managers are refused before saving", async () => {
-  const { api } = await mountAdmin(OVERSIGHT, { data: oversightData() });
+  const { api } = await openSitePage(OVERSIGHT, { data: oversightData() });
   const form = $("#site-oversight-form");
   for (const id of ["pm2", "pm3"]) {
     const input = document.createElement("input");
@@ -150,7 +149,7 @@ for (const [select, value, type] of [
   ["managing-system-of-care", "__add_system__", "systemOfCare"],
 ])
   test(`adding a new ${type} selects it on the oversight form`, async () => {
-    const { api } = await mountAdmin(OVERSIGHT, {
+    const { api } = await openSitePage(OVERSIGHT, {
       data: oversightData(),
       setup: (api) =>
         api.on("POST", /^oversight-options$/, (request) => ({
@@ -183,8 +182,8 @@ for (const [select, value, type] of [
     assert.equal(save().disabled, false);
   });
 
-test("a failed new option keeps its dialog open, without an inline error", async () => {
-  const { api } = await mountAdmin(OVERSIGHT, {
+test("a failed new option keeps its dialog open with an inline error", async () => {
+  const { api } = await openSitePage(OVERSIGHT, {
     data: oversightData(),
     setup: (api) =>
       api.fail("POST", /^oversight-options$/, 409, "oversight_option_exists"),
@@ -194,13 +193,11 @@ test("a failed new option keeps its dialog open, without an inline error", async
     "__add_department__",
   );
   await fill('wa-input[name="option-name"]', "Added Option");
-  const failure = await unhandledRejection(() =>
-    click("#new-oversight-option-dialog [data-save-button]"),
+  await click("#new-oversight-option-dialog [data-save-button]");
+  assert.equal(
+    saveError("#new-oversight-option-dialog"),
+    "oversight_option_exists",
   );
-  // Pins a bug: the catch reads event.currentTarget after an await, so it's
-  // null and the inline error never shows. No issue filed yet.
-  assert.equal(failure?.message, "Expected form event target");
-  assert.ok(missing("#new-oversight-option-dialog [data-form-save-error]"));
   assert.equal(api.calls("POST", /^oversight-options$/).length, 1);
   assert.equal($("#new-oversight-option-dialog").open, true);
   await click("#new-oversight-option-dialog [data-close-dialog]");
@@ -216,7 +213,7 @@ for (const [label, option, expected] of [
   ["its name without a directory ID", {}, "Invited Department"],
 ])
   test(`a department added while inviting a manager is selected by ${label}`, async () => {
-    await mountAdmin(OVERSIGHT, {
+    await openSitePage(OVERSIGHT, {
       data: oversightData(),
       setup: (api) =>
         api.on("POST", /^oversight-options$/, (request) => ({
@@ -243,7 +240,7 @@ test("a read-only oversight record cannot be saved", async () => {
   const data = oversightData();
   // A compliance manager not assigned to this Site.
   data.profile.directoryUserId = "pm2";
-  await mountAdmin(OVERSIGHT, { role: "compliance-manager", data });
+  await openSitePage(OVERSIGHT, { role: "compliance-manager", data });
   assert.match(pageText(), new RegExp(t("admin.sites.readOnly")));
   assert.equal($("#site-oversight-form").dataset.readOnly, "true");
   assert.equal(save().disabled, true);
@@ -261,7 +258,7 @@ test("the program manager picker reports how many managers match", async () => {
       status: "active",
     }),
   );
-  await mountAdmin(OVERSIGHT, { data });
+  await openSitePage(OVERSIGHT, { data });
   await click("#add-compliance-manager");
   const status = () =>
     $("#choose-compliance-manager-dialog [data-manager-search-status]")
@@ -305,16 +302,16 @@ const updateLine = () =>
   document.querySelector("#site-perimeter-form + p")?.textContent || "";
 
 async function failPerimeterSaveThenReopen() {
-  await click('a[href="/sites/s1?section=compliance"]');
+  await revisitPage(COMPLIANCE);
   await fill(perimeter(), "Mission Street from 16th to 17th");
   await click("#site-perimeter-form [data-save-button]");
-  await click('a[href="/sites/s1?section=details"]');
+  await revisitPage("/sites/s1?section=details");
   assert.ok(!missing("#site-details-form"));
-  await click('a[href="/sites/s1?section=compliance"]');
+  await revisitPage(COMPLIANCE);
 }
 
 test("perimeter save sends the text with the record version", async () => {
-  const { api } = await mountAdmin(COMPLIANCE, {
+  const { api } = await openSitePage(COMPLIANCE, {
     data: perimeterData(),
     setup: (api) =>
       api.on("PUT", /^sites\/s1\/perimeter$/, (request) => ({
@@ -341,7 +338,7 @@ test("perimeter save sends the text with the record version", async () => {
 });
 
 test("a perimeter conflict offers to reload the latest Site", async () => {
-  const { api } = await mountAdmin("/sites/s1?section=details", {
+  const { api } = await openSitePage("/sites/s1?section=details", {
     data: perimeterData(),
     setup: (api) =>
       api.fail(
@@ -362,7 +359,7 @@ test("a perimeter conflict offers to reload the latest Site", async () => {
 });
 
 test("other perimeter failures ask to check the text", async () => {
-  await mountAdmin("/sites/s1?section=details", {
+  await openSitePage("/sites/s1?section=details", {
     data: perimeterData(),
     setup: (api) =>
       api.fail("PUT", /^sites\/s1\/perimeter$/, 500, "internal_error"),
@@ -376,7 +373,7 @@ test("other perimeter failures ask to check the text", async () => {
 });
 
 test("an empty perimeter is refused before saving", async () => {
-  const { api } = await mountAdmin(COMPLIANCE, { data: perimeterData() });
+  const { api } = await openSitePage(COMPLIANCE, { data: perimeterData() });
   await fill(perimeter(), "");
   await submit("#site-perimeter-form");
   assert.equal(
@@ -407,14 +404,14 @@ for (const [label, site, expected] of [
   ],
 ])
   test(`the perimeter shows when ${label} last updated it`, async () => {
-    await mountAdmin(COMPLIANCE, {
+    await openSitePage(COMPLIANCE, {
       data: perimeterData(/** @type {any} */ (site)),
     });
     assert.ok(updateLine().includes(/** @type {string} */ (expected)));
   });
 
 test("a perimeter never updated shows no update line", async () => {
-  await mountAdmin(COMPLIANCE, {
+  await openSitePage(COMPLIANCE, {
     data: perimeterData({ perimeter: "", perimeterUpdatedAt: "" }),
   });
   assert.ok(!missing("#site-perimeter-form"));
@@ -430,7 +427,7 @@ test("a department added on one Site's oversight form is offered on another Site
     leadProgramId: "p1",
     status: "active",
   });
-  await mountAdmin(OVERSIGHT, {
+  await openSitePage(OVERSIGHT, {
     data,
     setup: (api) =>
       api.on("POST", /^oversight-options$/, (request) => ({
@@ -444,8 +441,7 @@ test("a department added on one Site's oversight form is offered on another Site
   );
   await fill('wa-input[name="option-name"]', "Added Option");
   await click("#new-oversight-option-dialog [data-save-button]");
-  await routeTo("/sites/s3?section=oversight");
-  await click('#site-unsaved-dialog button[value="discard"]');
+  await revisitPage("/sites/s3?section=oversight");
   assert.equal($("h1").textContent.trim(), "Third Site");
   assert.ok(
     !missing(

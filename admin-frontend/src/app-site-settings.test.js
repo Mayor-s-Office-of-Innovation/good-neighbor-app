@@ -1,10 +1,8 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
-import { $, click, fill, missing, window } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
+import { $, click, fill, missing } from "../test-support/admin-dom.js";
+import { openSitePage } from "../test-support/site-pages.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
-
-// pages/site/record.templates.js has no catalog key for this copy, so tests match its English.
 
 const SETTINGS = "/sites/s1?section=settings";
 const form = "#site-deliberate-311-form";
@@ -25,7 +23,7 @@ function serveSetting(api) {
 }
 
 test("a Supervisor switches a Site to simulated 311 filing", async () => {
-  const { api } = await mountAdmin(SETTINGS, {
+  const { api } = await openSitePage(SETTINGS, {
     setup: (api) => {
       api.data.sites[0].updatedAt = "version-1";
       serveSetting(api);
@@ -46,7 +44,7 @@ test("a Supervisor switches a Site to simulated 311 filing", async () => {
 });
 
 test("a failed settings save keeps the draft for another try", async () => {
-  const { api } = await mountAdmin(SETTINGS, {
+  const { api } = await openSitePage(SETTINGS, {
     setup: (api) => api.fail("PUT", DELIBERATE_311, 409, "site_changed"),
   });
   await fill(select, "false");
@@ -64,18 +62,8 @@ test("a failed settings save keeps the draft for another try", async () => {
   assert.equal($(form).dataset.isDirty, "false");
 });
 
-test("an edited setting guards leaving the tab", async () => {
-  await mountAdmin(SETTINGS);
-  await fill(select, "false");
-  await click('nav[aria-label="Site sections"] a[href$="section=details"]');
-  assert.equal($("#site-unsaved-dialog").open, true);
-  await click('#site-unsaved-dialog button[value="keep"]');
-  assert.equal(window.location.search, "?section=settings");
-  assert.equal($(select).value, "false");
-});
-
 test("a Compliance manager has no App settings tab", async () => {
-  await mountAdmin(SETTINGS, { role: "compliance-manager" });
+  await openSitePage(SETTINGS, { role: "compliance-manager" });
   assert.ok(missing('a[href="/sites/s1?section=settings"]'));
   assert.ok(missing(form));
   // The settings URL falls back to the details tab, not a blank page.

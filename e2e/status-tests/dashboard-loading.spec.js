@@ -354,8 +354,10 @@ test("an expanded Letters panel renews its links after compliance metadata refre
     page.locator('[data-site-letters] a[href="/letter-1.pdf"]'),
   ).toBeVisible();
   await page.evaluate(async () => {
-    const app = /** @type {any} */ (document.querySelector("admin-app"));
-    await app.openSite("s", false, true);
+    const sitePage = /** @type {any} */ (
+      document.querySelector("admin-site-page")
+    );
+    await sitePage.openSite("s", false, true);
   });
   await expect(
     page.locator('[data-site-letters] a[href="/letter-2.pdf"]'),

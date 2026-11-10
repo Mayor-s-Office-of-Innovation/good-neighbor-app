@@ -1,4 +1,5 @@
-// main.js adds these to AdminApp, so they can use this.state and render().
+// Site manager actions. siteManagerActions stays on <admin-app> for the directory page;
+// the manager page and the Site Access tab each mix in their own set.
 import {
   DIRECTORY_REQUEST_CONCURRENCY,
   createDirectoryLoader,
@@ -6,7 +7,6 @@ import {
 } from "../../manager-directory.js";
 import { actionFeedback, notifyAdmin } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
-import { adminCatalog } from "../../admin-catalog.js";
 import { adminErrorMessage } from "../../admin-error-messages.js";
 import {
   attachCreatedEnrollmentUrl,
@@ -24,7 +24,7 @@ import { saveWithFeedback, upsertRecord } from "../../save-feedback.js";
 
 export const siteManagerActions = {
   async loadSearchManagers() {
-    if (adminCatalog.managersLoaded || this.managerSearchPending) return;
+    if (this.catalog.managersLoaded || this.managerSearchPending) return;
     this.managerSearchPending = true;
     this.state.managerSearchFailed = false;
     try {
@@ -48,7 +48,7 @@ export const siteManagerActions = {
       this.fetchSiteManagers(),
     );
     if (
-      adminCatalog.managersLoaded &&
+      this.catalog.managersLoaded &&
       !force &&
       !this.managerDirectoryLoader.pending
     )
@@ -56,11 +56,11 @@ export const siteManagerActions = {
     return this.managerDirectoryLoader.load(
       force ||
         (this.managerDirectoryLoader.pending &&
-          this.managerFetchVersion !== adminCatalog.managersVersion),
+          this.managerFetchVersion !== this.catalog.managersVersion),
     );
   },
   async fetchSiteManagers() {
-    const version = (this.managerFetchVersion = adminCatalog.managersVersion);
+    const version = (this.managerFetchVersion = this.catalog.managersVersion);
     const activePrograms = this.state.programs.filter(
       (program) => program.status !== "inactive",
     );
@@ -73,7 +73,7 @@ export const siteManagerActions = {
       adminApi,
       DIRECTORY_REQUEST_CONCURRENCY,
     );
-    if (version !== adminCatalog.managersVersion) return;
+    if (version !== this.catalog.managersVersion) return;
     const memberships = siteMemberships.flatMap(({ site, memberships }) =>
       (memberships || []).map((membership) => ({
         ...membership,
@@ -112,185 +112,152 @@ export const siteManagerActions = {
         ),
       );
     const { people = [] } = await adminApi.listPeople();
-    if (version !== adminCatalog.managersVersion) return;
+    if (version !== this.catalog.managersVersion) return;
     this.state.people = people;
-    this.state.siteManagers = peopleDirectory(
-      people,
-      memberships,
-      this.state.programs,
-      this.state.providers,
-      legacyManagers,
+    this.catalog.setManagers(
+      peopleDirectory(
+        people,
+        memberships,
+        this.state.programs,
+        this.state.providers,
+        legacyManagers,
+      ),
     );
-    adminCatalog.markManagersLoaded(version);
+    this.catalog.markManagersLoaded(version);
     this.state.managerSearchFailed = false;
   },
+};
+
+/** Shows a one-time setup code on screen. The Site page mixes it in; the Provider page's binding calls it. */
+export const enrollmentCodeActions = {
+  /** @param {string} membershipId */
+  async showEnrollmentCode(scope, membershipId) {
+    const id =
+      scope === "site"
+        ? this.state.site?.siteId
+        : this.state.provider?.providerId;
+    if (!id) return;
+    const release = beginEnrollmentRequest(this, scope, id);
+    if (!release) return;
+    const view = (this.state.enrollmentCodeView ||= { codes: new Map() });
+    const visit = this.visit;
+    const current = () =>
+      this.state.enrollmentCodeView === view && this.visit === visit;
+    this.render();
+    try {
+      if (scope === "site") {
+        const member = this.state.managerMemberships.find(
+          (m) => m.membershipId === membershipId,
+        );
+        if (member?.legacyAssignment) {
+          const linked = await adminApi.createManagerMembership(
+            id,
+            member.name,
+            member.email,
+            this.state.site.leadProgramId,
+            member.userId,
+          );
+          if (!current()) return;
+          membershipId = linked.membership.membershipId;
+          this.state.managerMemberships = this.state.managerMemberships.map(
+            (m) => (m === member ? linked.membership : m),
+          );
+        }
+      }
+      const result =
+        scope === "site"
+          ? await adminApi.createManagerGrant(id, membershipId, "screen")
+          : await adminApi.createProviderManagerGrant(
+              id,
+              membershipId,
+              "screen",
+            );
+      if (!current()) return;
+      view.codes.set(result.grant.grantId, {
+        scope,
+        id,
+        grant: result.grant,
+        code: result.enrollmentCode,
+      });
+      const field =
+        scope === "site" ? "managerGrants" : "providerManagerGrants";
+      this.state[field] = upsertRecord(
+        this.state[field].map((grant) =>
+          scope === "site" &&
+          grant.membershipId === membershipId &&
+          grant.status === "pending" &&
+          grant.issuedBy !== "manager-email-recovery" &&
+          Date.parse(grant.expiresAt) > Date.now()
+            ? { ...grant, status: "replaced" }
+            : grant,
+        ),
+        result.grant,
+        "grantId",
+      );
+      // Site issuance replaces older pending grants for this membership.
+      for (const [grantId, entry] of view.codes) {
+        if (
+          entry.scope === scope &&
+          entry.id === id &&
+          entry.grant.membershipId === membershipId &&
+          grantId !== result.grant.grantId
+        )
+          view.codes.delete(grantId);
+      }
+      this.render();
+      this.querySelector(
+        `[data-enrollment-code="${CSS.escape(result.grant.grantId)}"]`,
+      )?.focus();
+    } catch (error) {
+      if (current())
+        notifyAdmin(
+          error.message === "provider_manager_grant_already_active"
+            ? "admin.enrollment.alreadyActive"
+            : "admin.enrollment.screenFailed",
+          "error",
+        );
+    } finally {
+      release();
+    }
+  },
+};
+
+/** The manager page's reads and saves, for /managers/:id and /managers/new. */
+export const siteManagerRecordActions = {
+  /**
+   * Put the manager's own record at the address, and in this.route, which render() draws.
+   * @param {string} userId
+   * @param {string} [search]
+   */
+  moveToManager(userId, search = "") {
+    window.history.replaceState(
+      {},
+      "",
+      `/managers/${encodeURIComponent(userId)}${search}`,
+    );
+    this.route = { name: "manager", id: userId };
+  },
+  /**
+   * Find the manager in the shared directory; false when the user left first.
+   * @param {string} userId
+   * @returns {Promise<boolean>}
+   */
   async openSiteManager(userId) {
-    const path = location.pathname + location.search;
+    const visit = this.visit;
     await this.loadSiteManagers();
-    if (location.pathname + location.search !== path) return;
+    if (visit !== this.visit) return false;
     this.state.siteSaveMessage = "";
     this.state.siteSaveError = "";
     this.state.siteManager =
-      this.state.siteManagers.find(
+      this.catalog.managers.find(
         (manager) =>
           manager.userId === userId || manager.legacyUserIds?.includes(userId),
       ) || null;
-    this.state.provider = null;
-    this.state.site = null;
-    if (!this.state.siteManager) this.state.error = "Site manager not found.";
-    else if (this.state.siteManager.userId !== userId)
-      window.history.replaceState(
-        {},
-        "",
-        `/managers/${encodeURIComponent(this.state.siteManager.userId)}${location.search}`,
-      );
-    this.render();
-    queueMicrotask(() => this.querySelector("h1")?.focus());
-  },
-  /** @param {HTMLFormElement} form */
-  async createSiteManagerFromAccess(form) {
-    const feedback = actionFeedback("admin.toast.managerAssigned");
-    try {
-      if (form.dataset.saving) return;
-      form.dataset.saving = "true";
-      const save = form.querySelector('button[type="submit"]');
-      const cancel = form.querySelector("[data-cancel-new-site-manager]");
-      save.disabled = true;
-      cancel.disabled = true;
-      const siteId = this.state.site.siteId;
-      const programId = this.state.site.leadProgramId;
-      const creationGeneration = this.navigationGeneration;
-      let assignedMembership;
-      let emailRequested = false;
-      try {
-        const data = new FormData(form);
-        emailRequested = Boolean(data.get("email-enrollment-link"));
-        const values = {
-          firstName: formValue(data, "new-manager-first-name"),
-          lastName: formValue(data, "new-manager-last-name"),
-          phone: formValue(data, "new-manager-phone"),
-          phoneExtension: formValue(data, "new-manager-extension"),
-          email: formValue(data, "new-manager-email"),
-          siteManager: true,
-        };
-        this.pendingManagerCreations ||= new Map();
-        const pendingUser = this.pendingManagerCreations.get(
-          JSON.stringify([siteId, programId, values]),
-        );
-        if (pendingUser) {
-          feedback.changed();
-          form.dataset.createdUser = JSON.stringify(pendingUser);
-        }
-        await createAndAssignManager(
-          this.pendingManagerCreations,
-          { siteId, programId, values },
-          {
-            createProgramUser: async (...args) => {
-              const created = await adminApi.createPerson({
-                ...args[1],
-                siteId,
-              });
-              const result = {
-                user: { ...created.person, userId: created.person.personId },
-              };
-              feedback.changed();
-              form.dataset.createdUser = JSON.stringify(result.user);
-              return result;
-            },
-            createManagerMembership: async (
-              siteId,
-              name,
-              email,
-              programId,
-              userId,
-            ) => {
-              const assigned = await adminApi.assignPersonToSite(siteId, {
-                personId: userId,
-                name,
-                email,
-              });
-              assignedMembership = assigned?.membership;
-              return assigned;
-            },
-          },
-        );
-        feedback.success();
-        adminCatalog.invalidate("managers");
-      } catch (error) {
-        feedback.failure(error);
-        showFormSaveError(
-          form,
-          form.dataset.createdUser
-            ? t("admin.siteManagers.assignmentError")
-            : adminErrorMessage(error, t, t("admin.programs.staffSaveError")),
-        );
-        delete form.dataset.saving;
-        save.disabled = false;
-        cancel.disabled = false;
-        return;
-      }
-      if (emailRequested && assignedMembership) {
-        const release = beginEnrollmentRequest(this, "site", siteId);
-        try {
-          if (!release) throw new Error("enrollment_request_pending");
-          const sent = await adminApi.createManagerGrant(
-            siteId,
-            assignedMembership.membershipId,
-            "link",
-          );
-          if (sent.grant?.deliveryStatus !== "accepted")
-            throw new Error("enrollment_email_failed");
-          notifyAdmin("admin.enrollment.emailed", "success");
-        } catch {
-          notifyAdmin("admin.enrollment.createdEmailFailed", "error");
-        } finally {
-          release?.();
-        }
-      }
-      form.closest("dialog")?.close();
-      if (this.navigationGeneration !== creationGeneration) return;
-      try {
-        await this.openSite(siteId, false);
-        this.querySelector(
-          "#manager-membership-form [data-manager-search]",
-        )?.focus();
-      } catch (error) {
-        feedback.failure(error);
-        this.state.error = error.message;
-        this.render();
-      }
-    } catch (error) {
-      feedback.failure(error);
-      throw error;
-    }
-  },
-  async addManagerMembership(form) {
-    const feedback = actionFeedback("admin.toast.managerAssigned");
-    try {
-      if (!this.state.site) return;
-      const data = new FormData(form);
-      const user = this.state.availableSiteUsers.find(
-        (item) => item.userId === formValue(data, "manager-user-id"),
-      );
-      if (!user?.email) throw new Error(t("admin.relationships.chooseManager"));
-      if (user.personId)
-        await adminApi.assignPersonToSite(this.state.site.siteId, user);
-      else
-        await adminApi.createManagerMembership(
-          this.state.site.siteId,
-          `${user.firstName} ${user.lastName}`.trim(),
-          user.email,
-          this.state.site.leadProgramId,
-          user.userId,
-        );
-      feedback.success();
-      adminCatalog.invalidate("managers");
-      form.reset();
-      await this.openSite(this.state.site.siteId, false);
-    } catch (error) {
-      feedback.failure(error);
-      throw error;
-    }
+    // focusOnOpen() shows the not-found error once <admin-app>, which draws it, holds the page.
+    this.managerMissing = !this.state.siteManager;
+    if (this.state.siteManager && this.state.siteManager.userId !== userId)
+      this.moveToManager(this.state.siteManager.userId, location.search);
+    return true;
   },
   async saveSiteManager(form) {
     return saveWithFeedback(form, () => this.persistSiteManager(form));
@@ -298,7 +265,7 @@ export const siteManagerActions = {
   async persistSiteManager(form) {
     const feedback = actionFeedback("admin.toast.managerSaved");
     try {
-      const origin = location.pathname + location.search;
+      const visit = this.visit;
       const data = new FormData(form);
       const current = this.state.siteManager;
       if (!current || current.personId)
@@ -417,16 +384,18 @@ export const siteManagerActions = {
               "",
           })),
         };
-        this.state.siteManagers = upsertRecord(
-          this.state.siteManagers.filter(
-            (manager) => !programChanged || manager.userId !== current.userId,
+        this.catalog.setManagers(
+          upsertRecord(
+            this.catalog.managers.filter(
+              (manager) => !programChanged || manager.userId !== current.userId,
+            ),
+            savedManager,
+            "userId",
           ),
-          savedManager,
-          "userId",
         );
         feedback.success();
-        adminCatalog.invalidate("managers");
-        if (location.pathname + location.search !== origin) return true;
+        this.catalog.invalidate("managers");
+        if (visit !== this.visit) return true;
         this.state.siteManager = savedManager;
         this.state.siteSaveMessage = "";
         this.state.siteSaveError = "";
@@ -437,13 +406,8 @@ export const siteManagerActions = {
           );
           return true;
         }
-        if (!current || user.userId !== current.userId) {
-          window.history.replaceState(
-            {},
-            "",
-            `/managers/${encodeURIComponent(user.userId)}`,
-          );
-        }
+        if (!current || user.userId !== current.userId)
+          this.moveToManager(user.userId);
         this.render();
         return true;
       } catch (error) {
@@ -457,7 +421,7 @@ export const siteManagerActions = {
     }
   },
   async persistPersonManager(form, current, feedback) {
-    const origin = location.pathname + location.search;
+    const visit = this.visit;
     const data = new FormData(form);
     const supervisor = this.state.capabilities.createEntities;
     const values = {
@@ -521,7 +485,7 @@ export const siteManagerActions = {
       }
       existing.delete(siteId);
     }
-    adminCatalog.supersedeManagersLoad();
+    this.catalog.supersedeManagersLoad();
     const assignedSites = [...existing.values()];
     const manager = {
       ...current,
@@ -539,12 +503,10 @@ export const siteManagerActions = {
       person,
       "personId",
     );
-    this.state.siteManagers = upsertRecord(
-      this.state.siteManagers,
-      manager,
-      "userId",
+    this.catalog.setManagers(
+      upsertRecord(this.catalog.managers, manager, "userId"),
     );
-    adminCatalog.updateSites((site) => ({
+    this.catalog.updateSites((site) => ({
       ...site,
       managerMemberships: [
         ...(site.managerMemberships || []).filter(
@@ -560,18 +522,14 @@ export const siteManagerActions = {
     }));
     feedback.success();
     form.dataset.isDirty = "false";
-    if (location.pathname + location.search !== origin) return true;
+    if (visit !== this.visit) return true;
     if (form.dataset.returnSite) {
       navigate(
         `/sites/${encodeURIComponent(form.dataset.returnSite)}?section=details`,
       );
       return true;
     }
-    window.history.replaceState(
-      {},
-      "",
-      `/managers/${encodeURIComponent(person.personId)}`,
-    );
+    this.moveToManager(person.personId);
     this.state.siteManager = manager;
     this.render();
     return true;
@@ -587,14 +545,14 @@ export const siteManagerActions = {
       try {
         await adminApi.removeSiteManager(manager.programId, manager.userId);
         feedback.success();
-        adminCatalog.invalidate("managers");
+        this.catalog.invalidate("managers");
         this.state.siteManager = null;
         const form = this.querySelector("#site-manager-record-form");
         if (form) form.dataset.isDirty = "false";
         const affected = new Set(
           (manager.assignedSites || []).map((site) => site.siteId),
         );
-        adminCatalog.updateSites((site) => {
+        this.catalog.updateSites((site) => {
           if (!affected.has(site.siteId)) return site;
           const { managerMemberships, ...rest } = site;
           return rest;
@@ -607,19 +565,170 @@ export const siteManagerActions = {
         );
       } catch (error) {
         feedback.failure(error);
-        this.state.error =
-          error instanceof Error &&
-          [
-            "site_primary_contact_in_use",
-            "program_primary_contact_in_use",
-          ].includes(error.message)
-            ? t("admin.programs.reassignPrimaryBeforeRemoval")
-            : error instanceof Error &&
-                error.message === "manager_removal_conflict"
-              ? "The manager or one of their Site assignments changed. Reload and try again."
-              : "The manager could not be removed. Try again.";
-        this.render();
+        this.reportError(
+          new Error(
+            error instanceof Error &&
+            [
+              "site_primary_contact_in_use",
+              "program_primary_contact_in_use",
+            ].includes(error.message)
+              ? t("admin.programs.reassignPrimaryBeforeRemoval")
+              : error instanceof Error &&
+                  error.message === "manager_removal_conflict"
+                ? "The manager or one of their Site assignments changed. Reload and try again."
+                : "The manager could not be removed. Try again.",
+          ),
+        );
       }
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
+  },
+};
+
+/** The Site Access tab's manager forms, mixed into the Site page. */
+export const siteManagerAccessActions = {
+  /** @param {HTMLFormElement} form */
+  async createSiteManagerFromAccess(form) {
+    const feedback = actionFeedback("admin.toast.managerAssigned");
+    try {
+      if (form.dataset.saving) return;
+      form.dataset.saving = "true";
+      const save = form.querySelector('button[type="submit"]');
+      const cancel = form.querySelector("[data-cancel-new-site-manager]");
+      save.disabled = true;
+      cancel.disabled = true;
+      const siteId = this.state.site.siteId;
+      const programId = this.state.site.leadProgramId;
+      const visit = this.visit;
+      let assignedMembership;
+      let emailRequested = false;
+      try {
+        const data = new FormData(form);
+        emailRequested = Boolean(data.get("email-enrollment-link"));
+        const values = {
+          firstName: formValue(data, "new-manager-first-name"),
+          lastName: formValue(data, "new-manager-last-name"),
+          phone: formValue(data, "new-manager-phone"),
+          phoneExtension: formValue(data, "new-manager-extension"),
+          email: formValue(data, "new-manager-email"),
+          siteManager: true,
+        };
+        this.pendingManagerCreations ||= new Map();
+        const pendingUser = this.pendingManagerCreations.get(
+          JSON.stringify([siteId, programId, values]),
+        );
+        if (pendingUser) {
+          feedback.changed();
+          form.dataset.createdUser = JSON.stringify(pendingUser);
+        }
+        await createAndAssignManager(
+          this.pendingManagerCreations,
+          { siteId, programId, values },
+          {
+            createProgramUser: async (...args) => {
+              const created = await adminApi.createPerson({
+                ...args[1],
+                siteId,
+              });
+              const result = {
+                user: { ...created.person, userId: created.person.personId },
+              };
+              feedback.changed();
+              form.dataset.createdUser = JSON.stringify(result.user);
+              return result;
+            },
+            createManagerMembership: async (
+              siteId,
+              name,
+              email,
+              programId,
+              userId,
+            ) => {
+              const assigned = await adminApi.assignPersonToSite(siteId, {
+                personId: userId,
+                name,
+                email,
+              });
+              assignedMembership = assigned?.membership;
+              return assigned;
+            },
+          },
+        );
+        feedback.success();
+        this.catalog.invalidate("managers");
+      } catch (error) {
+        feedback.failure(error);
+        showFormSaveError(
+          form,
+          form.dataset.createdUser
+            ? t("admin.siteManagers.assignmentError")
+            : adminErrorMessage(error, t, t("admin.programs.staffSaveError")),
+        );
+        delete form.dataset.saving;
+        save.disabled = false;
+        cancel.disabled = false;
+        return;
+      }
+      if (emailRequested && assignedMembership) {
+        const release = beginEnrollmentRequest(this, "site", siteId);
+        try {
+          if (!release) throw new Error("enrollment_request_pending");
+          const sent = await adminApi.createManagerGrant(
+            siteId,
+            assignedMembership.membershipId,
+            "link",
+          );
+          if (sent.grant?.deliveryStatus !== "accepted")
+            throw new Error("enrollment_email_failed");
+          notifyAdmin("admin.enrollment.emailed", "success");
+        } catch {
+          notifyAdmin("admin.enrollment.createdEmailFailed", "error");
+        } finally {
+          release?.();
+        }
+      }
+      form.closest("dialog")?.close();
+      if (visit !== this.visit) return;
+      try {
+        await this.reloadSite(siteId, visit);
+        this.querySelector(
+          "#manager-membership-form [data-manager-search]",
+        )?.focus();
+      } catch (error) {
+        feedback.failure(error);
+        this.reportError(error);
+      }
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
+  },
+  async addManagerMembership(form) {
+    const feedback = actionFeedback("admin.toast.managerAssigned");
+    try {
+      if (!this.state.site) return;
+      const { siteId, leadProgramId } = this.state.site;
+      const visit = this.visit;
+      const data = new FormData(form);
+      const user = this.state.availableSiteUsers.find(
+        (item) => item.userId === formValue(data, "manager-user-id"),
+      );
+      if (!user?.email) throw new Error(t("admin.relationships.chooseManager"));
+      if (user.personId) await adminApi.assignPersonToSite(siteId, user);
+      else
+        await adminApi.createManagerMembership(
+          siteId,
+          `${user.firstName} ${user.lastName}`.trim(),
+          user.email,
+          leadProgramId,
+          user.userId,
+        );
+      feedback.success();
+      this.catalog.invalidate("managers");
+      form.reset();
+      await this.reloadSite(siteId, visit);
     } catch (error) {
       feedback.failure(error);
       throw error;
@@ -630,25 +739,20 @@ export const siteManagerActions = {
     const feedback = actionFeedback("admin.toast.managerRemoved");
     try {
       if (!this.state.site) return;
+      const siteId = this.state.site.siteId;
+      const visit = this.visit;
       const membership = this.state.managerMemberships.find(
         (item) => item.membershipId === membershipId,
       );
       const result = membership?.legacyAssignment
         ? {
-            ...(await adminApi.unassignSiteUser(
-              this.state.site.siteId,
-              membership.userId,
-            )),
+            ...(await adminApi.unassignSiteUser(siteId, membership.userId)),
             revokedBindingCount: 0,
           }
-        : await adminApi.deactivateManagerMembership(
-            this.state.site.siteId,
-            membershipId,
-          );
+        : await adminApi.deactivateManagerMembership(siteId, membershipId);
       feedback.success();
-      adminCatalog.invalidate("managers");
-      const siteId = this.state.site.siteId;
-      await this.openSite(siteId, false);
+      this.catalog.invalidate("managers");
+      if (!(await this.reloadSite(siteId, visit))) return;
       this.state.revocationMessage = `${membership?.name || "Site Manager"} removed; ${result.revokedBindingCount} Manager binding${result.revokedBindingCount === 1 ? "" : "s"} revoked at this Site.`;
       this.render();
     } catch (error) {
@@ -667,98 +771,6 @@ export const siteManagerActions = {
     this.querySelector("#remove-manager-membership-dialog")?.showModal();
   },
 
-  /** @param {string} membershipId */
-  async showEnrollmentCode(scope, membershipId) {
-    const id =
-      scope === "site"
-        ? this.state.site?.siteId
-        : this.state.provider?.providerId;
-    if (!id) return;
-    const release = beginEnrollmentRequest(this, scope, id);
-    if (!release) return;
-    const view = (this.state.enrollmentCodeView ||= { codes: new Map() });
-    const generation = this.navigationGeneration;
-    const current = () =>
-      this.state.enrollmentCodeView === view &&
-      this.navigationGeneration === generation;
-    this.render();
-    try {
-      if (scope === "site") {
-        const member = this.state.managerMemberships.find(
-          (m) => m.membershipId === membershipId,
-        );
-        if (member?.legacyAssignment) {
-          const linked = await adminApi.createManagerMembership(
-            id,
-            member.name,
-            member.email,
-            this.state.site.leadProgramId,
-            member.userId,
-          );
-          if (!current()) return;
-          membershipId = linked.membership.membershipId;
-          this.state.managerMemberships = this.state.managerMemberships.map(
-            (m) => (m === member ? linked.membership : m),
-          );
-        }
-      }
-      const result =
-        scope === "site"
-          ? await adminApi.createManagerGrant(id, membershipId, "screen")
-          : await adminApi.createProviderManagerGrant(
-              id,
-              membershipId,
-              "screen",
-            );
-      if (!current()) return;
-      view.codes.set(result.grant.grantId, {
-        scope,
-        id,
-        grant: result.grant,
-        code: result.enrollmentCode,
-      });
-      const field =
-        scope === "site" ? "managerGrants" : "providerManagerGrants";
-      this.state[field] = upsertRecord(
-        this.state[field].map((grant) =>
-          scope === "site" &&
-          grant.membershipId === membershipId &&
-          grant.status === "pending" &&
-          grant.issuedBy !== "manager-email-recovery" &&
-          Date.parse(grant.expiresAt) > Date.now()
-            ? { ...grant, status: "replaced" }
-            : grant,
-        ),
-        result.grant,
-        "grantId",
-      );
-      // Site issuance replaces older pending grants for this membership.
-      for (const [grantId, entry] of view.codes) {
-        if (
-          entry.scope === scope &&
-          entry.id === id &&
-          entry.grant.membershipId === membershipId &&
-          grantId !== result.grant.grantId
-        )
-          view.codes.delete(grantId);
-      }
-      this.render();
-      this.querySelector(
-        `[data-enrollment-code="${CSS.escape(result.grant.grantId)}"]`,
-      )?.focus();
-    } catch (error) {
-      if (current())
-        notifyAdmin(
-          error.message === "provider_manager_grant_already_active"
-            ? "admin.enrollment.alreadyActive"
-            : "admin.enrollment.screenFailed",
-          "error",
-        );
-    } finally {
-      release();
-    }
-  },
-
   async issueManagerGrant(membershipId, deliveryMode = "link") {
     const release = beginEnrollmentRequest(
       this,
@@ -766,33 +778,35 @@ export const siteManagerActions = {
       this.state.site?.siteId,
     );
     if (!release) return;
-    if (this.state.error) {
-      this.state.error = "";
-      this.render();
-    }
+    this.clearError();
     const feedback = actionFeedback("admin.enrollment.emailed");
     try {
       if (!this.state.site) return;
+      const { siteId, leadProgramId } = this.state.site;
+      const visit = this.visit;
       const membership = this.state.managerMemberships.find(
         (item) => item.membershipId === membershipId,
       );
       if (membership?.legacyAssignment) {
         const linked = await adminApi.createManagerMembership(
-          this.state.site.siteId,
+          siteId,
           membership.name,
           membership.email,
-          this.state.site.leadProgramId,
+          leadProgramId,
           membership.userId,
         );
         feedback.changed();
         membershipId = linked.membership.membershipId;
-        this.state.managerMemberships = this.state.managerMemberships.map(
-          (item) => (item === membership ? linked.membership : item),
-        );
-        this.render();
+        // The link still goes out; only the page the user left skips the redraw.
+        if (visit === this.visit) {
+          this.state.managerMemberships = this.state.managerMemberships.map(
+            (item) => (item === membership ? linked.membership : item),
+          );
+          this.render();
+        }
       }
       const created = await adminApi.createManagerGrant(
-        this.state.site.siteId,
+        siteId,
         membershipId,
         deliveryMode,
       );
@@ -804,9 +818,7 @@ export const siteManagerActions = {
           : "admin.toast.enrollmentEmailFailed",
         created.grant?.deliveryStatus === "accepted" ? "success" : "error",
       );
-      if (
-        (await this.refreshSiteAccess(this.state.site.siteId, false)) === false
-      )
+      if ((await this.refreshSiteAccess(siteId, false, visit)) === false)
         return;
       this.state.managerGrants = attachCreatedEnrollmentUrl(
         this.state.managerGrants,
@@ -855,10 +867,11 @@ export const siteManagerActions = {
     const feedback = actionFeedback("admin.toast.linkCancelled");
     try {
       if (!this.state.site) return;
-      await adminApi.cancelManagerGrant(this.state.site.siteId, grantId);
+      const siteId = this.state.site.siteId;
+      const visit = this.visit;
+      await adminApi.cancelManagerGrant(siteId, grantId);
       feedback.success();
-      if ((await this.refreshSiteAccess(this.state.site.siteId)) === false)
-        return;
+      await this.refreshSiteAccess(siteId, true, visit);
     } catch (error) {
       feedback.failure(error);
       throw error;

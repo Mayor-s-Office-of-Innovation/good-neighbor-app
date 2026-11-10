@@ -1,4 +1,4 @@
-// main.js adds these to AdminApp, so they can use this.state and render().
+// Setup code and device actions, mixed into the Site page so they share its state.
 import { actionFeedback } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
 import { confirmDeviceRevocation } from "./device-revocation-dialog.js";
@@ -29,11 +29,14 @@ export const siteAccessActions = {
    */
   async issueSetupCodeForEmail(email, accessLevel = "general") {
     if (!this.state.site || !email.trim()) return;
+    const visit = this.visit;
     const result = await adminApi.issueSetupCode(
       this.state.site.siteId,
       email,
       accessLevel,
     );
+    // The code is a secret, so it never shows on a page the user went to since.
+    if (visit !== this.visit) return;
     this.state.issuedCode = result.setupCode;
     this.render();
   },
@@ -47,7 +50,7 @@ export const siteAccessActions = {
     this.deviceRevocationController?.abort();
     const controller = new AbortController();
     this.deviceRevocationController = controller;
-    const generation = this.navigationGeneration || 0;
+    const visit = this.visit;
     try {
       if (!this.state.site) return;
       const device = this.state.devices.find(
@@ -65,13 +68,14 @@ export const siteAccessActions = {
       if (
         controller.signal.aborted ||
         !this.isConnected ||
-        (this.navigationGeneration || 0) !== generation ||
+        visit !== this.visit ||
         this.state.site?.siteId !== siteId
       )
         return;
       await adminApi.revokeDevice(siteId, deviceId);
       feedback.success();
-      if ((await this.refreshSiteAccess(siteId, false)) === false) return;
+      if ((await this.refreshSiteAccess(siteId, false, visit)) === false)
+        return;
       this.state.revocationMessage = t("admin.devices.revokedMessage", {
         name: label,
       });
@@ -88,9 +92,11 @@ export const siteAccessActions = {
     const feedback = actionFeedback("admin.toast.accessRemoved");
     try {
       if (!this.state.site) return;
+      const siteId = this.state.site.siteId;
+      const visit = this.visit;
       const confirmation = formValue(new FormData(form), "confirmation");
       const result = await adminApi.revokeAllSiteDeviceBindings(
-        this.state.site.siteId,
+        siteId,
         confirmation,
       );
       feedback.success(
@@ -99,8 +105,8 @@ export const siteAccessActions = {
           : "admin.toast.revocationPartial",
         result.status === "complete" ? "success" : "info",
       );
-      const siteId = this.state.site.siteId;
-      if ((await this.refreshSiteAccess(siteId, false)) === false) return;
+      if ((await this.refreshSiteAccess(siteId, false, visit)) === false)
+        return;
       this.state.revocationMessage =
         result.status === "complete"
           ? `Operation ${result.operationId}: all Site credentials invalidated and ${result.affectedCount} device record${result.affectedCount === 1 ? "" : "s"} reconciled.`
@@ -117,14 +123,16 @@ export const siteAccessActions = {
       if (!this.state.site || !this.state.physicalDeviceRevocationPreview)
         return;
       const preview = this.state.physicalDeviceRevocationPreview;
+      const siteId = this.state.site.siteId;
+      const visit = this.visit;
       const confirmation = formValue(new FormData(form), "confirmation");
       const result = await adminApi.revokePhysicalDeviceEverywhere(
         preview.physicalDeviceId,
         confirmation,
       );
       feedback.success();
-      const siteId = this.state.site.siteId;
-      if ((await this.refreshSiteAccess(siteId, false)) === false) return;
+      if ((await this.refreshSiteAccess(siteId, false, visit)) === false)
+        return;
       this.state.revocationMessage = result.alreadyRevoked
         ? "This physical device was already revoked."
         : `Operation ${result.operationId}: physical device revoked across ${result.affectedCount} Site binding${result.affectedCount === 1 ? "" : "s"}.`;
@@ -148,9 +156,11 @@ export const siteAccessActions = {
       .getAll("site-id")
       .map((value) => String(value));
     if (siteIds.length < 2 || siteIds.length > 20) {
-      this.state.error =
-        "Select between two and 20 Sites for an emergency revocation.";
-      this.render();
+      this.reportError(
+        new Error(
+          "Select between two and 20 Sites for an emergency revocation.",
+        ),
+      );
       return;
     }
     this.state.emergencyRevocationPreview =
@@ -193,14 +203,16 @@ export const siteAccessActions = {
       const bindingId =
         this.state.suspensionTarget.bindingId ||
         this.state.suspensionTarget.deviceId;
+      const siteId = this.state.site.siteId;
+      const visit = this.visit;
       const result = await adminApi.suspendDeviceBinding(
-        this.state.site.siteId,
+        siteId,
         bindingId,
         reason,
       );
       feedback.success();
-      const siteId = this.state.site.siteId;
-      if ((await this.refreshSiteAccess(siteId, false)) === false) return;
+      if ((await this.refreshSiteAccess(siteId, false, visit)) === false)
+        return;
       this.state.revocationMessage = result.alreadySuspended
         ? "This binding was already suspended."
         : `${result.binding.label || "Device binding"} suspended. Existing credentials are invalid; re-enrollment requires a new single-Site grant.`;

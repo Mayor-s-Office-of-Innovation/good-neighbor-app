@@ -10,7 +10,6 @@
  * @typedef {object} AdminOwnState
  * @property {ReturnType<typeof import("./pages/directory/site-311-batch.js").create311Batch>} [site311Batch]
  * @property {any[]} [people]
- * @property {any[]} siteManagers
  * @property {any | null} siteManager
  * @property {boolean} [managerSearchFailed]
  * @property {AdminProvider | null} provider
@@ -56,6 +55,7 @@
  * @property {AdminSite[]} sites
  * @property {any[]} programs
  * @property {any[]} programManagers
+ * @property {any[]} siteManagers
  * @property {boolean} managerDirectoryLoaded
  * @property {{ departments: any[], systemsOfCare: any[] }} oversightOptions
  * @property {any | null} profile
