@@ -17,7 +17,7 @@ import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { failTimes } from "../../e2e/admin-tests/directory-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// main.js has no catalog key for this copy, so tests match its English.
+// pages/directory/directory.templates.js has no catalog key for this copy, so tests match its English.
 
 const SEARCH_DELAY_MS = 300;
 const results = "#directory-results";

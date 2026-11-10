@@ -17,7 +17,7 @@ import {
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// main.js has no catalog key for this copy, so tests match its English.
+// pages/site/access.templates.js and record.templates.js have no catalog key for this copy, so tests match their English.
 
 const leaveDialog = "#site-unsaved-dialog";
 const siteName = 'admin-app wa-input[name="site-name"]';

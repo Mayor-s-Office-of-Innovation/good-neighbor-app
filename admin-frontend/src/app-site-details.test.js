@@ -14,7 +14,7 @@ import {
 } from "../test-support/admin-dom.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// main.js has no catalog key for this copy, so tests match its English.
+// pages/site/save-error-messages.js has no catalog key for this copy, so tests match its English.
 const SITE_CONFLICT =
   "Someone else updated this site. Reload it before saving your changes.";
 const saveError = () =>

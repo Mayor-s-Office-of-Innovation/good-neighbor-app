@@ -19,7 +19,8 @@ import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { providerData } from "../../e2e/admin-tests/providers-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// main.js has no catalog key for this copy, so tests match its English.
+// pages/provider/provider.templates.js has no catalog key for this copy, so
+// tests match its English.
 
 /**
  * @param {string} path
