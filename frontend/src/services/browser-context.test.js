@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { isInAppBrowser, escapeUrlForPlatform } from "./browser-context.js";
+import { isInAppBrowser } from "./browser-context.js";
+import { escapeUrlForPlatform } from "./browser-escape.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
