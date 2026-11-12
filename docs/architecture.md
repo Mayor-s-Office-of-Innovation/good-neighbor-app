@@ -450,15 +450,13 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
 
 ## Edge routing contract (SPA fallback vs API routes)
 
-Known email/social webviews stop at a browser-opening screen before setup mounts
-or invitation and Home Screen grants are stripped or redeemed. The screen keeps
-the original URL intact and offers copy-link and manual-copy instructions; it
-does not assume a new window opens an external browser. Detection uses known
-user-agent markers only, so ordinary and unrecognized browsers retain their
-normal startup flow. Webviews that disguise themselves as ordinary browsers can
-still evade detection; real email-app testing remains necessary. This prevents
-new enrollment in detected webviews, but does not transfer access already stored
-in one or restore a consumed invitation.
+Known email/social webviews receive a dismissible browser warning, without
+blocking setup or existing sessions. PWA install offers remain suppressed in
+recognized webviews because their browser controls may not support installation.
+Detection uses known user-agent markers only; unrecognized webviews can evade
+it. The warning's external-browser action is best effort, not a guaranteed
+handoff. Invitation redemption remains single-use; opening another browser does
+not transfer locally stored access or drafts.
 
 The invitation screen's Open the app recovery link uses `data-reload` to bypass
 SPA navigation and restart session loading from local storage. Setup pauses its

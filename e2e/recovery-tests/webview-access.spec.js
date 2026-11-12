@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-/** @typedef {Window & { __copiedLink?: string, __beforeRecovery?: boolean }} TestWindow */
+/** @typedef {Window & { __beforeRecovery?: boolean }} TestWindow */
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/health", (route) =>
@@ -21,82 +21,38 @@ for (const agent of [
   `${safari} GmailApp`,
   "Mozilla/5.0 (Linux; Android 14; Test Device; wv) AppleWebKit/537.36 Chrome/126.0.0.0 Mobile Safari/537.36",
 ]) {
-  test(`webview prevents enrollment and preserves the full invitation: ${agent}`, async ({
-    browser,
-    baseURL,
+  test(`webview warning allows deliberate enrollment: ${agent}`, async ({
+    page,
   }) => {
-    const context = await browser.newContext({
-      userAgent: agent,
-      viewport: { width: 390, height: 844 },
-    });
-    const page = await context.newPage();
-    /** @type {string[]} */
-    const mutations = [];
-    page.on("request", (request) => {
-      if (request.method() === "POST") mutations.push(request.url());
-    });
-    await page.addInitScript(() => {
-      Object.defineProperty(window.navigator, "clipboard", {
-        configurable: true,
-        value: {
-          writeText: async () => {
-            throw new Error("Clipboard unavailable");
-          },
-        },
+    await page.addInitScript((agent) => {
+      Object.defineProperty(window.navigator, "userAgent", { value: agent });
+    }, agent);
+    let redemptions = 0;
+    await page.route("**/app/v1/enrollment/redeem", (route) => {
+      redemptions++;
+      return route.fulfill({
+        status: 409,
+        json: { error: "enrollment_already_used" },
       });
     });
-    await page.goto(`${baseURL}${invitation}`);
-    await expect(page.locator("#webview-gate")).toBeVisible();
-    await expect(page.locator("site-setup")).toHaveCount(0);
-    expect(page.url()).toBe(`${baseURL}${invitation}`);
-    await page.locator("#webview-copy").focus();
-    await page.keyboard.press("Enter");
-    await expect(page.locator("#webview-link")).toBeVisible();
-    await expect(page.locator("#webview-link")).toHaveJSProperty(
-      "value",
-      `${baseURL}${invitation}`,
-    );
+    await page.goto(invitation);
+    await expect(page.locator("#enrollment-form")).toBeVisible();
+    await expect(page.locator(".webview-banner")).toBeVisible();
+    await expect(page.locator("#webview-gate")).toHaveCount(0);
+    expect(redemptions).toBe(0);
     const { default: AxeBuilder } = await import("@axe-core/playwright");
     expect(
-      (await new AxeBuilder({ page }).include("#webview-gate").analyze())
+      (await new AxeBuilder({ page }).include(".webview-banner").analyze())
         .violations,
     ).toEqual([]);
-    expect(mutations).toEqual([]);
-    await context.close();
+    await page.locator(".webview-banner__close").focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".webview-banner")).toHaveCount(0);
+    await expect(page.locator("#confirm-enrollment")).toBeEnabled();
+    await page.locator("#confirm-enrollment").click();
+    await expect.poll(() => redemptions).toBe(1);
   });
 }
-
-test("copy success preserves invitation credentials without redeeming them", async ({
-  page,
-}) => {
-  await page.addInitScript((agent) => {
-    Object.defineProperty(window.navigator, "userAgent", { value: agent });
-    Object.defineProperty(window.navigator, "clipboard", {
-      configurable: true,
-      value: {
-        /** @param {string} value */
-        writeText: async (value) => {
-          /** @type {TestWindow} */ (window).__copiedLink = value;
-        },
-      },
-    });
-  }, `${safari} Outlook-iOS/9400.0`);
-  await page.goto(invitation);
-  const original = page.url();
-  await expect(page.locator("#webview-gate")).toBeVisible();
-  await page.screenshot({
-    path: `/tmp/gnp-webview-${test.info().project.name}.png`,
-    fullPage: true,
-  });
-  await page.locator("#webview-copy").click();
-  await expect
-    .poll(() =>
-      page.evaluate(() => /** @type {TestWindow} */ (window).__copiedLink),
-    )
-    .toBe(original);
-  await expect(page.locator("#webview-link")).toBeHidden();
-  await expect(page.locator("site-setup")).toHaveCount(0);
-});
 
 for (const agent of [
   safari,
@@ -111,7 +67,7 @@ for (const agent of [
     const page = await context.newPage();
     await page.goto(`${baseURL}${invitation}`);
     await expect(page.locator("#enrollment-form")).toBeVisible();
-    await expect(page.locator("#webview-gate")).toHaveCount(0);
+    await expect(page.locator(".webview-banner")).toHaveCount(0);
     await context.close();
   });
 }

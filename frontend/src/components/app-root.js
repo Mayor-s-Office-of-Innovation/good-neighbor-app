@@ -120,16 +120,6 @@ export class AppRoot extends HTMLElement {
   _routeTransitionId = 0;
 
   async connectedCallback() {
-    // Stop before setup mounts or any one-use credentials are stripped/redeemed.
-    // Keep the original URL available for the email app's Open in browser action.
-    // Detection deliberately covers known webviews only; ordinary browsers keep
-    // their existing startup and session behavior.
-    if (isInAppBrowser()) {
-      await i18nReady;
-      const { showWebviewGate } = await import("./webview-warning.js");
-      if (this.isConnected) showWebviewGate(this);
-      return;
-    }
     // Home Screen handoff credentials ride the launch URL's fragment
     // (services/session-handoff.js). Read and strip them synchronously, before
     // anything awaits or reads the location; they are acted on below once the
@@ -399,6 +389,7 @@ export class AppRoot extends HTMLElement {
     this.innerHTML = setupView(options);
     this.append(document.createElement("app-toasts"));
     this.append(document.createElement("connection-status"));
+    this._maybeWarnInAppBrowser();
     this.querySelector("site-setup").addEventListener("sitecancel", () => {
       if (!this._site) return;
       this._renderApp();
@@ -509,6 +500,7 @@ export class AppRoot extends HTMLElement {
     this.innerHTML = appShell({ siteName: this._site.name });
     this.append(document.createElement("app-toasts"));
     this.append(document.createElement("connection-status"));
+    this._maybeWarnInAppBrowser();
     this._view = this.querySelector("#view");
     this._shell = this.querySelector(".app");
     this._maybeOfferInstall();
@@ -541,6 +533,14 @@ export class AppRoot extends HTMLElement {
         this._view,
       );
     });
+  }
+
+  /** Offer a dismissible warning without blocking setup or existing access. */
+  _maybeWarnInAppBrowser() {
+    if (!isInAppBrowser()) return;
+    void import("./webview-warning.js").then(({ showWebviewWarning }) =>
+      showWebviewWarning(this),
+    );
   }
 
   /**

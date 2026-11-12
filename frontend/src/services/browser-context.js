@@ -8,11 +8,11 @@
   we can detect the common ones and hand the user to the real browser:
 
   New windows and Android intents are best-effort only: the host app controls
-  navigation. Startup uses explicit browser-opening instructions and copying
-  the original link instead of assuming a new window escapes the webview.
+  navigation. The dismissible banner offers an external-browser attempt, not
+  a guaranteed escape from the host app.
 
-  Detection is conservative user-agent sniffing. Only recognized webviews get
-  the startup gate; unknown agents and normal browsers keep their usual flow.
+  Detection is conservative user-agent sniffing. Recognized webviews receive
+  a warning and do not get PWA install offers; access itself is not blocked.
 */
 
 const IOS_WEBVIEW_PATTERNS = [
