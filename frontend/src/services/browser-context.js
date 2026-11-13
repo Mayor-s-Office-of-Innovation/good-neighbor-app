@@ -7,12 +7,12 @@
   re-entry codes can behave oddly. We can't fix a webview from inside it, but
   we can detect the common ones and hand the user to the real browser:
 
-  - iOS: any `target="_blank"` link opens in Safari from every known webview.
-  - Android WebView: `target="_blank"` often stays trapped, so we hand off an
-    `intent://` URL whose `S.browser_fallback_url` opens the default browser.
+  New windows and Android intents are best-effort only: the host app controls
+  navigation. The dismissible banner offers an external-browser attempt, not
+  a guaranteed escape from the host app.
 
-  Detection is user-agent sniffing, so it's "warn on known-bad agents," never a
-  hard block — the caller's copy should say "may not open," not "won't."
+  Detection is conservative user-agent sniffing. Recognized webviews receive
+  a warning and do not get PWA install offers; access itself is not blocked.
 */
 
 const IOS_WEBVIEW_PATTERNS = [
@@ -44,46 +44,4 @@ export function isInAppBrowser(
   if (!/iPhone|iPad|iPod/.test(ua)) return false;
   if (IOS_BROWSER_EXCEPTIONS.test(ua)) return false;
   return IOS_WEBVIEW_PATTERNS.some((pattern) => pattern.test(ua));
-}
-
-/**
- * The current page URL to hand off to the real browser, with a `code` param
- * preserved so onboarding can continue after the jump (site-setup reads it).
- * @returns {string}
- */
-export function handoffUrl() {
-  return typeof location !== "undefined" ? location.href : "";
-}
-
-/**
- * Escape URL for the current context: plain https on iOS, an intent:// URL on
- * Android. The caller must invoke from a user gesture (a tap) for popups to
- * be allowed.
- *
- * Android intent URIs are authority-form (`intent://<host>/<path>#Intent;...`),
- * not `intent:<full-url>` — an inline `://` after `intent:` would itself be
- * parsed as the URI's authority/delimiter territory, and any `#` in the page
- * URL would terminate the target URI before the metadata block. So the page
- * URL rides ONLY in `S.browser_fallback_url` (fully percent-encoded, `#`
- * included), with a bare host/path target declared via `scheme=https`.
- * @param {string} ua
- * @returns {string}
- */
-export function escapeUrlForPlatform(
-  ua = typeof navigator !== "undefined" ? navigator.userAgent : "",
-) {
-  const target = handoffUrl();
-  if (!target) return target;
-  if (/Android/.test(ua)) {
-    let parsed;
-    try {
-      parsed = new URL(target);
-    } catch {
-      return target;
-    }
-    const hostPath = `${parsed.host}${parsed.pathname}${parsed.search}`;
-    const fallback = encodeURIComponent(target);
-    return `intent://${hostPath}#Intent;scheme=${parsed.protocol.replace(":", "")};S.browser_fallback_url=${fallback};end`;
-  }
-  return target;
 }

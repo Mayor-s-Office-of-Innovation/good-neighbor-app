@@ -256,7 +256,7 @@ export function enrollmentView({ checking, error, reference = "" }) {
           ${escapeHtml(t("setup.enrollment.submit"))}
         </button>
       </form>
-      <a class="btn-link" href="/"
+      <a id="enrollment-open-app" class="btn-link" href="/" data-reload
         >${escapeHtml(t("setup.enrollment.openApp"))}</a
       >
     </section>

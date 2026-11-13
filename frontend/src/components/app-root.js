@@ -538,11 +538,7 @@ export class AppRoot extends HTMLElement {
     });
   }
 
-  /**
-   * In-app-webview heads-up: known webviews silently break the camera intent,
-   * so warn once per load and offer the escape hatch (Safari / default
-   * browser). Dismissible; nothing about the app is blocked.
-   */
+  /** Offer a dismissible warning without blocking setup or existing access. */
   _maybeWarnInAppBrowser() {
     if (!isInAppBrowser()) return;
     void import("./webview-warning.js").then(({ showWebviewWarning }) =>

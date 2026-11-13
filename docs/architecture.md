@@ -455,6 +455,18 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
 
 ## Edge routing contract (SPA fallback vs API routes)
 
+Known email/social webviews receive a dismissible browser warning, without
+blocking setup or existing sessions. PWA install offers remain suppressed in
+recognized webviews because their browser controls may not support installation.
+Detection uses known user-agent markers only; unrecognized webviews can evade
+it. The warning's external-browser action is best effort, not a guaranteed
+handoff. Invitation redemption remains single-use; opening another browser does
+not transfer locally stored access or drafts.
+
+The invitation screen's Open the app recovery link uses `data-reload` to bypass
+SPA navigation and restart session loading from local storage. Setup pauses its
+route subscription, so changing the URL alone cannot restore a saved session.
+
 Frontend publication uses `scripts/publish-web-assets.sh` for both the provider
 and admin builds. Hashed assets upload first with immutable caching, other
 resources next, and entry HTML last with revalidation. Publication retains old
