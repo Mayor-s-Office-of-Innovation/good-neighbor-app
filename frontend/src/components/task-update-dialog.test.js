@@ -22,20 +22,23 @@ vi.mock("../services/api.js", () => ({
 }));
 vi.mock("../state/toasts.js", () => toasts);
 
+// Component registrations outlive mock call history between tests.
+const components = new Map();
+
 beforeAll(() => {
   vi.stubGlobal("HTMLElement", class {});
   vi.stubGlobal("requestAnimationFrame", (callback) => setTimeout(callback, 0));
   vi.stubGlobal("cancelAnimationFrame", (id) => clearTimeout(id));
-  vi.stubGlobal("customElements", { define: vi.fn() });
+  vi.stubGlobal("customElements", {
+    define: (name, constructor) => components.set(name, constructor),
+  });
 });
 
 describe("task-update-dialog controller", () => {
   it("registers a controller whose draft detection delegates to domain state", async () => {
     await import("./task-update-dialog.js");
-    const registration = vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "task-update-dialog");
-    const Dialog = /** @type {any} */ (registration[1]);
+    const registration = components.get("task-update-dialog");
+    const Dialog = /** @type {any} */ (registration);
     const dialog = new Dialog();
 
     dialog._mode = "action";
@@ -47,10 +50,8 @@ describe("task-update-dialog controller", () => {
 
   it("keeps a dirty editor open until discard is confirmed", async () => {
     await import("./task-update-dialog.js");
-    const registration = vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "task-update-dialog");
-    const Dialog = /** @type {any} */ (registration[1]);
+    const registration = components.get("task-update-dialog");
+    const Dialog = /** @type {any} */ (registration);
     const dialog = new Dialog();
     dialog._mode = "action";
     dialog._actionText = "Draft action";
@@ -71,10 +72,8 @@ describe("task-update-dialog controller", () => {
 
   it("emits the host refresh event through one controller method", async () => {
     await import("./task-update-dialog.js");
-    const registration = vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "task-update-dialog");
-    const Dialog = /** @type {any} */ (registration[1]);
+    const registration = components.get("task-update-dialog");
+    const Dialog = /** @type {any} */ (registration);
     const dialog = new Dialog();
     dialog.dispatchEvent = vi.fn();
 
@@ -86,10 +85,8 @@ describe("task-update-dialog controller", () => {
 
   it("restores controls and shows a failure toast after a failed mutation", async () => {
     await import("./task-update-dialog.js");
-    const registration = vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "task-update-dialog");
-    const Dialog = /** @type {any} */ (registration[1]);
+    const registration = components.get("task-update-dialog");
+    const Dialog = /** @type {any} */ (registration);
     const dialog = new Dialog();
     const button = { disabled: false };
     const error = { hidden: true, textContent: "" };
@@ -114,10 +111,8 @@ describe("task-update-dialog controller", () => {
 
   it("reuses a successful per-file upload throughout the draft", async () => {
     await import("./task-update-dialog.js");
-    const registration = vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "task-update-dialog");
-    const Dialog = /** @type {any} */ (registration[1]);
+    const registration = components.get("task-update-dialog");
+    const Dialog = /** @type {any} */ (registration);
     const dialog = new Dialog();
     const file = /** @type {File} */ ({});
     dialog._task = { taskId: "task-1", checkId: "check-1" };
@@ -490,11 +485,7 @@ it("resets workflow state when reusing a 311 editor for completion results and b
 describe("City status in issue timeline", () => {
   it("loads current closure and City events, without duplicate events on pagination", async () => {
     await import("./task-update-dialog.js");
-    const Dialog = /** @type {any} */ (
-      vi
-        .mocked(customElements.define)
-        .mock.calls.find(([name]) => name === "task-update-dialog")[1]
-    );
+    const Dialog = /** @type {any} */ (components.get("task-update-dialog"));
     const dialog = new Dialog();
     dialog._render = vi.fn();
     const task = {
@@ -547,11 +538,7 @@ describe("City status in issue timeline", () => {
   });
   it("keeps app activity and the last known ticker if the City feed is unavailable", async () => {
     await import("./task-update-dialog.js");
-    const Dialog = /** @type {any} */ (
-      vi
-        .mocked(customElements.define)
-        .mock.calls.find(([name]) => name === "task-update-dialog")[1]
-    );
+    const Dialog = /** @type {any} */ (components.get("task-update-dialog"));
     const dialog = new Dialog();
     dialog._render = vi.fn();
     const task = {
@@ -683,11 +670,7 @@ it("lets the worklist own timeline resolution and its card exit lifecycle", asyn
 describe("timeline loading resilience", () => {
   async function makeDialog() {
     await import("./task-update-dialog.js");
-    const Dialog = /** @type {any} */ (
-      vi
-        .mocked(customElements.define)
-        .mock.calls.find(([name]) => name === "task-update-dialog")[1]
-    );
+    const Dialog = /** @type {any} */ (components.get("task-update-dialog"));
     const dialog = new Dialog();
     dialog._render = vi.fn();
     return dialog;
@@ -1046,11 +1029,7 @@ it("allows local updates without a City-help choice when the API reports only cl
 describe("City note status polling", () => {
   async function makeDialog() {
     await import("./task-update-dialog.js");
-    const Dialog = /** @type {any} */ (
-      vi
-        .mocked(customElements.define)
-        .mock.calls.find(([name]) => name === "task-update-dialog")[1]
-    );
+    const Dialog = /** @type {any} */ (components.get("task-update-dialog"));
     const dialog = new Dialog();
     dialog._render = vi.fn();
     return dialog;
@@ -1181,11 +1160,7 @@ describe("City note polling and older pages", () => {
     try {
       const { CITY_NOTE_POLL_MS } = await import("./task-update-dialog.js");
       await import("./task-update-dialog.js");
-      const Dialog = /** @type {any} */ (
-        vi
-          .mocked(customElements.define)
-          .mock.calls.find(([name]) => name === "task-update-dialog")[1]
-      );
+      const Dialog = /** @type {any} */ (components.get("task-update-dialog"));
       const dialog = new Dialog();
       dialog._render = vi.fn();
       const task = { taskId: "older-note" };
