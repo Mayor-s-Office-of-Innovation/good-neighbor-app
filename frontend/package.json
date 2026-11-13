@@ -149,7 +149,7 @@
     "size-limit": "^14.3.0",
     "speed-check": "github:Mayor-s-Office-of-Innovation/speed-check#d472e8682b2e76504627f446e6881275bddfefd9",
     "typescript": "5.5.4",
-    "vite": "8.2.4",
+    "vite": "8.3.8",
     "vite-plugin-pwa": "2.0.0",
     "vitest": "^4.1.12"
   }
