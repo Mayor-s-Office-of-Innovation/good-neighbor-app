@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { assertSilent311Allowed } from "../domain/silent-311.js";
 import {
   GetSecretValueCommand,
@@ -47,7 +48,13 @@ export function truncateHubField(value, max) {
  * @returns {string}
  */
 export function sourceRequestId({ taskId, serviceCode }) {
-  return truncateHubField(`${taskId}-${serviceCode}`.replaceAll(".", ""), 50);
+  // Hash the complete identity: prefix truncation would discard service codes.
+  // taskId includes the u- prefix for deliberate filings after a silent filing.
+  // Keep this encoding stable so retries produce the same 80-bit reference.
+  return createHash("sha256")
+    .update(JSON.stringify([taskId, serviceCode]))
+    .digest("hex")
+    .slice(0, 20);
 }
 
 /**

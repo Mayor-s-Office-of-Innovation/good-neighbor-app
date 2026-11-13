@@ -577,6 +577,28 @@ describe("app action execution", () => {
         reason: "attachments_pending",
         payload: { tickets: [{ srNum: "2000008106" }] },
       });
+      const legacyPending = globalThis.structuredClone(checkpoints[0]);
+      legacyPending.payload = {
+        ...legacyPending.payload,
+        tickets: [
+          {
+            serviceCode: "1.1.4.7.20.0",
+            responsibleAgency: "76",
+            sourceRequestId: "task-1147200",
+            creationState: "pending",
+          },
+        ],
+      };
+      const beforeLegacyRetry = globalThis.structuredClone(legacyPending);
+      const legacyResult = await executeAppActions(actions, {
+        ...options,
+        priorResults: [legacyPending],
+      });
+      expect(legacyResult[0]).toMatchObject({
+        status: "failed",
+        reason: "sf311_creation_uncertain_requires_reconciliation",
+      });
+      expect(legacyPending).toEqual(beforeLegacyRetry);
       const uncertain = await executeAppActions(actions, {
         ...options,
         priorResults: [checkpoints[0]],
@@ -1210,7 +1232,7 @@ describe("app action execution", () => {
             code: "4001",
             request: {
               SourceAgency: "76",
-              SourceRequestID: "task-1-1147200",
+              SourceRequestID: "d6582cbe7a261acae34e",
               SourceOperator: "Good Neighbor App",
               ResponsibleAgency: "",
               ResponsibleAgencyRequestID: "",
@@ -1857,7 +1879,7 @@ describe("app action execution", () => {
               {
                 serviceCode: "1.1.4.7.10.0",
                 responsibleAgency: "76",
-                sourceRequestId: "task-1-1147100",
+                sourceRequestId: "c12def3fe33c85c95cac",
                 srNum: "2000008106",
                 attachments: [],
               },
@@ -1983,7 +2005,7 @@ describe("app action execution", () => {
               {
                 serviceCode: "1.1.4.7.20.0",
                 responsibleAgency: "76",
-                sourceRequestId: "task-1-1147200",
+                sourceRequestId: "d6582cbe7a261acae34e",
                 srNum: "2000008106",
                 attachments: [
                   {
@@ -2118,7 +2140,7 @@ describe("app action execution", () => {
               {
                 serviceCode: "1.1.4.7.20.0",
                 responsibleAgency: "76",
-                sourceRequestId: "task-1-1147200",
+                sourceRequestId: "d6582cbe7a261acae34e",
                 srNum: "2000008106",
                 attachments: [
                   {
@@ -2358,6 +2380,7 @@ describe("app action execution", () => {
             tickets: [
               {
                 serviceCode: "1.1.4.7.20.0",
+                sourceRequestId: "task-1-1147200",
                 srNum: "2000008106",
                 attachments: [
                   {
@@ -3120,7 +3143,7 @@ it("files a separate deliberate ticket after silent filing and preserves both th
   expect(merged[0]).toMatchObject({
     payload: {
       tickets: [
-        { srNum: "2000009999", sourceRequestId: expect.stringMatching(/^u-/) },
+        { srNum: "2000009999", sourceRequestId: "e3759633525536c48306" },
       ],
     },
   });
@@ -3186,7 +3209,7 @@ it("files a changed silent service after silent filing and preserves both throug
       tickets: [
         {
           srNum: "2000009999",
-          sourceRequestId: expect.stringMatching(/^task-1-/),
+          sourceRequestId: "6d3a174297d05e7f8156",
         },
       ],
     },
