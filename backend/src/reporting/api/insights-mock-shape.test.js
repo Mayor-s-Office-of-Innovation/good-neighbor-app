@@ -2,7 +2,7 @@
 // holds that fake to the real handlers: same routes, same status, same
 // fields and value types, so a changed reply can't leave specs passing.
 import { URLSearchParams } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import {
   insightsReplies,
   insightsReply,
@@ -15,7 +15,7 @@ import { CONCERN_RULES as ADMIN_CONCERN_RULES } from "../../../../admin-frontend
 import { memoryJobStore } from "./jobs.js";
 import { CONCERN_RULES } from "./read-model.js";
 import { createSnapshotStore } from "./snapshot.js";
-import { syntheticProjection } from "./test-projection.js";
+import { syntheticProjection, tablesSource } from "./test-projection.js";
 
 /**
  * Values differ between fixtures; names and types are what pages rely on.
@@ -104,14 +104,7 @@ async function realReplies() {
   const started = [];
   const h = createReportingHandlers({
     snapshots: createSnapshotStore({
-      source: {
-        latest: async () => ({ prefix: "p1", snapshotId: "snap1" }),
-        load: async (prefix) => ({
-          prefix,
-          manifest: projection.manifest,
-          tables: projection.tables,
-        }),
-      },
+      source: tablesSource(projection),
     }),
     jobStore: memoryJobStore(),
     starter: async (ref) => {
@@ -169,6 +162,7 @@ async function realReplies() {
 }
 
 const replies = await realReplies();
+afterAll(() => handlers.close());
 
 describe("the admin E2E Insights mock", () => {
   it("answers every Insights route the backend serves, and no others", () => {

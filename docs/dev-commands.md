@@ -509,7 +509,7 @@ memory of each query in its own 2 GB Node process:
 
 ```sh
 npm run insights:bench -w backend
-# options: -- --sites 500,1000 --years 1,2 --runs 30 --threads 1
+# options: -- --sites 500,1000 --years 1,2 --runs 30
 ```
 
 Sizes are copies of the `insights:data` Sites and year, built once into
@@ -521,7 +521,6 @@ Options:
 - `--sites`: Site counts, comma-separated (default 500,1000)
 - `--years`: years of data, comma-separated (default 1,2)
 - `--runs`: warm runs per query after the first answer (default 30)
-- `--threads`: DuckDB threads (default 1; a 2 GB Lambda has about 1.2 vCPUs)
 - `--rebuild`: rebuild the sized files even if the input is unchanged
 - `--json`: also write every result to this file
 
@@ -530,7 +529,7 @@ Columns:
 - `cold ms`: process start to the first answer, including imports, opening the files and the query
 - `peak RSS`: the process's peak resident memory, including DuckDB's native buffers
 - `peak heap`: the largest V8 heap in use, sampled after each answer
-- `warm p50` and `warm p95`: the median and 95th percentile time per answer over `--runs` answers in the same process
+- `warm p50` and `warm p95`: the median and 95th percentile time per answer over `--runs` answers in the same process (at most 5 for the export and report, which take seconds)
 - `files MB`: bytes on disk of the files the query reads
 
 ### Compliance letter email testing

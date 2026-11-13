@@ -357,13 +357,17 @@ SELECT
     AS openSitesWithoutTerms;
 `;
 
-// Fixed row order, so the same lake always writes the same files.
+// Fixed row order, so the same lake always writes the same files. Day first,
+// so a period's query skips the row groups of other days.
 /** @type {Record<string, string>} */
 export const TABLE_ORDER = {
-  site_days: "siteId, day",
-  issues: "siteId, createdTs, issueId",
+  site_days: "day, siteId",
+  issues: "createdDay, siteId, createdTs, issueId",
   site_contacts: "siteId",
   sites: "siteId",
-  checks: "siteId, activityAt, checkId",
-  checks_owed: "siteId, day",
+  checks: "day, siteId, checkId",
+  checks_owed: "day, siteId",
 };
+
+// Small enough that a month's query reads few groups at 1,000 Sites.
+export const ROW_GROUP_SIZE = 16_384;
