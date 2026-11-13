@@ -1,8 +1,9 @@
-// Shared DuckDB view layer over the Parquet lake (ADR 0013). Both consumers —
-// the scheduled report Lambda (reports.js) and the admin query engine
-// (query.js) — build their views here so they agree on entities, columns,
-// types and latest-wins semantics. The column set is the converter's own
-// (convert.js ENTITY_COLUMNS), so there is exactly one schema to keep.
+// Shared DuckDB view layer over the Parquet lake (ADR 0013). The scheduled
+// report Lambda (reports.js) and the local Insights lake
+// (reporting/local-lake.js) build their views here, so both agree with the
+// converter on entities, columns, types and latest-wins semantics. The column
+// set is the converter's own (convert.js ENTITY_COLUMNS), so there is exactly
+// one schema to keep.
 //
 // Views:
 // - One view per entity, named after it (checks, tasks, …), over
@@ -213,24 +214,6 @@ export async function createViews(conn, bucket, opts) {
     }
   }
   return { empty };
-}
-
-/**
- * Freeze the engine for untrusted SQL. Disables the local filesystem — which
- * otherwise lets any SELECT read `/proc/self/environ` (the execution role's
- * credentials) or anything else on the sandbox disk — and locks every
- * configuration option so a query can't turn that back on, raise memory or
- * thread limits, or change the home/extension directories. GLOBAL scope so
- * the lock holds for every connection on the instance. Views can still be
- * created after this (they are catalog objects, not configuration), so the
- * empty→real rebuild keeps working; extensions must be installed BEFORE
- * calling this. Only for engines that never write local files: the report
- * Lambda copies CSVs to /tmp and must not lock down.
- * @param {any} conn
- */
-export async function lockdown(conn) {
-  await conn.run(`SET GLOBAL disabled_filesystems = 'LocalFileSystem';`);
-  await conn.run(`SET GLOBAL lock_configuration = true;`);
 }
 
 /**

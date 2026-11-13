@@ -3,6 +3,7 @@ import { parseRetryAfter } from "../../../frontend/src/lib/retry-after.js";
 import { createReadRequests } from "./read-requests.js";
 import { localRoleHeaders } from "../local-role.js";
 import { getFreshAdminToken, startAdminLogin } from "./admin-auth.js";
+import { signInReturnPath } from "../pages/insights/insights-routes.js";
 import { getAdminConfig } from "../config.js";
 import { appMessageError } from "../admin-error-messages.js";
 
@@ -11,7 +12,10 @@ let loginRedirect = null;
 
 function redirectToLogin() {
   if (!loginRedirect) {
-    loginRedirect = startAdminLogin()
+    // An expired session is the usual way back to sign-in, so it returns to the Insights page too.
+    loginRedirect = startAdminLogin(
+      signInReturnPath(location.pathname + location.search),
+    )
       // Navigation replaces this page. Keep its operations pending so their
       // success/error handlers cannot render a banner or toast during redirect.
       .then(() => new Promise(() => {}))
@@ -98,10 +102,6 @@ async function parseAdminResponse(path, init) {
     /** @type {any} */ (err).retryAfterMs = parseRetryAfter(
       res.headers?.get?.("retry-after"),
     );
-    // Some routes (analytics) explain the failure; surface it for the UI.
-    if (typeof body?.message === "string") {
-      /** @type {any} */ (err).detail = body.message;
-    }
     throw err;
   }
   return body;
@@ -569,32 +569,6 @@ export const adminApi = {
     adminFetch("/admin/v1/emergency-site-revocations", {
       method: "POST",
       body: JSON.stringify({ siteIds, confirmation }),
-    }),
-  // Analytics (ADR 0013): the reporting lake, never the app database.
-  /** The canned query catalog. */
-  analyticsCatalog: () => adminFetch("/admin/v1/analytics/queries"),
-  /**
-   * Run one catalog query with parameters.
-   * @param {string} queryId
-   * @param {Record<string, string | number>} params
-   * @returns {Promise<{ columns: string[], rows: unknown[][], truncated: boolean, elapsedMs: number, asOf: string | null }>}
-   */
-  analyticsRun: (queryId, params, signal = undefined) =>
-    adminFetch(`/admin/v1/analytics/queries/${encodeURIComponent(queryId)}`, {
-      method: "POST",
-      body: JSON.stringify({ params }),
-      signal,
-    }),
-  /**
-   * Run raw read-only SQL (the advanced panel).
-   * @param {string} sql
-   * @returns {Promise<{ columns: string[], rows: unknown[][], truncated: boolean, elapsedMs: number, asOf: string | null }>}
-   */
-  analyticsQuery: (sql, signal = undefined) =>
-    adminFetch("/admin/v1/analytics/query", {
-      method: "POST",
-      body: JSON.stringify({ sql }),
-      signal,
     }),
   // Insights: fixed reporting endpoints on the analytics Lambda.
   /** @param {Record<string, string>} params @param {AbortSignal} [signal] */

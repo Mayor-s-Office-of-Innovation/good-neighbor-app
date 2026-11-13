@@ -34,8 +34,11 @@ async function fixture(options = {}) {
   const navigation = new Promise((resolve) => {
     redirected = resolve;
   });
+  const [pathname, search = ""] = (options.path ?? "/sites").split(/(?=\?)/);
   vi.stubGlobal("location", {
     hostname: "localhost",
+    pathname,
+    search,
     assign(url) {
       redirects.push(url);
       redirected();
@@ -145,6 +148,34 @@ for (const mode of [
       assert.equal(f.redirects.length, 1);
     },
   );
+}
+
+for (const [path, kept] of [
+  ["/insights/sites/s1?period=2026-10", "/insights/sites/s1?period=2026-10"],
+  ["/sites/s1", null],
+]) {
+  test(`a session that expires on ${path} signs in again ${kept ? "back to it" : "to the Site list"}`, async () => {
+    const f = await fixture({ status: 401, error: "unauthorized", path });
+    saveSession();
+    void f.adminApi.getSession();
+    await f.navigation;
+    // Come back from the login page as Cognito would.
+    const state = new URL(f.redirects[0]).searchParams.get("state");
+    Object.assign(location, {
+      pathname: "/auth/callback",
+      search: `?code=c1&state=${state}`,
+    });
+    vi.stubGlobal("history", { replaceState() {} });
+    vi.mocked(fetch).mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ access_token: "a1", expires_in: 3600 })),
+    );
+    const { completeAdminLoginFromUrl } = await import("./admin-auth.js");
+    assert.deepEqual(
+      await completeAdminLoginFromUrl(),
+      kept ? { handled: true, returnTo: kept } : { handled: true },
+    );
+  });
 }
 
 for (const status of [403, 429, 500]) {

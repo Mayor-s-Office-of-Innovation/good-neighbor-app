@@ -745,9 +745,7 @@ Concurrent identical reads can share a request, but writes invalidate pending
 read sharing both before dispatch and after completion. Explicitly fresh status
 reads and cancellable requests bypass sharing. Network requests are bounded at
 60 seconds for GETs and 120 seconds for other methods, with no automatic mutation
-retry. Navigation guards discard obsolete responses; Analytics cancels superseded
-queries and caches up to ten recent parameterized results for 60 seconds. Its Run
-button always requests a fresh result.
+retry. Navigation guards discard obsolete responses.
 
 Regression checks include `npm run test:admin`, backend tests, and
 `npm run test:status:e2e` (dashboard loading/navigation and System Status browser

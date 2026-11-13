@@ -1,0 +1,28 @@
+<!doctype html>
+<!-- Insights replaced Analytics, and S3 keeps old files, so this overwrites the old page for bookmarks.
+     A meta refresh and English-only text, since the admin CSP blocks the inline scripts that redirect or translate.
+     The slash stops Vite serving this file again. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="robots" content="noindex" />
+    <meta http-equiv="refresh" content="0; url=/analytics/" />
+    <title>Good Neighbor Compliance Dashboard</title>
+    <!-- The CSP allows inline styles, so a slow load still reads as a page, not a broken one. -->
+    <style>
+      body {
+        margin: 48px auto;
+        max-width: 32rem;
+        padding: 0 16px;
+        font:
+          1rem/1.5 system-ui,
+          sans-serif;
+        color: #1f2430;
+      }
+    </style>
+  </head>
+  <body>
+    <p>Analytics has moved to Insights.</p>
+    <p><a href="/analytics/">Open Insights</a></p>
+  </body>
+</html>

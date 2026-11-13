@@ -123,8 +123,8 @@ const entries = [
     external: ["@duckdb/node-api", "@duckdb/node-bindings"],
   },
   {
-    // Admin analytics API (catalog + raw SQL) — its own function so DuckDB
-    // never rides in the app api bundle.
+    // Insights API and report jobs — its own function so DuckDB never rides
+    // in the app api bundle.
     name: "analytics-query",
     entry: resolve(backendRoot, "src/lambda/analytics-query.js"),
     external: ["@duckdb/node-api", "@duckdb/node-bindings"],

@@ -53,7 +53,6 @@ describe("scheduledReports", () => {
   it("renders every scheduled catalog entry with literal defaults", () => {
     const reports = scheduledReports();
     expect(reports.map((r) => r.id)).toEqual([
-      "compliance-by-site",
       "worst-locations",
       "open-tasks-by-site",
     ]);
@@ -71,7 +70,6 @@ describe("scheduledReports", () => {
     }
     const uploads = send.mock.calls.map((c) => c[0].input);
     expect(uploads.map((u) => u.Key)).toEqual([
-      "reports/compliance-by-site/2026-09-25.csv",
       "reports/worst-locations/2026-09-25.csv",
       "reports/open-tasks-by-site/2026-09-25.csv",
     ]);
