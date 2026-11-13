@@ -4,7 +4,7 @@ const SERVICE_CODE_PATTERN = /^\d+(?:\.\d+)+$/;
 
 export const CLASSIFIER_DEFAULT_SERVICE_CODES = Object.freeze({
   graffiti: "1.5.1.1.18.0",
-  "bulky-items": "1.1.4.7.7.0",
+  "bulky-items": "1.1.4.7.21.0",
 });
 
 /** @param {string} classifierId @returns {string} */

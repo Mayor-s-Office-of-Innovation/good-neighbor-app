@@ -1,3 +1,5 @@
+import { openFiledTicketNumbers } from "../domain/open-filed-tickets.js";
+import { isSilent311Ticket } from "../domain/silent-311.js";
 import { filedTicket, isSimulated311Ticket } from "../domain/deliberate-311.js";
 import {
   storeTaskPhotoDisplay,
@@ -11,19 +13,13 @@ import {
   cityHelpTicket,
   logCityNoteFailure,
   prepareCityHelpNote,
-  deliverCityHelpNote,
-  queueCityHelpNote,
 } from "../task-updates/city-help-note.js";
-import { sf311NoteJob } from "../analysis/guidance/sf311-job.js";
 import { randomUUID } from "node:crypto";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveActorId, deriveSiteId } from "../lib/principal.js";
 import { headObject, setObjectTags } from "../s3.js";
-import {
-  is311AsyncFilingEnabled,
-  is311SubmissionEnabled,
-} from "../analysis/guidance/app-actions.js";
+import { is311SubmissionEnabled } from "../analysis/guidance/app-actions.js";
 import {
   buildTaskUpdateTransition,
   canUpdateTask,
@@ -33,6 +29,7 @@ import {
   responseExpectedAt,
 } from "../domain/task-updates.js";
 import {
+  ensureCityNoteJob,
   readCheckHeader,
   readLegacyUpdateById,
   readTask,
@@ -145,21 +142,6 @@ export const getTaskUpdates = async (event) => {
   });
 };
 
-/**
- * Hand a saved update's City note to the background 311 worker when notes are
- * queued, or send it now. False means the inline send wasn't confirmed.
- * @param {string} tableName
- * @param {string} siteId
- * @param {Record<string, any>} update
- * @returns {Promise<boolean>}
- */
-async function sendOrQueueCityHelpNote(tableName, siteId, update) {
-  if (!is311AsyncFilingEnabled(process.env))
-    return deliverCityHelpNote(tableName, siteId, update);
-  await queueCityHelpNote(tableName, siteId, update);
-  return true;
-}
-
 /** POST /v1/tasks/{taskId}/updates
  * @param {any} event
  * @param {boolean} [retry]
@@ -181,12 +163,7 @@ export const createTaskUpdate = async (event, retry = true) => {
     updateId,
   );
   if (priorUpdate) {
-    if (!(await sendOrQueueCityHelpNote(dynamoTable, siteId, priorUpdate)))
-      return jsonResponse(502, {
-        error: "City update not confirmed",
-        updateSaved: true,
-        retryable: true,
-      });
+    await ensureCityNoteJob(dynamoTable, siteId, priorUpdate);
     return jsonResponse(200, {
       task: detail(task, [priorUpdate]).task,
       update: priorUpdate,
@@ -212,14 +189,34 @@ export const createTaskUpdate = async (event, retry = true) => {
       taskId,
       updateId,
     );
-    if (legacyRetry)
+    if (legacyRetry) {
+      await ensureCityNoteJob(dynamoTable, siteId, legacyRetry);
       return jsonResponse(200, {
         task: detail(task, [legacyRetry]).task,
         update: legacyRetry,
       });
+    }
     return jsonResponse(409, { error: "Task is not in progress" });
   }
 
+  const resolving = [
+    "issue_resolved",
+    "presence_resolved",
+    "additional_action_resolved",
+  ].includes(input.type);
+  const resolutionTickets = resolving
+    ? [...new Set(openFiledTicketNumbers(task))].filter((number) => {
+        const ticket = filedTicket(task, number);
+        return (
+          ticket &&
+          !isSimulated311Ticket(ticket) &&
+          String(ticket.responsibleAgency || "") !== "76" &&
+          !isSilent311Ticket(task, number)
+        );
+      })
+    : [];
+  if (resolutionTickets.length && !is311SubmissionEnabled(process.env))
+    return jsonResponse(503, { error: "City updates are unavailable" });
   const srNum = cityHelpTicket(task);
   const simulated = srNum && isSimulated311Ticket(filedTicket(task, srNum));
   const informational = ["note_photo_update", "additional_action"].includes(
@@ -295,6 +292,26 @@ export const createTaskUpdate = async (event, retry = true) => {
       }
     }
   }
+  if (resolutionTickets.length) {
+    try {
+      update.cityNotes = [];
+      for (const number of resolutionTickets) {
+        update.cityNotes.push({
+          cityNotePayload: await prepareCityHelpNote(
+            dynamoTable,
+            siteId,
+            number,
+            now,
+            true,
+          ),
+          cityNoteStatus: "pending",
+        });
+      }
+    } catch (error) {
+      logCityNoteFailure("preparation", error, update);
+      return jsonResponse(503, { error: "City update cannot be prepared" });
+    }
+  }
   // The compare-and-swap below prevents a late worker or another user from
   // overwriting recovery. Preserve all ticket references and filing failures.
   if (!proof && !appendToResolved && task.status !== "in_progress") {
@@ -309,26 +326,8 @@ export const createTaskUpdate = async (event, retry = true) => {
   delete updated.resolutionUpdateId;
   delete updated.resolutionStartedAt;
   delete updated.resolutionLeaseExpiresAt;
-  // With queued notes on, the job commits with the update and the background
-  // 311 worker sends it; this request makes no HUB call.
-  const queueNote =
-    Boolean(update.cityNotePayload) && is311AsyncFilingEnabled(process.env);
   try {
     await writeTaskTransition({
-      ...(queueNote
-        ? {
-            jobs: [
-              sf311NoteJob({
-                tableName: dynamoTable,
-                siteId,
-                taskId,
-                updateId,
-                occurredAt: now,
-                now,
-              }),
-            ],
-          }
-        : {}),
       tableName: dynamoTable,
       siteId,
       taskId,
@@ -365,12 +364,7 @@ export const createTaskUpdate = async (event, retry = true) => {
         updateId,
       );
       if (legacyRetry) {
-        if (!(await sendOrQueueCityHelpNote(dynamoTable, siteId, legacyRetry)))
-          return jsonResponse(502, {
-            error: "City update not confirmed",
-            updateSaved: true,
-            retryable: true,
-          });
+        await ensureCityNoteJob(dynamoTable, siteId, legacyRetry);
         return jsonResponse(200, {
           task: detail(task, [legacyRetry]).task,
           update: legacyRetry,
@@ -383,12 +377,6 @@ export const createTaskUpdate = async (event, retry = true) => {
     }
     throw error;
   }
-  if (!queueNote && !(await deliverCityHelpNote(dynamoTable, siteId, update)))
-    return jsonResponse(502, {
-      error: "City update not confirmed",
-      updateSaved: true,
-      retryable: true,
-    });
   return jsonResponse(201, { task: detail(updated, [update]).task, update });
 };
 
@@ -445,6 +433,8 @@ export const documentTaskUpdate = async (event) => {
         updateId,
       );
       if (latest?.documentationState === "closed") return replay(latest);
+      if (latest?.cityNotes)
+        return jsonResponse(409, { error: "Task update conflict" });
     }
     throw error;
   }

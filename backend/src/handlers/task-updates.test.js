@@ -1164,7 +1164,7 @@ it("does not register proof media when conversion fails", async () => {
   ).toBe(false);
 });
 
-describe("City help notes with GNP_311_ASYNC_FILING", () => {
+describe("City help notes always use the outbox", () => {
   const filedTask = {
     pk: "SITE#site-1",
     sk: "TASK#task-1",
@@ -1233,6 +1233,9 @@ describe("City help notes with GNP_311_ASYNC_FILING", () => {
       cityNoteStatus: "pending",
       cityNotePayload: { SRnum: "123" },
     });
+    expect(
+      items.filter((row) => row.Put?.Item.entityType === "SF311_OUTBOX"),
+    ).toHaveLength(1);
     const job = items.find(
       (/** @type {any} */ row) => row.Put?.Item.entityType === "SF311_OUTBOX",
     )?.Put;
@@ -1240,8 +1243,7 @@ describe("City help notes with GNP_311_ASYNC_FILING", () => {
       sk: "SF311_JOB#task-1#note-request-1",
       status: "pending",
       trigger: "city_note",
-      updateId: "request-1",
-      updateOccurredAt: update.occurredAt,
+      updateSk: `TASK#task-1#UPDATE#${update.occurredAt}#request-1`,
     });
     expect(job.ConditionExpression).toBe("attribute_not_exists(pk)");
   });
@@ -1285,7 +1287,7 @@ describe("City help notes with GNP_311_ASYNC_FILING", () => {
     expect(put.input.Item).toMatchObject({
       sk: "SF311_JOB#task-1#note-request-1",
       trigger: "city_note",
-      updateOccurredAt: "saved",
+      updateSk: "TASK#task-1#UPDATE#saved#request-1",
     });
     expect(
       send.mock.calls.some(
@@ -1294,11 +1296,11 @@ describe("City help notes with GNP_311_ASYNC_FILING", () => {
     ).toBe(false);
   });
 
-  it("still sends inline when the flag is off", async () => {
+  it("still queues atomically when the filing flag is off", async () => {
     vi.stubEnv("GNP_311_ASYNC_FILING", "false");
     const response = await noNote();
-    // No HUB config in this test, so the inline send can't be confirmed.
-    expect(response.statusCode).toBe(502);
+    expect(response.statusCode).toBe(201);
+    expect(fetch).not.toHaveBeenCalled();
     const items = send.mock.calls.flatMap(
       ([command]) => command.input.TransactItems || [],
     );
@@ -1306,6 +1308,6 @@ describe("City help notes with GNP_311_ASYNC_FILING", () => {
       items.some(
         (/** @type {any} */ row) => row.Put?.Item.entityType === "SF311_OUTBOX",
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 });

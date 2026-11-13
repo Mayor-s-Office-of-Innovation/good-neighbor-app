@@ -592,9 +592,13 @@ it("resolves immediately without opening documentation", async () => {
   dialog.dispatchEvent ||= vi.fn();
   dialog.markResolved(task);
   dialog.markResolved(task);
-  expect(api.createTaskUpdate).toHaveBeenLastCalledWith("resolve-now", {
-    type: "issue_resolved",
-  });
+  expect(api.createTaskUpdate).toHaveBeenLastCalledWith(
+    "resolve-now",
+    {
+      type: "issue_resolved",
+    },
+    expect.any(String),
+  );
   expect(dialog.openResults).not.toHaveBeenCalled();
   dialog._dismiss = vi.fn();
   expect(dialog._notifyUpdated).not.toHaveBeenCalled();
@@ -604,6 +608,31 @@ it("resolves immediately without opening documentation", async () => {
   });
   await vi.waitFor(() => expect(dialog._dismiss).toHaveBeenCalledOnce());
   expect(dialog._notifyUpdated).toHaveBeenCalledOnce();
+});
+
+it("retries an unconfirmed standalone resolution with its original identity", async () => {
+  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+  const dialog = new TaskUpdateDialog();
+  dialog.dispatchEvent = vi.fn();
+  dialog._notifyUpdated = vi.fn();
+  dialog._dismiss = vi.fn();
+  api.createTaskUpdate
+    .mockReset()
+    .mockRejectedValueOnce(
+      Object.assign(new Error("City update not confirmed"), { status: 502 }),
+    )
+    .mockResolvedValueOnce({
+      task: { status: "completed" },
+      update: { updateId: "same-resolution" },
+    });
+  const task = { taskId: "standalone-retry", status: "in_progress" };
+  dialog.markResolved(task);
+  await vi.waitFor(() => expect(dialog._resolving).toBe(false));
+  dialog.markResolved(task);
+  await vi.waitFor(() => expect(dialog._dismiss).toHaveBeenCalledOnce());
+  expect(api.createTaskUpdate.mock.calls[1][2]).toBe(
+    api.createTaskUpdate.mock.calls[0][2],
+  );
 });
 
 it("identifies a dismissed resolution prompt so its controller is not reused during background saves", async () => {
@@ -1059,6 +1088,43 @@ describe("City note status polling", () => {
 
       await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS * 3);
       expect(api.getTaskUpdates).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("polls nested resolution checkpoints until mixed outcomes settle without dropping older updates", async () => {
+    vi.useFakeTimers();
+    try {
+      const { CITY_NOTE_POLL_MS } = await import("./task-update-dialog.js");
+      const dialog = await makeDialog();
+      const nested = (status) => ({
+        task,
+        updates: [
+          {
+            updateId: "note",
+            cityNotes: [
+              { cityNoteStatus: "failed" },
+              { cityNoteStatus: status },
+            ],
+          },
+        ],
+      });
+      api.getTaskUpdates.mockReset();
+      api.getTaskUpdates.mockResolvedValueOnce(nested("pending"));
+      await dialog.open(task);
+      dialog._detail.updates.push({
+        updateId: "older",
+        text: "Earlier activity",
+      });
+      api.getTaskUpdates.mockResolvedValueOnce(nested("sent"));
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS);
+      expect(
+        dialog._detail.updates[0].cityNotes.map((note) => note.cityNoteStatus),
+      ).toEqual(["failed", "sent"]);
+      expect(dialog._detail.updates[1].text).toBe("Earlier activity");
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS * 2);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

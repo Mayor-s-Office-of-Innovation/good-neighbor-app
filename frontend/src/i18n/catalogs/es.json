@@ -1,12 +1,14 @@
 {
   "access.cancel": "Cancelar enlace de inscripción",
   "access.cancelError": "No pudimos cancelar el enlace. Inténtalo de nuevo.",
+  "access.codeGuidance": "Si el código o el enlace no funciona, puede mostrar un código a su compañero de equipo para que lo introduzca en la pantalla de inicio de sesión. Este código solo será visible hasta que cierre esta vista.",
   "access.create": "Crear enlace de inscripción",
   "access.createError": "No pudimos crear el enlace. Inténtalo de nuevo.",
   "access.device": "Dispositivo del equipo",
   "access.deviceLabel": "Asigne un nombre al dispositivo",
   "access.devicePlaceholder": "p. ej., \"Teléfono de Amisha\"",
   "access.devices": "Dispositivos del equipo",
+  "access.displayCode": "Ver código",
   "access.duplicateEmail": "Este correo ya está asignado a un administrador de este sitio. Use otro correo o gestione la asignación existente.",
   "access.duration.days.one": "{count} día",
   "access.duration.days.other": "{count} días",
@@ -40,6 +42,7 @@
   "access.sessions": "Sesiones",
   "access.share": "Compartir enlace de inscripción",
   "access.shareMessage": "El administrador de su sitio le invitó a Good Neighbor. Abra este enlace en el teléfono que usará para la aplicación. Solo se puede usar una vez y vence después de 8 horas.",
+  "access.showCode": "Mostrar código",
   "access.site": "este sitio",
   "access.siteHeading": "Invitar a alguien a {site}",
   "access.title": "Administrar acceso",
@@ -1140,6 +1143,7 @@
   "rulebook.agency.311-will-be-routed-4b50": "311 (se derivará)",
   "rulebook.agency.911-will-be-routed-5ef4": "911 (se derivará)",
   "rulebook.agency.department-of-public-works-dpw-19fa": "Departamento de Obras Públicas (DPW)",
+  "rulebook.agency.dph-street-team-0a67": "Equipo de Calle del DPH",
   "rulebook.agency.dph-street-team-via-311-84fb": "Equipo de Calle del DPH a través del 311",
   "rulebook.agency.recology-25f9": "Recology",
   "rulebook.agency.sf-aids-foundation-sfaf-4927": "Fundación del SIDA de San Francisco (SFAF)",
@@ -1216,6 +1220,7 @@
   "rulebook.guidance.if-it-s-an-object-not-a-person-blocking-the-path-e15d": "Si lo que bloquea el paso es un objeto (no una persona), use la aplicación para presentar una solicitud al 311.",
   "rulebook.guidance.if-it-s-not-your-client-or-it-doesn-t-feel-safe-6c38": "Si no es su cliente, o no parece seguro, llame al 911.",
   "rulebook.guidance.if-it-s-not-your-client-or-resident-call-911-do-bf6c": "Si no es su cliente o residente, llame al 911. No intente manejar la situación por su cuenta.",
+  "rulebook.guidance.if-it-s-not-your-client-or-resident-call-the-sfp-99ee": "Si no es su cliente o residente, llame al SFPD. No intente manejar la situación por su cuenta.",
   "rulebook.guidance.if-it-s-not-your-client-report-it-to-the-city-do-f657": "Si no es su cliente, repórtelo a la Ciudad. No intervenga.",
   "rulebook.guidance.if-it-s-your-client-and-it-s-safe-talk-to-them-c-9ff2": "Si es su cliente y es seguro, háblele con calma. Ofrézcale conectarlo con ayuda.",
   "rulebook.guidance.if-it-s-your-client-it-s-not-an-emergency-and-it-c6c9": "Si es su cliente, no es una emergencia y es seguro, háblele con delicadeza y ofrézcale conectarlo con ayuda.",
@@ -1725,8 +1730,5 @@
   "webview.banner.dismiss.aria": "Descartar",
   "webview.banner.message": "Está dentro del navegador de otra aplicación. Ábrala en su navegador para que funcione la cámara.",
   "webview.banner.open": "Abrir en el navegador",
-  "webview.banner.title": "Es posible que la cámara no se abra aquí.",
-  "access.showCode": "Mostrar código",
-  "access.codeGuidance": "Si el código o el enlace no funciona, puede mostrar un código a su compañero de equipo para que lo introduzca en la pantalla de inicio de sesión. Este código solo será visible hasta que cierre esta vista.",
-  "access.displayCode": "Ver código"
+  "webview.banner.title": "Es posible que la cámara no se abra aquí."
 }

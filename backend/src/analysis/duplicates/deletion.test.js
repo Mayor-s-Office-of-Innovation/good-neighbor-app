@@ -216,6 +216,33 @@ beforeEach(() => {
   state.fail = false;
   state.before = null;
 });
+it("commits silent cancellation work atomically with selected deletion", async () => {
+  vi.stubEnv("GNP_311_SUBMISSION_ENABLED", "true");
+  try {
+    const row = task("solo", "in_progress");
+    row.appActions = [
+      {
+        code: "create_311_ticket",
+        payload: { executionTrigger: "task_created" },
+      },
+    ];
+    put(row);
+    await deleteTaskGroup("table", "site", {
+      ...input("solo", ["solo"]),
+      mode: "selected",
+    });
+    const transaction = state.writes.find((entries) =>
+      entries.some((entry) => entry.Put?.Item?.entityType === "SF311_OUTBOX"),
+    );
+    expect(transaction).toBeDefined();
+    expect(
+      transaction.some((entry) => entry.Update?.Key?.sk === "TASK#solo"),
+    ).toBe(true);
+    expect(state.rows.get("SF311_JOB#solo#deleted")?.status).toBe("pending");
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
 it.each([undefined, [], [""], ["root", "root"], [12]])(
   "rejects an unconfirmed deletion scope %j without writing",
   async (expectedTaskIds) => {

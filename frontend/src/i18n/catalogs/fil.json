@@ -1,12 +1,14 @@
 {
   "access.cancel": "Kanselahin ang link sa pagpapatala",
   "access.cancelError": "Hindi makansela ang link. Subukan muli.",
+  "access.codeGuidance": "Kung hindi gumagana ang code o link, maaari kayong magpakita ng code sa inyong kasamahan para ilagay niya sa screen ng pag-sign in. Makikita lang ang code hanggang isara ninyo ang view na ito.",
   "access.create": "Gumawa ng link sa pagpapatala",
   "access.createError": "Hindi magawa ang link. Subukan muli.",
   "access.device": "Device ng team",
   "access.deviceLabel": "Pangalanan ang device",
   "access.devicePlaceholder": "hal., \"Telepono ni Amisha\"",
   "access.devices": "Mga device ng team",
+  "access.displayCode": "Ipakita ang code ngayon",
   "access.duplicateEmail": "Nakatalaga na ang email na ito sa isang Site Manager sa site na ito. Gumamit ng ibang email o pamahalaan ang kasalukuyang pagtatalaga.",
   "access.duration.days.one": "{count} araw",
   "access.duration.days.other": "{count} araw",
@@ -40,6 +42,7 @@
   "access.sessions": "Mga session",
   "access.share": "Ibahagi ang link sa pagpapatala",
   "access.shareMessage": "Inimbitahan ka ng iyong site manager sa Good Neighbor. Buksan ang link na ito sa teleponong gagamitin mo para sa app. Isang beses lang ito magagamit at mag-e-expire pagkalipas ng 8 oras.",
+  "access.showCode": "Ipakita ang code",
   "access.site": "Site na ito",
   "access.siteHeading": "Mag-imbita ng tao sa {site}",
   "access.title": "Pamahalaan ang access",
@@ -1140,6 +1143,7 @@
   "rulebook.agency.311-will-be-routed-4b50": "311 (ipapasa sa tamang ahensya)",
   "rulebook.agency.911-will-be-routed-5ef4": "911 (ipapasa sa tamang ahensya)",
   "rulebook.agency.department-of-public-works-dpw-19fa": "Department of Public Works (DPW)",
+  "rulebook.agency.dph-street-team-0a67": "Street Team ng DPH",
   "rulebook.agency.dph-street-team-via-311-84fb": "DPH Street Team sa pamamagitan ng 311",
   "rulebook.agency.recology-25f9": "Recology",
   "rulebook.agency.sf-aids-foundation-sfaf-4927": "San Francisco AIDS Foundation (SFAF)",
@@ -1216,6 +1220,7 @@
   "rulebook.guidance.if-it-s-an-object-not-a-person-blocking-the-path-e15d": "Kung bagay (hindi tao) ang nakaharang sa daanan, gamitin ang app para mag-file ng tiket sa 311.",
   "rulebook.guidance.if-it-s-not-your-client-or-it-doesn-t-feel-safe-6c38": "Kung hindi ninyo kliyente, o parang hindi ligtas, tumawag sa 911.",
   "rulebook.guidance.if-it-s-not-your-client-or-resident-call-911-do-bf6c": "Kung hindi ninyo siya kliyente o residente, tumawag sa 911. Huwag subukang pangasiwaan ang sitwasyon nang mag-isa.",
+  "rulebook.guidance.if-it-s-not-your-client-or-resident-call-the-sfp-99ee": "Kung hindi ninyo siya kliyente o residente, tumawag sa SFPD. Huwag subukang pangasiwaan ito nang mag-isa.",
   "rulebook.guidance.if-it-s-not-your-client-report-it-to-the-city-do-f657": "Kung hindi ninyo kliyente, i-report ito sa Lungsod. Huwag makialam.",
   "rulebook.guidance.if-it-s-your-client-and-it-s-safe-talk-to-them-c-9ff2": "Kung kliyente ninyo at ligtas, kausapin sila nang mahinahon. Mag-alok na ikonekta sila sa tulong.",
   "rulebook.guidance.if-it-s-your-client-it-s-not-an-emergency-and-it-c6c9": "Kung kliyente ninyo, hindi emergency, at ligtas, kausapin sila nang mahinahon at mag-alok na ikonekta sila sa tulong.",
@@ -1725,8 +1730,5 @@
   "webview.banner.dismiss.aria": "I-dismiss",
   "webview.banner.message": "Nasa loob kayo ng browser ng ibang app. Buksan sa inyong browser para gumana ang camera.",
   "webview.banner.open": "Buksan sa browser",
-  "webview.banner.title": "Maaaring hindi magbukas ang camera dito.",
-  "access.showCode": "Ipakita ang code",
-  "access.codeGuidance": "Kung hindi gumagana ang code o link, maaari kayong magpakita ng code sa inyong kasamahan para ilagay niya sa screen ng pag-sign in. Makikita lang ang code hanggang isara ninyo ang view na ito.",
-  "access.displayCode": "Ipakita ang code ngayon"
+  "webview.banner.title": "Maaaring hindi magbukas ang camera dito."
 }

@@ -44,6 +44,7 @@ it.each([
   "actions-escalations-v8",
   "actions-escalations-v9",
   "actions-escalations-v10",
+  "actions-escalations-v11",
 ])("uses %s labels without the legacy phone-number suffix", (policyVersion) => {
   expect(
     taskActionLabel({

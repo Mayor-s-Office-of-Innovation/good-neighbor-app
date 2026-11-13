@@ -310,8 +310,8 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   path did. Transient failures go back to `queued` and retry with the same backoff;
   permanent failures, outcomes that need reconciliation, and the fifth delivery mark the
   filing `failed`, leaving the task `in_progress`. A repeat tap returns the task; a tap on a
-  failed filing queues a new job. The same flag queues the "City help is no longer
-  needed" note (UpdateSR Add Notes): the task update and an `SF311_OUTBOX` job with
+  failed filing queues a new job. Independently of that flag, the "City help is no longer
+  needed" note (UpdateSR Add Notes) is always queued: the task update and an `SF311_OUTBOX` job with
   phase `note-<updateId>` and `trigger: "city_note"` commit together, and the worker
   sends the note under the task's lease. It never resends an uncertain note: it checks
   the City feed instead. HUB rejections fail at once; other outcomes retry, and the

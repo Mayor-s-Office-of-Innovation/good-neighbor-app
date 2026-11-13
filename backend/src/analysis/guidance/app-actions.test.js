@@ -422,7 +422,7 @@ describe("app action execution", () => {
 
   it.each([
     ["Run graffiti analysis", "1.5.1.1.18.0"],
-    ["Run bulky item analysis", "1.1.4.7.7.0"],
+    ["Run bulky item analysis", "1.1.4.7.21.0"],
   ])(
     "files %s with its default when classification cannot route",
     async (command, fallback) => {
@@ -1508,7 +1508,7 @@ describe("app action execution", () => {
               resolvedServiceCodes: [
                 command === "Run graffiti analysis"
                   ? "1.5.1.1.18.0"
-                  : "1.1.4.7.7.0",
+                  : "1.1.4.7.21.0",
               ],
             },
             recordedAt: "2026-08-18T12:00:00.000Z",
@@ -2471,53 +2471,57 @@ describe("311 ticket closure", () => {
     expect(eligibleTicketsForClosure(results).size).toBe(1);
   });
 
-  it("closes eligible agency-76 tickets with UpdateType 11", async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          UpdateID: 4321,
-          error_description: "",
-          return_code: 0,
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
-    );
-    vi.stubGlobal("fetch", fetchImpl);
+  it.each(["1", "3"])(
+    "closes eligible agency-76 tickets with reason %s",
+    async (closedReasonCode) => {
+      const fetchImpl = vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            UpdateID: 4321,
+            error_description: "",
+            return_code: 0,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+      vi.stubGlobal("fetch", fetchImpl);
 
-    const results = await executeAppActions(
-      [{ code: "close_311_ticket", payload: {} }],
-      { env: ENV, now, priorResults: [SUBMITTED_311_RESULT] },
-    );
-    expect(results).toEqual([
-      {
-        code: "close_311_ticket",
-        status: "submitted",
-        payload: {
-          closures: [
-            {
-              serviceCode: "1.1.4.7.20.0",
-              srNum: "2000008106",
-              closedReasonCode: "1",
-              status: "closed",
-              updateId: "4321",
-            },
-          ],
+      const results = await executeAppActions(
+        [{ code: "close_311_ticket", payload: { closedReasonCode } }],
+        { env: ENV, now, priorResults: [SUBMITTED_311_RESULT] },
+      );
+      expect(results).toEqual([
+        {
+          code: "close_311_ticket",
+          status: "submitted",
+          payload: {
+            closedReasonCode,
+            closures: [
+              {
+                serviceCode: "1.1.4.7.20.0",
+                srNum: "2000008106",
+                closedReasonCode,
+                status: "closed",
+                updateId: "4321",
+              },
+            ],
+          },
+          recordedAt: "2026-08-18T12:00:00.000Z",
         },
-        recordedAt: "2026-08-18T12:00:00.000Z",
-      },
-    ]);
-    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
-      SRnum: "2000008106",
-      UpdateType: "11",
-      SendingAgency: "76",
-      SourceOperator: "Good Neighbor App",
-      NumericSubType: "1",
-      TextSubType: "",
-      EffectiveDate: "2026-08-18 12:00:00",
-      ToAgencyDate: "",
-      Notes: "",
-    });
-  });
+      ]);
+      expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+        SRnum: "2000008106",
+        UpdateType: "11",
+        SendingAgency: "76",
+        SourceOperator: "Good Neighbor App",
+        NumericSubType: closedReasonCode,
+        TextSubType: "",
+        EffectiveDate: "2026-08-18 12:00:00",
+        ToAgencyDate: "",
+        Notes: "",
+      });
+    },
+  );
 
   it.each(["sf311_closure_state_unknown", "sf311_timeout"])(
     "retries a saved %s closure directly without consulting the updates feed",
