@@ -1,6 +1,11 @@
 // Canonical effective-dated requirements. Site #META snapshots are write-side
 // conveniences, never evidence that a compliance period exists.
 import { getDynamoTableName } from "../config.js";
+import {
+  DEFAULT_REQUIRED_CHECKS_PER_DAY,
+  requirementFromCompliance,
+  requiredOnResolver,
+} from "../domain/check-compliance.js";
 import { queryAllItems } from "./query-all-items.js";
 import { addDays, pacificToday } from "./pacific-dates.js";
 
@@ -141,5 +146,33 @@ export function projectSiteCompliance(site, periods, today = pacificToday()) {
           ? "draft_pending"
           : "none"
       : "archived",
+  };
+}
+
+/**
+ * The Check report's rule for what a Site owed each day. Rule 9 in
+ * reporting/projection-sql.js matches it, so Insights' Few Checks agrees,
+ * except after a Site closes.
+ * @param {Record<string, any>} site the Site's #META item
+ * @param {Record<string, any>[]} periods every COMPLIANCE_TERMS# version
+ * @param {string} today Pacific day key
+ */
+export function checksOwedResolver(site, periods, today) {
+  const canonical = projectSiteCompliance(site, periods, today);
+  const requirement = requirementFromCompliance(canonical.compliance);
+  if (!requirement.required) requirement.requiredPerDay = 0;
+  // The headline describes today's canonical period; each historical day is
+  // judged independently, even after the current requirement has ended.
+  requirement.assumed = false;
+  return {
+    requirement,
+    // A past term with no number of its own owes the default, so starting a
+    // new term doesn't change what past months owed.
+    owedOn: requiredOnResolver(
+      { ...requirement, requiredPerDay: DEFAULT_REQUIRED_CHECKS_PER_DAY },
+      /** @type {import("../domain/check-compliance.js").ComplianceTermsVersion[]} */ (
+        periods
+      ),
+    ),
   };
 }

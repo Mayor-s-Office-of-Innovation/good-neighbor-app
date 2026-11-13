@@ -23,6 +23,8 @@ export const ENTITY_KEY_SHAPES = {
   duplicate_links: { pk: "SITE#[^#]+", sk: "DUP_LINK#[^#]+" },
   duplicate_overrides: { pk: "SITE#[^#]+", sk: "DUP_OVERRIDE#[\\s\\S]+" },
   programs: { pk: "PROGRAM#[^#]+", sk: "#META" },
+  // Every version of a Site's terms, so Insights owes Checks as its Check reports do.
+  compliance_terms: { pk: "SITE#[^#]+", sk: "COMPLIANCE_TERMS#[^#]+#[^#]+" },
 };
 
 const matchers = Object.entries(ENTITY_KEY_SHAPES).map(([entity, shape]) => ({

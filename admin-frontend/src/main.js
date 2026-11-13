@@ -17,4 +17,5 @@ import "@awesome.me/webawesome/dist/components/checkbox/checkbox.js";
 import "@awesome.me/webawesome/dist/components/icon/icon.js";
 import "@awesome.me/webawesome/dist/components/spinner/spinner.js";
 import "@awesome.me/webawesome/dist/components/callout/callout.js";
+import "@awesome.me/webawesome/dist/components/divider/divider.js";
 import "./admin-app.js";

@@ -70,6 +70,57 @@ describe("generateYear", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("gives Sites compliance terms the converter keeps, at each profile's own number", () => {
+    const terms = items.filter((i) => i.sk.startsWith("COMPLIANCE_TERMS#"));
+    expect(terms.every((i) => classifyItem(i) === "compliance_terms")).toBe(
+      true,
+    );
+    const site = (/** @type {string} */ key) => {
+      const at = PROFILES.findIndex((p) => p.key === key);
+      if (at < 0) throw new Error(`no profile ${key}`);
+      return `syn-site-${String(at + 1).padStart(2, "0")}`;
+    };
+    /** @param {string} key */
+    const termsOf = (key) =>
+      terms
+        .filter((i) => i.siteId === site(key))
+        .map((i) => [
+          i.requiredChecksPerDay,
+          i.status,
+          i.expiresOnExclusive ?? null,
+        ]);
+    expect(
+      ["steady", "severe-repeat", "long-unresolved", "legacy-untimed"].map(
+        termsOf,
+      ),
+    ).toEqual([
+      [[3, "active", null]],
+      [[4, "active", null]],
+      [[2, "active", null]],
+      // One Site with no terms, so the pages show a Site that owes nothing.
+      [],
+    ]);
+    // Closing a Site leaves its terms open, as the app does.
+    const [closed] = terms.filter((i) => i.siteId === site("closed-site"));
+    expect([closed.status, closed.expiresOnExclusive]).toEqual([
+      "active",
+      undefined,
+    ]);
+    // Terms live on their own items, never on the Site record.
+    expect(items.some((i) => i.sk === "#META" && "compliance" in i)).toBe(
+      false,
+    );
+    // Each terms Site owes Checks every day it's open; legacy-untimed owes none.
+    expect(
+      Object.keys(answers.owedBySiteMonth).some((k) =>
+        k.startsWith(site("legacy-untimed")),
+      ),
+    ).toBe(false);
+    expect(answers.owedBySiteMonth[`${site("severe-repeat")}|2026-10`]).toBe(
+      4 * 31,
+    );
+  });
+
   it("uses only example.org emails and phone numbers kept for fiction", () => {
     const text = JSON.stringify(items);
     const emails = text.match(/[\w.+-]+@[\w.-]+/g) ?? [];
@@ -286,9 +337,33 @@ describe("projection over generated records", () => {
           { siteId: "extra", publicContact: "available", siteContact: "x" },
         ],
       },
-      { bySiteMonth: {}, contacts: {}, profiles: {} },
+      {
+        bySiteMonth: {},
+        owedBySiteMonth: {},
+        contacts: {},
+        profiles: {},
+      },
     );
     expect(result.mismatches).toHaveLength(2);
+  });
+
+  it("flags a month whose owed Checks differ from the answers", () => {
+    const result = compareWithAnswers(
+      {
+        site_days: [],
+        site_contacts: [],
+        checks_owed: [{ siteId: "s1", day: "2026-10-01", checksOwed: 3 }],
+      },
+      {
+        bySiteMonth: {},
+        owedBySiteMonth: { "s1|2026-10": 6 },
+        contacts: {},
+        profiles: {},
+      },
+    );
+    expect(result.mismatches).toEqual([
+      "s1|2026-10 checksOwed: expected 6, got 3",
+    ]);
   });
 
   it("would catch a counting rule that also counted update rows", async () => {

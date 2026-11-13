@@ -11,6 +11,8 @@ import {
   indexSnapshot,
   s3Source,
 } from "./snapshot.js";
+import { overview } from "./read-model.js";
+import { parseListQuery, parsePeriodParams } from "./requests.js";
 import {
   syntheticProjection,
   writeSyntheticProjection,
@@ -59,6 +61,41 @@ describe("indexSnapshot", () => {
       tables.checks[0],
     );
     expect(snap.sitesById.get("s1")?.name).toBe("Synthetic Site 1");
+  });
+
+  it("gives the same Overview whatever order the projection's rows come in", () => {
+    /** @param {boolean} reversed */
+    const october = (reversed) => {
+      const { manifest, tables } = syntheticProjection();
+      if (reversed) for (const rows of Object.values(tables)) rows.reverse();
+      const snap = indexSnapshot({ prefix: "p", manifest, tables });
+      return overview(snap, {
+        interval: parsePeriodParams(
+          { period: "month", month: "2026-10" },
+          manifest.evaluatedAt,
+        ),
+        filter: {},
+        list: parseListQuery("sites", {}),
+        now: Date.parse(manifest.evaluatedAt),
+      });
+    };
+    expect(october(true)).toEqual(october(false));
+  });
+
+  it("counts a day once however many Sites have data on it, so launch week opens on the running month", () => {
+    // Three Sites a day from Oct 26 to Nov 6: six days in each month.
+    const { manifest, tables } = syntheticProjection();
+    tables.site_days = ["s1", "s2", "s3"].flatMap((siteId) =>
+      [26, 27, 28, 29, 30, 31, 1, 2, 3, 4, 5, 6].map((d) => ({
+        ...tables.site_days[0],
+        siteId,
+        day: d > 20 ? `2026-10-${d}` : `2026-11-0${d}`,
+      })),
+    );
+    const snap = indexSnapshot({ prefix: "p", manifest, tables });
+    expect(
+      parsePeriodParams({}, "2026-11-06T19:00:00.000Z", snap.dataDays),
+    ).toMatchObject({ startDay: "2026-11-01" });
   });
 
   it("starts coverage on the earliest day with any record", () => {

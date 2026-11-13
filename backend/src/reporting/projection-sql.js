@@ -3,6 +3,7 @@
 // category_names; snapshot_at() is the evaluation time. Every rule judges
 // records as of that time, never the reader's clock.
 
+import { DEFAULT_REQUIRED_CHECKS_PER_DAY } from "../domain/check-compliance.js";
 import { PACIFIC_TIME_ZONE } from "../lib/pacific-dates.js";
 import { RESPONSE_STATES } from "./contract.js";
 
@@ -284,6 +285,60 @@ SELECT siteId, day,
   ${RESPONSE_STATES.map((s) => `count(*) FILTER (WHERE responseState = '${s}') AS "${s}"`).join(",\n  ")}
 FROM activity GROUP BY siteId, day;
 
+-- Rule 9: what a Site owed each Pacific day, by the Check report's rule
+-- (requiredOnResolver), so Few Checks agrees with it. A term with no number
+-- of its own owes the default, so a new term doesn't change past months.
+CREATE OR REPLACE TEMP TABLE term_versions AS
+WITH typed AS (
+  SELECT *, TRY_CAST(requiredChecksPerDay AS DOUBLE) AS perDayValue
+  FROM in_terms)
+SELECT siteId, termsVersionId, effectiveStart, createdAt,
+  nullif(expiresOnExclusive, '') AS expiresOn,
+  coalesce(status = 'cancelled', false) AS cancelled,
+  -- A million or more a day is bad data, and would overflow the INTEGER cast.
+  CASE WHEN perDayValue > 0 AND perDayValue = trunc(perDayValue)
+      AND perDayValue < 1e6
+    THEN perDayValue ELSE ${DEFAULT_REQUIRED_CHECKS_PER_DAY} END AS perDay
+FROM typed;
+
+-- Owing runs from a Site's first term to the snapshot. Closing a Site leaves
+-- its terms open, so owing stops at the close. Sites closed before the app
+-- recorded deactivatedAt fall back to their last update.
+CREATE OR REPLACE TEMP TABLE p_checks_owed AS
+WITH spans AS (
+  -- A cancelled or unreadable start never applied, so it can't move the first day.
+  SELECT s.siteId,
+    strftime(min(TRY_CAST(t.effectiveStart AS DATE))
+      FILTER (WHERE NOT t.cancelled), '%Y-%m-%d') AS firstDay,
+    CASE WHEN s.status = 'inactive'
+      THEN strftime(pacific_day(parse_time(
+        coalesce(nullif(s.deactivatedAt, ''), s.updatedAt))), '%Y-%m-%d')
+      ELSE strftime(pacific_day(snapshot_at()), '%Y-%m-%d') END AS lastDay
+  FROM in_sites s
+  JOIN term_versions t ON t.siteId = s.siteId
+  GROUP BY s.siteId, s.status, s.deactivatedAt, s.updatedAt),
+-- No days for a close before the first term; a close time that can't be read
+-- compares false, so that Site owes nothing rather than owing forever.
+days AS (
+  SELECT siteId, CAST(unnest(generate_series(TRY_CAST(firstDay AS DATE),
+    least(TRY_CAST(lastDay AS DATE), pacific_day(snapshot_at())),
+    INTERVAL 1 DAY)) AS DATE) AS day
+  FROM spans WHERE lastDay >= firstDay),
+-- The latest live version started by the day applies; a cancelled one
+-- never did.
+applicable AS (
+  SELECT d.siteId, d.day, t.expiresOn, t.perDay
+  FROM days d JOIN term_versions t ON t.siteId = d.siteId AND NOT t.cancelled
+    AND t.effectiveStart <= strftime(d.day, '%Y-%m-%d')
+  -- Of two versions that start the same day, the later-made one wins, as on
+  -- the Site's own page; the ID only makes the pick repeatable.
+  QUALIFY row_number() OVER (PARTITION BY d.siteId, d.day
+    ORDER BY t.effectiveStart DESC, t.createdAt DESC NULLS LAST,
+      t.termsVersionId) = 1)
+SELECT siteId, day, CAST(perDay AS INTEGER) AS checksOwed
+FROM applicable
+WHERE NOT coalesce(strftime(day, '%Y-%m-%d') >= expiresOn, false);
+
 -- Counts of left-out records, so a drop in totals can be explained.
 CREATE OR REPLACE TEMP TABLE p_data_quality AS
 SELECT
@@ -294,7 +349,12 @@ SELECT
     FROM issue_members) AS duplicate,
   (SELECT count(*) FILTER (WHERE state = 'afterSnapshot') FROM task_states) AS afterSnapshot,
   (SELECT count(*) FILTER (WHERE state = 'undated') FROM task_states) AS undated,
-  (SELECT count(*) FILTER (WHERE countedTs IS NULL) FROM check_days) AS undatedChecks;
+  (SELECT count(*) FILTER (WHERE countedTs IS NULL) FROM check_days) AS undatedChecks,
+  -- Open Sites with no terms owe nothing, so Few Checks can't fire for them;
+  -- counted so terms missing from the lake show.
+  (SELECT count(*) FROM in_sites s WHERE s.status IS DISTINCT FROM 'inactive'
+    AND NOT EXISTS (SELECT 1 FROM in_terms t WHERE t.siteId = s.siteId))
+    AS openSitesWithoutTerms;
 `;
 
 // Fixed row order, so the same lake always writes the same files.
@@ -305,4 +365,5 @@ export const TABLE_ORDER = {
   site_contacts: "siteId",
   sites: "siteId",
   checks: "siteId, activityAt, checkId",
+  checks_owed: "siteId, day",
 };

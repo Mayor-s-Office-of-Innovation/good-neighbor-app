@@ -158,6 +158,11 @@ export function createJobs({
             JOB_LIMITS.downloadSeconds,
           )
         : null,
+    // The page renews the link before it lapses, so it needs the lifetime.
+    downloadSeconds:
+      record.state === "succeeded" && record.result
+        ? JOB_LIMITS.downloadSeconds
+        : null,
   });
 
   // Writes only over the version it read, so run, cancel and poll can't undo each other.

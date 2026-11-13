@@ -1,6 +1,7 @@
 // Built once per snapshot; nothing downstream recounts, so screens, CSVs and
 // reports agree. Only `sites` holds names (of Sites); no table holds
-// addresses, contact details, people or free text.
+// addresses, people or free text. The one contact detail is the public email
+// and phone in `site_contacts`, which Sites post for neighbors.
 
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -14,7 +15,7 @@ import {
   RULE_VERSION,
   assertNoJudgementFields,
 } from "./contract.js";
-import { publicContactState, siteContactState } from "./indicators.js";
+import { publicContactState, siteContactState, text } from "./indicators.js";
 import { RULES_SQL, TABLE_ORDER, snapshotMacrosSql } from "./projection-sql.js";
 
 // Promoted columns where the converter has them, raw JSON otherwise. Copied
@@ -40,6 +41,13 @@ const LAKE_INPUT_SQL = {
   in_overrides: `SELECT siteId, taskId FROM duplicate_overrides`,
   in_checks: `SELECT siteId, checkId, status, raw->>'$.flowType' AS flowType,
     startedAt, completedAt, synthesizedAt FROM checks`,
+  in_sites: `SELECT siteId, raw->>'$.status' AS status,
+    raw->>'$.deactivatedAt' AS deactivatedAt,
+    raw->>'$.updatedAt' AS updatedAt FROM sites`,
+  in_terms: `SELECT siteId, termsVersionId,
+    raw->>'$.effectiveStart' AS effectiveStart, raw->>'$.createdAt' AS createdAt,
+    raw->>'$.expiresOnExclusive' AS expiresOnExclusive, raw->>'$.status' AS status,
+    raw->>'$.requiredChecksPerDay' AS requiredChecksPerDay FROM compliance_terms`,
 };
 const SITES_SQL = `SELECT siteId, raw FROM sites`;
 const AS_OF_SQL = `SELECT max(exportedAt) AS asOf FROM (
@@ -48,7 +56,8 @@ const AS_OF_SQL = `SELECT max(exportedAt) AS asOf FROM (
     UNION ALL SELECT exportedAt FROM task_updates
     UNION ALL SELECT exportedAt FROM duplicate_links
     UNION ALL SELECT exportedAt FROM duplicate_overrides
-    UNION ALL SELECT exportedAt FROM sites)`;
+    UNION ALL SELECT exportedAt FROM sites
+    UNION ALL SELECT exportedAt FROM compliance_terms)`;
 
 /**
  * @param {any} conn
@@ -82,9 +91,10 @@ function reportCategory(category) {
  * Contacts are labelled "current", because the app keeps no contact history.
  * @param {Record<string, any>[]} sites
  * @param {string} evaluatedAt
+ * @param {Set<string>} withTerms Sites with any compliance terms in the lake
  * @returns {{ sites: Record<string, any>[], siteContacts: Record<string, any>[] }}
  */
-function buildSiteTables(sites, evaluatedAt) {
+function buildSiteTables(sites, evaluatedAt, withTerms) {
   return {
     sites: sites.map((s) => ({
       siteId: String(s.siteId),
@@ -100,6 +110,8 @@ function buildSiteTables(sites, evaluatedAt) {
         Number.isFinite(s.location?.longitude),
       hasPerimeter:
         typeof s.perimeter === "string" && s.perimeter.trim() !== "",
+      // Few Checks can't flag a Site with no terms, so Overview lists it with the unknowns.
+      hasTerms: withTerms.has(String(s.siteId)),
       createdAt: s.createdAt ?? null,
     })),
     siteContacts: sites.map((s) => {
@@ -109,6 +121,10 @@ function buildSiteTables(sites, evaluatedAt) {
         siteId: String(s.siteId),
         publicContact: pub.state,
         publicContactReasons: pub.reasonCodes.join(","),
+        // Reports print the public contact; the Site manager's is private.
+        publicEmail: text(s.publicContact?.email) || null,
+        publicPhone: text(s.publicContact?.phone) || null,
+        publicPhoneExtension: text(s.publicContact?.phoneExtension) || null,
         siteContact: site.state,
         siteContactReasons: site.reasonCodes.join(","),
         basis: "current",
@@ -156,6 +172,9 @@ export const TABLE_SCHEMAS = {
     siteId: V,
     publicContact: V,
     publicContactReasons: V,
+    publicEmail: V,
+    publicPhone: V,
+    publicPhoneExtension: V,
     siteContact: V,
     siteContactReasons: V,
     basis: V,
@@ -172,6 +191,7 @@ export const TABLE_SCHEMAS = {
     managerId: V,
     hasLocation: B,
     hasPerimeter: B,
+    hasTerms: B,
     createdAt: V,
   },
   checks: {
@@ -184,6 +204,11 @@ export const TABLE_SCHEMAS = {
     activityAt: V,
     day: "DATE",
     issues: I,
+  },
+  checks_owed: {
+    siteId: V,
+    day: "DATE",
+    checksOwed: I,
   },
 };
 for (const schema of Object.values(TABLE_SCHEMAS))
@@ -246,6 +271,17 @@ const INPUT_SCHEMAS = {
     completedAt: V,
     synthesizedAt: V,
   },
+  in_sites: { siteId: V, status: V, deactivatedAt: V, updatedAt: V },
+  // Text, as the lake's JSON gives it, so rows handed in and lake rows are judged alike.
+  in_terms: {
+    siteId: V,
+    termsVersionId: V,
+    effectiveStart: V,
+    createdAt: V,
+    expiresOnExclusive: V,
+    status: V,
+    requiredChecksPerDay: V,
+  },
 };
 
 /** @type {Record<string, string>} projection table → rules table */
@@ -255,6 +291,7 @@ const SQL_TABLES = {
   site_contacts: "p_site_contacts",
   sites: "p_sites",
   checks: "p_checks",
+  checks_owed: "p_checks_owed",
 };
 
 /**
@@ -276,7 +313,7 @@ async function loadRows(conn, name, schema, list) {
  * Rows handed in instead of the lake, shaped like its reads (INPUT_SCHEMAS).
  * @typedef {{ tasks?: Record<string, any>[], conditions?: Record<string, any>[], updates?: Record<string, any>[],
  *   links?: Record<string, any>[], overrides?: Record<string, any>[], checks?: Record<string, any>[],
- *   sites?: Record<string, any>[], asOf?: string | null }} ProjectionInputs
+ *   sites?: Record<string, any>[], terms?: Record<string, any>[], asOf?: string | null }} ProjectionInputs
  */
 
 /**
@@ -376,7 +413,16 @@ async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
     { ruleId: V, hours: D },
     [...ruleHours].map(([ruleId, hours]) => ({ ruleId, hours })),
   );
-  const { sites, siteContacts } = buildSiteTables(siteRecords, evaluatedAt);
+  const withTerms = new Set(
+    (await rows(conn, "SELECT DISTINCT siteId FROM in_terms")).map((r) =>
+      String(r.siteId),
+    ),
+  );
+  const { sites, siteContacts } = buildSiteTables(
+    siteRecords,
+    evaluatedAt,
+    withTerms,
+  );
   await loadRows(conn, "p_sites", TABLE_SCHEMAS.sites, sites);
   await loadRows(
     conn,

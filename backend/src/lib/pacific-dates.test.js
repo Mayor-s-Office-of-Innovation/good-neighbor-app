@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   addDays,
   addMonthsToFirst,
+  dayCountBetween,
   dayKeysBetween,
   isDayKey,
   pacificDateKey,
@@ -52,6 +53,23 @@ describe("day arithmetic", () => {
       "2026-10-01",
     ]);
     expect(dayKeysBetween("2026-09-29", "2026-09-29")).toEqual([]);
+  });
+
+  it("counts the days of a half-open range as dayKeysBetween lists them", () => {
+    expect(
+      [
+        ["2026-09-29", "2026-10-02"],
+        ["2026-09-29", "2026-09-29"],
+        ["2026-10-02", "2026-09-29"],
+        // Across the March DST change, still whole days.
+        ["2026-03-01", "2026-04-01"],
+      ].map(([a, b]) => [dayCountBetween(a, b), dayKeysBetween(a, b).length]),
+    ).toEqual([
+      [3, 3],
+      [0, 0],
+      [0, 0],
+      [31, 31],
+    ]);
   });
 
   it("knows the weekday", () => {

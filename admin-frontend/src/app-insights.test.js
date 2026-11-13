@@ -80,7 +80,7 @@ test("Settings pages mark neither tab", async () => {
   assert.equal(current(insightsTab), null);
 });
 
-test("opening Insights shows Overview, a data-time placeholder and no Manage reads", async () => {
+test("opening Insights shows Overview with no Manage Site or record reads", async () => {
   const { api } = await mountAdmin("/insights", { insights: true });
   assert.equal(heading(), t("admin.insights.overview"));
   assert.equal(current(insightsTab), "true");
@@ -88,13 +88,15 @@ test("opening Insights shows Overview, a data-time placeholder and no Manage rea
     current('#insights-nav a[data-insights-nav="overview"]'),
     "page",
   );
-  assert.equal(
-    text("[data-insights-freshness]"),
-    t("admin.insights.dataAsOfPending"),
-  );
   assert.ok(focused("#insights-title"));
-  // The session read is the only one Insights shares with Manage.
-  assert.deepEqual(api.calls("GET", /^(?!session$)/), []);
+  // Only Manage's shared lists, for filter names; no Site or record reads.
+  assert.deepEqual(
+    api
+      .calls("GET", /^(?!session$|reporting\/)/)
+      .map((/** @type {any} */ c) => c.path + c.search)
+      .sort(),
+    ["oversight-options", "program-managers", "programs", "providers"],
+  );
 });
 
 test("Insights pages keep the period when moving between them", async () => {
@@ -121,7 +123,7 @@ test("record pages name their record", async () => {
   assert.equal(current('a[data-insights-raw="checks"]'), "true");
   assert.equal(current('#insights-nav a[data-insights-nav="raw"]'), "true");
   await routeTo("/insights/sites/s1");
-  assert.equal(heading(), t("admin.insights.site"));
+  assert.equal(heading(), "Example Site");
   assert.equal(
     current('#insights-nav a[data-insights-nav="overview"]'),
     "true",
@@ -271,13 +273,10 @@ test("System Status still opens for a Supervisor with Insights on", async () => 
   assert.equal(current(manageTab), null);
 });
 
-test("Manage site goes to the Site and offers a way back to Insights", async () => {
-  await mountAdmin("/insights/sites/s1?period=2026-09", { insights: true });
-  $("#insights-manage-site").focus();
-  await click("#insights-manage-site");
-  assert.equal(
-    url(),
+test("a Manage Site link with a return offers a way back to Insights", async () => {
+  await mountAdmin(
     `/sites/s1?return=${encodeURIComponent("/insights/sites/s1?period=2026-09")}`,
+    { insights: true },
   );
   assert.equal(heading(), "Example Site");
   assert.equal(
@@ -288,7 +287,7 @@ test("Manage site goes to the Site and offers a way back to Insights", async () 
   assert.ok(!missing("#site-oversight-form"));
   await click("#insights-return");
   assert.equal(url(), "/insights/sites/s1?period=2026-09");
-  assert.ok(focused("#insights-manage-site"));
+  assert.ok(focused("#insights-title"));
 });
 
 test("Back to Insights stays while the Site's own links drop the return", async () => {
@@ -305,18 +304,6 @@ test("Back to Insights stays while the Site's own links drop the return", async 
   assert.ok(missing("#insights-return"));
   await routeTo("/sites/s1");
   assert.ok(missing("#insights-return"));
-});
-
-test("a focused element whose id isn't a valid selector doesn't break the return", async () => {
-  await mountAdmin("/insights/sites/s1", { insights: true });
-  const link = $("#insights-manage-site");
-  link.id = "1-manage";
-  link.focus();
-  await click(link);
-  await click("#insights-return");
-  assert.equal(pageError(), "");
-  assert.equal(heading(), t("admin.insights.site"));
-  assert.ok(focused("#insights-title"));
 });
 
 test("a session that ends on an Insights page hides the page", async () => {
@@ -345,23 +332,11 @@ test("clicking on while Insights downloads starts one download", async () => {
 });
 
 test("ids that need encoding reach the Site and the page title intact", async () => {
-  await mountAdmin("/insights/sites/a%20b", { insights: true });
-  assert.match(
-    $("#insights-manage-site").getAttribute("href"),
-    /^\/sites\/a%20b\?return=/,
-  );
+  // A slash, which a URL parser leaves alone, so only encodeURIComponent keeps it in the ID.
+  const { api } = await mountAdmin("/insights/sites/a%2Fb", { insights: true });
+  assert.equal(api.calls("GET", /^reporting\/sites\/a%2Fb(\?|$)/).length, 1);
   await routeTo("/insights/raw/issues/i%201");
   assert.equal(heading(), t("admin.insights.issue", { id: "i 1" }));
-});
-
-test("a very long Insights address still leaves a way back, with its period", async () => {
-  const long = `/insights/sites/s1?period=2026-09&q=${"a".repeat(4100)}`;
-  await mountAdmin(long, { insights: true });
-  await click("#insights-manage-site");
-  assert.equal(
-    $("#insights-return").getAttribute("href"),
-    "/insights/sites/s1?period=2026-09",
-  );
 });
 
 test("leaving Insights before it loads doesn't remember the unseen page", async () => {

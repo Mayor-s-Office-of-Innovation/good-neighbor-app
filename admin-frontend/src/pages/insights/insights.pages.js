@@ -1,8 +1,11 @@
 // Insights page shells. Loaded on first visit, so Manage never downloads them.
 import "./insights.css";
+import "./overview.view.js";
+import "./site.view.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
 import { carriedQuery, safeReturnPath } from "./insights-routes.js";
+import { freshnessView } from "./insights.templates.js";
 
 /** @param {string} segment a route id, still percent-encoded */
 function decodeSegment(segment) {
@@ -15,7 +18,6 @@ function decodeSegment(segment) {
 
 /** @param {{ name: string, id: string }} route */
 function pageTitle(route) {
-  if (route.name === "insights-site") return t("admin.insights.site");
   if (route.name === "insights-issue")
     return t("admin.insights.issue", { id: decodeSegment(route.id) });
   if (route.name === "insights-check")
@@ -79,8 +81,13 @@ export function insightsPageView(route, search) {
       ],
       !raw,
     )}
-    <div class="page-head"><h1 id="insights-title" tabindex="-1">${escapeHtml(pageTitle(route))}</h1></div>
-    <p class="muted insights__freshness" data-insights-freshness>${escapeHtml(t("admin.insights.dataAsOfPending"))}</p>
+    ${
+      // Site insights names its Site, which only its data knows.
+      route.name === "insights-site"
+        ? ""
+        : `<div class="page-head"><h1 id="insights-title" tabindex="-1">${escapeHtml(pageTitle(route))}</h1></div>`
+    }
+    ${route.name === "insights" || route.name === "insights-site" ? "" : freshnessView(null)}
     ${
       raw
         ? subnav("admin.insights.rawLabel", "", [
@@ -100,10 +107,11 @@ export function insightsPageView(route, search) {
         : ""
     }
     ${
-      route.name === "insights-site"
-        ? `<p><a class="btn-secondary" id="insights-manage-site" href="/sites/${encodeURIComponent(decodeSegment(route.id))}?return=${encodeURIComponent(here)}" data-route>${escapeHtml(t("admin.insights.manageSite"))}</a></p>`
-        : ""
+      route.name === "insights"
+        ? "<insights-overview></insights-overview>"
+        : route.name === "insights-site"
+          ? `<insights-site data-site-id="${escapeHtml(decodeSegment(route.id))}" data-here="${escapeHtml(here)}"></insights-site>`
+          : `<p class="empty-state">${escapeHtml(t("admin.insights.notReady"))}</p>`
     }
-    <p class="empty-state">${escapeHtml(t("admin.insights.notReady"))}</p>
   </section>`;
 }

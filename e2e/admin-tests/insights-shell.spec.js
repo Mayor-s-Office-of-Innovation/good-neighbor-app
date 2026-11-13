@@ -13,16 +13,19 @@ test("an admin moves between Manage and Insights pages and back", async ({
   const api = await mockAdmin(page, { insights: true });
   await page.goto("/insights");
   await expect(heading(page)).toHaveText(t("admin.insights.overview"));
-  await expect(page.locator("[data-insights-freshness]")).toHaveText(
-    t("admin.insights.dataAsOfPending"),
-  );
-  // So opening Insights never waits on Manage's directory reads.
+  await expect(page.locator("[data-site-row]").first()).toBeVisible();
+  // So opening Insights never waits on Manage's Site and record reads; it
+  // reads only the shared lists that name its filters.
   await settle(page);
+  // Sorted: the reads go out together and can arrive in any order.
   expect(
-    ["GET", "POST", "PUT", "PATCH", "DELETE"].flatMap((method) =>
-      api.calls(method, /^(?!session(?:\?|$))/),
-    ),
-  ).toEqual([]);
+    ["GET", "POST", "PUT", "PATCH", "DELETE"]
+      .flatMap((method) =>
+        api.calls(method, /^(?!session(?:\?|$)|reporting\/)/),
+      )
+      .map((c) => c.path + c.search)
+      .sort(),
+  ).toEqual(["oversight-options", "program-managers", "programs", "providers"]);
   await page.locator('#insights-nav a[data-insights-nav="trends"]').click();
   await expect(heading(page)).toHaveText(t("admin.insights.trends"));
   await tab(page, "manage").click();
@@ -51,20 +54,6 @@ test("unsaved Site edits ask first, and once saved Insights opens", async ({
   await expect(heading(page)).toHaveText("Example Site Renamed");
   await tab(page, "insights").click();
   await expect(heading(page)).toHaveText(t("admin.insights.overview"));
-});
-
-test("Manage site leads back to Site insights with its filters", async ({
-  page,
-}) => {
-  await mockAdmin(page, { insights: true });
-  await page.goto("/insights/sites/s1?period=2026-09");
-  await page.locator("#insights-manage-site").click();
-  await expect(heading(page)).toHaveText("Example Site");
-  await page.locator('a[href^="/sites/s1?section=oversight"]').click();
-  await expect(page.locator("#site-oversight-form")).toBeVisible();
-  await page.locator("#insights-return").click();
-  await expect(page).toHaveURL(/\/insights\/sites\/s1\?period=2026-09$/);
-  await expect(page.locator("#insights-manage-site")).toBeFocused();
 });
 
 test("when Insights can't download, Manage keeps working", async ({ page }) => {

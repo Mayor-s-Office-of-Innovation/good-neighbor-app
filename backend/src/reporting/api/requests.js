@@ -10,7 +10,8 @@ export const LIMITS = Object.freeze({
   maxPageSize: 100,
   maxSiteIds: 100,
   maxTrendSites: 50,
-  maxReportSites: 10,
+  // Above the citywide Site count, so no pick hits it; 1,008 Sites over a year build in 1.6 s.
+  maxReportSites: 2000,
   // A year of citywide Issues is about 222,000 rows (architecture doc, decision 4).
   maxExportRows: 250_000,
   maxSearch: 100,
@@ -61,19 +62,50 @@ function wholeNumber(value, code) {
   return Number(text);
 }
 
+// A month with 14 days of data is worth opening on, even if this month has more.
+const MIN_DEFAULT_DAYS = 14;
+
+/**
+ * Last month, so the opening numbers don't change under the reader, unless it
+ * has under 14 days of data and this month has at least as many.
+ * @param {string} evaluatedAt
+ * @param {string[]} dataDays days with a site_days row
+ * @returns {string} YYYY-MM
+ */
+function defaultMonth(evaluatedAt, dataDays) {
+  const thisMonth = pacificDateKey(evaluatedAt).slice(0, 7);
+  const [year, month] = thisMonth.split("-").map(Number);
+  const lastMonth = new Date(Date.UTC(year, month - 2, 1))
+    .toISOString()
+    .slice(0, 7);
+  /** @param {string} m YYYY-MM */
+  const daysIn = (m) => dataDays.filter((day) => day.startsWith(m)).length;
+  const last = daysIn(lastMonth);
+  return last < MIN_DEFAULT_DAYS && daysIn(thisMonth) >= last
+    ? thisMonth
+    : lastMonth;
+}
+
 /**
  * @param {Params} params
  * @param {string} evaluatedAt
+ * @param {string[]} [dataDays] the snapshot's days with a site_days row
  * @returns {import("../periods.js").Interval}
  */
-export function parsePeriodParams(params, evaluatedAt) {
+export function parsePeriodParams(params, evaluatedAt, dataDays = []) {
   const kind = str(params.period) ?? "month";
   /** @type {import("../periods.js").PeriodSpec} */
   let spec;
   if (kind === "month")
     spec = {
       kind,
-      month: str(params.month) ?? pacificDateKey(evaluatedAt).slice(0, 7),
+      month: str(params.month) ?? defaultMonth(evaluatedAt, dataDays),
+    };
+  else if (kind === "quarter")
+    spec = {
+      kind,
+      year: wholeNumber(params.year, "invalid_year"),
+      quarter: wholeNumber(params.quarter, "invalid_quarter"),
     };
   else if (kind === "year")
     spec = { kind, year: wholeNumber(params.year, "invalid_year") };
@@ -178,8 +210,8 @@ export const SORTS = Object.freeze({
     overdueLate: "desc",
     maxSeverity: "desc",
     // Fewest first, since few Checks is the concern.
-    completedPerimeterChecks: "asc",
-    issuesCreated: "desc",
+    checksPerDay: "asc",
+    issuesPer30Days: "desc",
   },
   issues: {
     createdAt: "desc",
@@ -191,15 +223,31 @@ export const SORTS = Object.freeze({
   checks: { activityAt: "desc", siteName: "asc" },
 });
 
+// The Site page lists several states or bands at once, e.g. "overdue,late".
+const MULTI = new Set([
+  "issues.responseState",
+  "issues.severityBand",
+  "sites.responseState",
+]);
+
 /** Fixed values, so a typo is a 400, not an empty list; null is free text. */
-const LIST_FILTERS = Object.freeze({
-  sites: {},
+const CONTACT_STATES = ["available", "missing", "unknown"];
+export const LIST_FILTERS = Object.freeze({
+  // Unlike SITE_DIMENSIONS, these need each Site's totals for the period.
+  sites: {
+    show: ["all", "top", "unknown"],
+    responseState: RESPONSE_STATES,
+    publicContact: CONTACT_STATES,
+    siteContact: CONTACT_STATES,
+  },
   issues: {
     severityBand: ["minor", "moderate", "severe", "unknown"],
     responseState: RESPONSE_STATES,
     source: ["perimeter", "single-problem", "unknown"],
     // Not "status": that name filters Sites.
     issueStatus: ["open", "resolved"],
+    // A Site's concern flag, for its "View Issues" link.
+    concern: ["slowResponse", "repeatedSevere"],
     category: null,
   },
   checks: {
@@ -245,7 +293,10 @@ export function parseListQuery(kind, params) {
     if (
       !value ||
       value.length > LIMITS.maxFilterLength ||
-      (values && !values.includes(value))
+      (values &&
+        (MULTI.has(`${kind}.${name}`) ? value.split(",") : [value]).some(
+          (one) => !values.includes(one),
+        ))
     )
       throw requestError(`invalid_${name}`);
     filters[name] = value;

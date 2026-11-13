@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { addDays, dayKeysBetween } from "../../lib/pacific-dates.js";
 import {
   LIMITS,
   decodeCursor,
@@ -13,6 +14,14 @@ import {
 } from "./requests.js";
 
 const EVALUATED = "2026-11-04T19:00:00.000Z";
+/**
+ * Every day from `from` through `through`, as a snapshot's dataDays.
+ * @param {string} from
+ * @param {string} through
+ */
+const daysOfData = (from, through) => dayKeysBetween(from, addDays(through, 1));
+// Data every day, from well before any month these tests ask for.
+const LONG_RUNNING = daysOfData("2025-01-01", "2027-01-15");
 
 /**
  * @param {() => unknown} fn
@@ -47,11 +56,41 @@ describe("isRequestError", () => {
 });
 
 describe("parsePeriodParams", () => {
-  it("defaults to the Pacific month even when UTC has moved on", () => {
-    // 05:00 UTC on Nov 1 is still Oct 31 in San Francisco.
-    expect(parsePeriodParams({}, "2026-11-01T05:00:00.000Z")).toMatchObject({
-      startDay: "2026-10-01",
+  it("defaults to the last full Pacific month even when UTC has moved on", () => {
+    // 05:00 UTC on Nov 1 is still Oct 31 in San Francisco, so September is the last full month.
+    expect(
+      parsePeriodParams({}, "2026-11-01T05:00:00.000Z", LONG_RUNNING),
+    ).toMatchObject({
+      startDay: "2026-09-01",
     });
+  });
+
+  it("defaults to December in January", () => {
+    expect(
+      parsePeriodParams({}, "2027-01-15T20:00:00.000Z", LONG_RUNNING),
+    ).toMatchObject({
+      startDay: "2026-12-01",
+      endDay: "2027-01-01",
+    });
+  });
+
+  it("reads a quarter from its year and number", () => {
+    expect(
+      parsePeriodParams(
+        { period: "quarter", year: "2026", quarter: "3" },
+        EVALUATED,
+        LONG_RUNNING,
+      ),
+    ).toMatchObject({ kind: "quarter", startDay: "2026-07-01" });
+  });
+
+  it.each([
+    [{ period: "quarter", year: "2026" }, "invalid_quarter"],
+    [{ period: "quarter", quarter: "3" }, "invalid_year"],
+  ])("refuses %j with %s", (params, code) => {
+    expect(() => parsePeriodParams(params, EVALUATED, LONG_RUNNING)).toThrow(
+      expect.objectContaining({ code, statusCode: 400 }),
+    );
   });
 
   it("accepts a custom period of exactly 12 months", () => {
@@ -59,12 +98,51 @@ describe("parsePeriodParams", () => {
       parsePeriodParams(
         { period: "custom", from: "2025-01-01", to: "2026-01-01" },
         EVALUATED,
+        LONG_RUNNING,
       ),
     ).toMatchObject({ startDay: "2025-01-01", endDay: "2026-01-01" });
   });
 
-  it("defaults to the snapshot's current Pacific month", () => {
-    expect(parsePeriodParams({}, EVALUATED)).toMatchObject({
+  it("defaults to the last full month before the snapshot's, which a link can still override", () => {
+    expect(parsePeriodParams({}, EVALUATED, LONG_RUNNING)).toMatchObject({
+      kind: "month",
+      startDay: "2026-10-01",
+      endDay: "2026-11-01",
+      incomplete: false,
+    });
+    expect(
+      parsePeriodParams(
+        { period: "month", month: "2026-11" },
+        EVALUATED,
+        LONG_RUNNING,
+      ),
+    ).toMatchObject({ startDay: "2026-11-01", incomplete: true });
+  });
+
+  it("stays on last month while this month has fewer days of data", () => {
+    // Nov 2, launch week: October holds Oct 26–31, six days; November two.
+    expect(
+      parsePeriodParams(
+        {},
+        "2026-11-02T19:00:00.000Z",
+        daysOfData("2026-10-26", "2026-11-02"),
+      ),
+    ).toMatchObject({ startDay: "2026-10-01", endDay: "2026-11-01" });
+    // Nov 4: still four days against October's six.
+    expect(
+      parsePeriodParams({}, EVALUATED, daysOfData("2026-10-26", "2026-11-04")),
+    ).toMatchObject({ startDay: "2026-10-01" });
+  });
+
+  it("opens on the running month once it has as many days of data as a short last month", () => {
+    // Nov 6: six days in each.
+    expect(
+      parsePeriodParams(
+        {},
+        "2026-11-06T19:00:00.000Z",
+        daysOfData("2026-10-26", "2026-11-06"),
+      ),
+    ).toMatchObject({
       kind: "month",
       startDay: "2026-11-01",
       endDay: "2026-12-01",
@@ -72,11 +150,60 @@ describe("parsePeriodParams", () => {
     });
   });
 
+  it("counts only days that have data, not the days since the data began", () => {
+    // Data began Oct 1 but only Oct 1 and Oct 30–31 have any: 3 days.
+    expect(
+      parsePeriodParams({}, EVALUATED, [
+        "2026-10-01",
+        "2026-10-30",
+        "2026-10-31",
+        ...daysOfData("2026-11-01", "2026-11-04"),
+      ]),
+    ).toMatchObject({ startDay: "2026-11-01" });
+  });
+
+  it("opens on last month once it has 14 days of data, and not with 13", () => {
+    // October holds Oct 18–31, exactly 14 days, or Oct 19–31; November has 30.
+    expect(
+      ["2026-10-18", "2026-10-19"].map(
+        (from) =>
+          parsePeriodParams(
+            {},
+            "2026-11-30T19:00:00.000Z",
+            daysOfData(from, "2026-11-30"),
+          ).startDay,
+      ),
+    ).toEqual(["2026-10-01", "2026-11-01"]);
+  });
+
+  it("treats a missing list of days with data as no data yet", () => {
+    expect(parsePeriodParams({}, EVALUATED)).toMatchObject({
+      startDay: "2026-11-01",
+    });
+  });
+
+  it("opens on the running month when there's no data yet", () => {
+    expect(parsePeriodParams({}, EVALUATED, [])).toMatchObject({
+      startDay: "2026-11-01",
+    });
+  });
+
+  it("opens a linked month as asked, even in launch week", () => {
+    expect(
+      parsePeriodParams(
+        { period: "month", month: "2026-11" },
+        EVALUATED,
+        daysOfData("2026-10-26", "2026-11-04"),
+      ),
+    ).toMatchObject({ startDay: "2026-11-01", endDay: "2026-12-01" });
+  });
+
   it("reads a July–June year from its start year", () => {
     expect(
       parsePeriodParams(
         { period: "financialYear", startYear: "2025" },
         EVALUATED,
+        LONG_RUNNING,
       ),
     ).toMatchObject({ startDay: "2025-07-01", endDay: "2026-07-01" });
   });
@@ -86,6 +213,7 @@ describe("parsePeriodParams", () => {
       parsePeriodParams(
         { period: "custom", from: "2026-01-01", to: "2026-03-01" },
         EVALUATED,
+        LONG_RUNNING,
       ),
     ).toMatchObject({ startDay: "2026-01-01", endDay: "2026-03-01" });
   });
@@ -96,6 +224,7 @@ describe("parsePeriodParams", () => {
         parsePeriodParams(
           { period: "custom", from: "2025-01-01", to: "2026-01-02" },
           EVALUATED,
+          LONG_RUNNING,
         ),
       ),
     ).toMatchObject({ code: "period_too_long", statusCode: 400 });
@@ -104,7 +233,11 @@ describe("parsePeriodParams", () => {
   it("refuses a year that isn't a whole number", () => {
     expect(
       errorOf(() =>
-        parsePeriodParams({ period: "year", year: "2026.5" }, EVALUATED),
+        parsePeriodParams(
+          { period: "year", year: "2026.5" },
+          EVALUATED,
+          LONG_RUNNING,
+        ),
       ),
     ).toMatchObject({ code: "invalid_year", statusCode: 400 });
   });
@@ -161,8 +294,7 @@ describe("parseListQuery", () => {
 
   it("sorts Sites by Checks fewest first, unless asked otherwise", () => {
     const sort = (/** @type {Record<string, string>} */ params) =>
-      parseListQuery("sites", { sort: "completedPerimeterChecks", ...params })
-        .sort.dir;
+      parseListQuery("sites", { sort: "checksPerDay", ...params }).sort.dir;
     expect([sort({}), sort({ dir: "desc" })]).toEqual(["asc", "desc"]);
   });
 
@@ -186,10 +318,73 @@ describe("parseListQuery", () => {
     ).toMatchObject({ code: "invalid_responseState" });
   });
 
+  it("takes a comma list of Issue response states, as the Site page sends", () => {
+    expect(
+      parseListQuery("issues", { responseState: "overdue,late" }).filters,
+    ).toEqual({ responseState: "overdue,late" });
+  });
+
+  it("refuses an Issue state list with one unknown state", () => {
+    expect(
+      errorOf(() =>
+        parseListQuery("issues", { responseState: "overdue,bogus" }),
+      ),
+    ).toMatchObject({ code: "invalid_responseState", statusCode: 400 });
+  });
+
+  it("takes a comma list of severity bands, as the Site page's Severe Issues sends", () => {
+    expect(
+      parseListQuery("issues", { severityBand: "moderate,severe" }).filters,
+    ).toEqual({ severityBand: "moderate,severe" });
+    expect(
+      errorOf(() => parseListQuery("issues", { severityBand: "severe,bogus" })),
+    ).toMatchObject({ code: "invalid_severityBand", statusCode: 400 });
+  });
+
+  it("takes a comma list of Site response states, as Issues lists do", () => {
+    expect(
+      parseListQuery("sites", { responseState: "overdue,late" }).filters,
+    ).toEqual({ responseState: "overdue,late" });
+    expect(
+      errorOf(() => parseListQuery("sites", { responseState: "late,bogus" })),
+    ).toMatchObject({ code: "invalid_responseState", statusCode: 400 });
+  });
+
+  it("takes a concern flag's Issues filter, and refuses one that isn't a flag", () => {
+    expect(
+      parseListQuery("issues", { concern: "slowResponse" }).filters,
+    ).toEqual({ concern: "slowResponse" });
+    expect(
+      errorOf(() => parseListQuery("issues", { concern: "fewChecks" })),
+    ).toMatchObject({ code: "invalid_concern", statusCode: 400 });
+  });
+
   it("keeps a valid Issue filter", () => {
     expect(
       parseListQuery("issues", { severityBand: "severe" }).filters,
     ).toEqual({ severityBand: "severe" });
+  });
+
+  it("keeps Overview's concern and indicator filters", () => {
+    expect(
+      parseListQuery("sites", {
+        show: "top",
+        responseState: "overdue",
+        publicContact: "missing",
+        siteContact: "unknown",
+      }).filters,
+    ).toEqual({
+      show: "top",
+      responseState: "overdue",
+      publicContact: "missing",
+      siteContact: "unknown",
+    });
+  });
+
+  it("refuses a contact state that isn't one of the three", () => {
+    expect(
+      errorOf(() => parseListQuery("sites", { siteContact: "compliant" })),
+    ).toMatchObject({ code: "invalid_siteContact" });
   });
 });
 

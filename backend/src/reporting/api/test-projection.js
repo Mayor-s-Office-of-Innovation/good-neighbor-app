@@ -124,6 +124,13 @@ function syntheticInputs() {
   const sites = [
     site("s1", {
       publicContact: { email: "desk@example.org", phone: "415-555-0100" },
+      // Private: tests check it never reaches a reply.
+      primaryContact: {
+        firstName: "Synthetic",
+        lastName: "Lead",
+        email: "lead@example.org",
+        phone: "415-555-0101",
+      },
     }),
     site("s2", {
       siteType: "drop_in",
@@ -135,7 +142,8 @@ function syntheticInputs() {
       },
       location: null,
     }),
-    site("s3", { status: "inactive" }),
+    // Closed on the snapshot's day, so it still owes Checks in every period.
+    site("s3", { status: "inactive", updatedAt: "2026-11-04T18:00:00.000Z" }),
   ];
   return {
     tasks: /** @type {any[]} */ (tasks),
@@ -145,6 +153,14 @@ function syntheticInputs() {
     overrides: [],
     checks,
     sites,
+    // Every Site owes 3 a day all year, so tests change only what they test.
+    terms: sites.map((s) => ({
+      siteId: s.siteId,
+      termsVersionId: `v-${s.siteId}`,
+      effectiveStart: "2026-01-01",
+      requiredChecksPerDay: 3,
+      status: "active",
+    })),
     asOf: TEST_AS_OF,
   };
 }

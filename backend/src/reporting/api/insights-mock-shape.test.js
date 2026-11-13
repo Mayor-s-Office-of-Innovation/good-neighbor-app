@@ -1,6 +1,7 @@
 // The admin E2E suite runs against e2e/admin-tests/insights-mock.js. This
 // holds that fake to the real handlers: same routes, same status, same
 // fields and value types, so a changed reply can't leave specs passing.
+import { URLSearchParams } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   insightsReplies,
@@ -10,7 +11,9 @@ import {
   createReportingHandlers,
   reportingRoutes,
 } from "../../handlers/admin-reporting.js";
+import { CONCERN_RULES as ADMIN_CONCERN_RULES } from "../../../../admin-frontend/src/pages/insights/concern-rules.js";
 import { memoryJobStore } from "./jobs.js";
+import { CONCERN_RULES } from "./read-model.js";
 import { createSnapshotStore } from "./snapshot.js";
 import { syntheticProjection } from "./test-projection.js";
 
@@ -137,7 +140,10 @@ async function realReplies() {
     "GET reporting/checks/{checkId}": await h.getCheck(
       event({ path: { checkId: "c1" } }),
     ),
-    "GET reporting/scope-options": await h.getScopeOptions(event()),
+    // The report dialog lists Sites from this; Overview's filters ask without it.
+    "GET reporting/scope-options": await h.getScopeOptions(
+      event({ query: { include: "sites" } }),
+    ),
     "POST reporting/trends": await h.postTrends(
       event({
         body: {
@@ -195,6 +201,8 @@ describe("the admin E2E Insights mock", () => {
     ["reporting/checks/nope", "getCheck", { checkId: "nope" }],
     ["reporting/sites/nope", "getSite", { siteId: "nope" }],
     ["reports/nope", "getJob", { jobId: "nope" }],
+    // POST makes a report there; a read asks for a job of that name.
+    ["reports/insights", "getJob", { jobId: "insights" }],
   ])(
     "answers an unknown ID in %s as the handler does",
     async (path, name, ids) => {
@@ -204,6 +212,7 @@ describe("the admin E2E Insights mock", () => {
       const mock = insightsReply({
         method: "GET",
         path,
+        search: "period=month&month=2026-10",
       });
       expect([mock?.status, mock?.json]).toEqual([
         real.statusCode,
@@ -211,6 +220,123 @@ describe("the admin E2E Insights mock", () => {
       ]);
     },
   );
+
+  it.each([
+    ["reporting/overview", "dir=ascending", "getOverview"],
+    ["reporting/overview", "dir=", "getOverview"],
+    ["reporting/overview", "show=", "getOverview"],
+    ["reporting/overview", "show=bogus", "getOverview"],
+    ["reporting/overview", "siteIds=", "getOverview"],
+    ["reporting/overview", "responseState=overdue,bogus", "getOverview"],
+    ["reporting/overview", "period=", "getOverview"],
+    ["reporting/overview", "month=2026-00", "getOverview"],
+    ["reporting/issues", "responseState=bogus", "listIssues"],
+    ["reporting/issues", "severityBand=Severe", "listIssues"],
+    ["reporting/issues", "concern=fewChecks", "listIssues"],
+    ["reporting/issues", "sort=bogus", "listIssues"],
+    ["reporting/issues", "cursor=bogus", "listIssues"],
+    ["reporting/sites/nope", "period=bogus", "getSite"],
+  ])("refuses %s?%s as the handler does", async (path, extra, name) => {
+    const query = {
+      ...october,
+      ...Object.fromEntries(new URLSearchParams(extra)),
+    };
+    const real = await handlers[name](
+      event({ query, path: { siteId: path.split("/").pop() ?? "" } }),
+    );
+    const mock = insightsReply({
+      method: "GET",
+      path,
+      search: new URLSearchParams(query).toString(),
+    });
+    expect(real.statusCode).toBe(400);
+    expect([mock?.status, mock?.json]).toEqual([
+      real.statusCode,
+      JSON.parse(real.body),
+    ]);
+  });
+
+  it("leaves out the Site list unless a screen asks for it, as the handler does", async () => {
+    const real = await handlers.getScopeOptions(event());
+    const mock = insightsReply({
+      method: "GET",
+      path: "reporting/scope-options",
+    });
+    expect([
+      "sites" in JSON.parse(real.body),
+      "sites" in (mock?.json ?? {}),
+    ]).toEqual([false, false]);
+  });
+
+  it("works out each Site's counts, rates and concerns for the period asked, as the handler does", () => {
+    /** @param {string} search */
+    const s1 = (search) =>
+      insightsReply({
+        method: "GET",
+        path: "reporting/overview",
+        search,
+      })?.json.sites.find((/** @type {any} */ r) => r.siteId === "s1");
+    const [october, november, beforeRecords] = [
+      s1("period=month&month=2026-10&show=all"),
+      s1("period=month&month=2026-11&show=all"),
+      s1("period=month&month=2025-06&show=all"),
+    ];
+    const pick = (/** @type {any} */ r) => [
+      r.activity.issuesCreated,
+      r.maxSeverity,
+      r.checksPerDay,
+      r.issuesPer30Days,
+      r.concerns,
+    ];
+    expect([pick(october), pick(november), pick(beforeRecords)]).toEqual([
+      // 62 Checks over 31 days; 9 Issues × 30 / 31.
+      [
+        9,
+        4,
+        2,
+        8.7,
+        ["fewChecks", "repeatedSevere", "manyIssues", "slowResponse"],
+      ],
+      [0, null, 0, 0, ["fewChecks"]],
+      // No records, so no rate: the handler sends null, not 0.
+      [0, null, null, null, []],
+    ]);
+  });
+
+  it("offers every fake Site's value in each scope group, with real counts", () => {
+    const groups = insightsReply({
+      method: "GET",
+      path: "reporting/scope-options",
+    })?.json.groups;
+    expect([groups.providerId, groups.status]).toEqual([
+      [
+        { value: "v1", sites: 3 },
+        { value: "v2", sites: 1 },
+      ],
+      [
+        { value: "active", sites: 3 },
+        { value: "inactive", sites: 1 },
+      ],
+    ]);
+  });
+
+  it("explains on the admin pages the same concern limits the server flags", () => {
+    expect(ADMIN_CONCERN_RULES).toEqual(CONCERN_RULES);
+  });
+
+  it("opens the record of every Issue its lists show", () => {
+    const listed = insightsReply({
+      method: "GET",
+      path: "reporting/issues",
+      search: "period=month&month=2026-10",
+    })?.json.issues.map((/** @type {any} */ i) => i.issueId);
+    const opened = listed.map(
+      (/** @type {string} */ id) =>
+        insightsReply({ method: "GET", path: `reporting/issues/${id}` })?.json
+          .issue?.issueId,
+    );
+    expect([listed.length > 1, opened]).toEqual([true, listed]);
+  });
 
   it.each(Object.keys(insightsReplies))(
     "matches the handler's status and reply shape for %s",
