@@ -17,8 +17,9 @@ const SUPERVISOR_CAPABILITIES = Object.freeze({
   manageSiteManagers: true,
   manageProviderManagers: true,
   runImports: true,
+  viewInsights: true,
 });
-const MANAGER_CAPABILITIES = Object.freeze({
+const NO_CAPABILITIES = Object.freeze({
   manageAdminUsers: false,
   createEntities: false,
   deactivateEntities: false,
@@ -26,6 +27,12 @@ const MANAGER_CAPABILITIES = Object.freeze({
   manageSiteManagers: false,
   manageProviderManagers: false,
   runImports: false,
+  viewInsights: false,
+});
+// Compliance managers read citywide reporting but keep their edit limits.
+const MANAGER_CAPABILITIES = Object.freeze({
+  ...NO_CAPABILITIES,
+  viewInsights: true,
 });
 
 /** @param {import("aws-lambda").APIGatewayProxyEventV2} event */
@@ -60,7 +67,11 @@ export function adminPrincipal(event) {
     lastName: String(claims.family_name ?? "").trim(),
     phone: String(claims.phone_number ?? "").trim(),
     department: String(claims["custom:department"] ?? "").trim(),
-    capabilities: supervisor ? SUPERVISOR_CAPABILITIES : MANAGER_CAPABILITIES,
+    capabilities: supervisor
+      ? SUPERVISOR_CAPABILITIES
+      : manager
+        ? MANAGER_CAPABILITIES
+        : NO_CAPABILITIES,
   };
 }
 

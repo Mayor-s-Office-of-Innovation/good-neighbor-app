@@ -1,0 +1,14 @@
+/* Insights only: every rule starts at .insights, so Manage looks unchanged. */
+.insights {
+  display: grid;
+  gap: 16px;
+}
+
+.insights .page-head h1 {
+  margin: 0;
+}
+
+.insights__freshness {
+  margin: 0;
+  font-size: 0.875rem;
+}

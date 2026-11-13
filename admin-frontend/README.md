@@ -65,8 +65,18 @@ window.GOOD_NEIGHBOR_ADMIN_CONFIG = {
   logoutUri: "https://admin.goodneighborsf.org/",
   apiBase: "",
   localDebugAdmin: false,
+  insightsEnabled: false,
 };
 ```
+
+### Insights switch
+
+`insightsEnabled: true` shows the Manage / Insights tabs to admins whose
+session grants `viewInsights`. It is off by default while Insights is built,
+and turning it off again leaves Manage and System Status as they were. Deployed
+environments switch it on with the `ADMIN_INSIGHTS_ENABLED` GitHub
+environment variable set to `true`; `.github/workflows/deploy.yml` writes it
+into their `config.js`.
 
 ### Local role switch
 

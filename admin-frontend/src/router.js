@@ -1,4 +1,7 @@
+import { INSIGHTS_ROUTES } from "./pages/insights/insights-routes.js";
+
 const ROUTES = [
+  ...INSIGHTS_ROUTES,
   [
     "system-status",
     /^\/system-status(?:\/(network|analysis|submissions|checks|issues|actions|deletions|duplicates))?\/?$/,
@@ -24,7 +27,11 @@ const ROUTES = [
 ];
 
 export function currentRoute() {
-  const path = window.location.pathname;
+  return matchRoute(window.location.pathname);
+}
+
+/** @param {string} path a pathname, without its query */
+export function matchRoute(path) {
   for (const [name, pattern] of ROUTES) {
     const match = pattern.exec(path);
     if (match)

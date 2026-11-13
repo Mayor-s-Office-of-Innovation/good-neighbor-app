@@ -17,19 +17,45 @@ describe("admin roles", () => {
     (group) => {
       const principal = adminPrincipal(event(group));
       expect(principal.role).toBe(ADMIN_GROUPS.manager);
-      expect(principal.capabilities.createEntities).toBe(false);
-      expect(principal.capabilities.manageSiteManagers).toBe(false);
+      // The whole set, so a manager can't quietly gain a supervisor power.
+      expect(principal.capabilities).toEqual({
+        manageAdminUsers: false,
+        createEntities: false,
+        deactivateEntities: false,
+        changeLeadProgram: false,
+        manageSiteManagers: false,
+        manageProviderManagers: false,
+        runImports: false,
+        viewInsights: true,
+      });
     },
   );
 
   it("gives Compliance supervisors elevated capabilities", () => {
     const principal = adminPrincipal(event(ADMIN_GROUPS.supervisor));
     expect(principal.role).toBe(ADMIN_GROUPS.supervisor);
-    expect(principal.capabilities).toMatchObject({
+    expect(principal.capabilities).toEqual({
+      manageAdminUsers: true,
       createEntities: true,
       deactivateEntities: true,
       changeLeadProgram: true,
-      manageAdminUsers: true,
+      manageSiteManagers: true,
+      manageProviderManagers: true,
+      runImports: true,
+      viewInsights: true,
+    });
+  });
+
+  it("gives a caller in no admin group no Insights and no edit rights", () => {
+    expect(adminPrincipal(event("site-staff")).capabilities).toEqual({
+      manageAdminUsers: false,
+      createEntities: false,
+      deactivateEntities: false,
+      changeLeadProgram: false,
+      manageSiteManagers: false,
+      manageProviderManagers: false,
+      runImports: false,
+      viewInsights: false,
     });
   });
 
