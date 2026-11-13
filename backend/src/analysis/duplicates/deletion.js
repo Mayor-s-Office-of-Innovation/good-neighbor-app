@@ -1,3 +1,4 @@
+import { sf311Job } from "../guidance/sf311-job.js";
 import { duplicateForTask, siteReader } from "./links.js";
 import { evidenceCondition } from "./evidence-check.js";
 import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
@@ -140,6 +141,11 @@ export function checkDeletionSize(siteId, scope) {
       conditionDeletionKey(siteId, {}, task)?.sk,
     ]),
   );
+  for (const task of scope.members) {
+    for (const entry of sf311Job("unused", siteId, task, "deleted")) {
+      if (entry.Put) keys.add(String(entry.Put.Item?.sk));
+    }
+  }
   for (const link of scope.links) {
     if (scope.kind !== "duplicate" || link.taskId === scope.members[0]?.taskId)
       keys.add(`DUP_LINK#${link.taskId}`);
@@ -257,6 +263,7 @@ export async function deleteTaskGroup(table, siteId, input) {
       updateValues[`:set${index}`] = value;
       return `#set${index} = :set${index}`;
     });
+    writes.push(...sf311Job(table, siteId, { ...task, ...updates }, "deleted"));
     writes.push({
       Update: {
         TableName: table,

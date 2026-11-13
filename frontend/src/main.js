@@ -65,10 +65,9 @@ registerIconLibrary("default", {
 });
 
 // Web Awesome base styles and component behavior utilities. Layout, spacing,
-// and typography use our own styles; importing utilities.css also ships those
-// unused utility classes and exceeds the main CSS budget. The app uses its
-// own .visually-hidden class, no placeholder/font-size utility classes, and
-// component size attributes style themselves.
+// typography, and pre-upgrade visibility use our own styles. The app uses
+// its own .visually-hidden class; keep unused visibility, size, placeholder,
+// and wa-cloak utilities out of the main CSS bundle.
 import "@awesome.me/webawesome/dist/styles/layers.css";
 import "@awesome.me/webawesome/dist/styles/native.css";
 import "@awesome.me/webawesome/dist/styles/utilities/scroll-lock.css";

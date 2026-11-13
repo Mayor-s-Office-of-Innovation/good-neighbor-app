@@ -54,6 +54,7 @@ describe("buildAnalyzeRequest", () => {
   it("pins the rubric and forces store_input:false", () => {
     const body = buildAnalyzeRequest({ metadata, media });
     expect(body.rubric_id).toBe(RUBRIC_ID);
+    expect(RUBRIC_VERSION).toBe("3.0.0");
     expect(body.rubric_version).toBe(RUBRIC_VERSION);
     expect(body.storage).toEqual({
       store_input: false,

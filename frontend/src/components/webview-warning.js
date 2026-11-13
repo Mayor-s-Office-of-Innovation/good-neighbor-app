@@ -1,4 +1,4 @@
-import { escapeUrlForPlatform } from "../services/browser-context.js";
+import { escapeUrlForPlatform } from "../services/browser-escape.js";
 import { reportClientEvent } from "../services/error-report.js";
 import { escapeAttr, escapeHtml } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
