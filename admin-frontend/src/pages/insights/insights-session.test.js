@@ -264,3 +264,39 @@ test("a dashboard's session reads names from the dashboard's own lists", async (
   assert.equal((await session.names()).providerId.get("p1"), "Seeded Provider");
   assert.equal(calls.providers.mock.calls.length, 0);
 });
+
+test("Program options share the scope read and fall back to IDs until the names load", async () => {
+  let fail = true;
+  const calls = fakeDirectory({
+    scope: async () => ({ groups: { programId: [{ value: "g1" }] } }),
+  });
+  const programs = vi
+    .spyOn(adminApi, "listPrograms")
+    .mockImplementation(async () => {
+      if (fail) throw new Error("network");
+      return { programs: [{ programId: "g1", name: "Example Program" }] };
+    });
+  const session = createInsightsSession();
+  await session.filterOptions();
+  assert.equal((await session.programOptions())[0].label, "g1");
+  fail = false;
+  assert.equal((await session.programOptions())[0].label, "Example Program");
+  const reads = programs.mock.calls.length;
+  await session.programOptions();
+  assert.equal(programs.mock.calls.length, reads);
+  assert.equal(calls.scope.mock.calls.length, 1);
+});
+
+test("a Program renamed in Manage shows under its new name in Program options", async () => {
+  fakeDirectory({
+    scope: async () => ({ groups: { programId: [{ value: "g1" }] } }),
+  });
+  vi.spyOn(adminApi, "listPrograms").mockResolvedValue({
+    programs: [{ programId: "g1", name: "Example Program" }],
+  });
+  const catalog = createAdminCatalog();
+  const session = createInsightsSession(catalog);
+  assert.equal((await session.programOptions())[0].label, "Example Program");
+  catalog.addProgram({ programId: "g1", name: "Renamed Program" });
+  assert.equal((await session.programOptions())[0].label, "Renamed Program");
+});

@@ -830,7 +830,7 @@ export function issueMatches(i, filters, evaluatedAtMs) {
     (!filters.source || i.source === filters.source) &&
     (!filters.category || i.category === filters.category) &&
     (!filters.issueStatus ||
-      (filters.issueStatus === "resolved") === (i.resolvedAt !== null)) &&
+      (filters.issueStatus === "resolved") === isResolved(i)) &&
     (!filters.concern || CONCERN_ISSUES[filters.concern](i, evaluatedAtMs))
   );
 }
@@ -1143,41 +1143,70 @@ export function trends(snap, { interval, scope, breakdown, now }) {
   };
 }
 
-/** CSV columns per dataset, fixed so a spreadsheet built on one keeps working. */
-export const EXPORT_COLUMNS = Object.freeze({
+// The words the Insights pages show, so the CSV and the screen agree.
+const RESPONSE_WORDS = {
+  awaiting: "Awaiting response",
+  overdue: "Overdue",
+  onTime: "Responded on time",
+  late: "Responded late",
+  unknown: "Unknown",
+  notTimed: "No response time",
+};
+
+/** @typedef {[string, (row: Record<string, any>) => unknown][]} CsvFormat */
+
+/**
+ * One test for the filter and the CSV, so a file filtered to Resolved never says Open.
+ * @param {Record<string, unknown>} issue
+ * @returns {boolean}
+ */
+const isResolved = (issue) => issue.resolvedAt !== null;
+
+/**
+ * Raw data's CSV: plain headers, in the order the list shows them. No device
+ * columns until Checks record one, and no rule or contract version.
+ * Site ID is kept, since record IDs are unique only within a Site.
+ * @type {{ issues: CsvFormat, checks: CsvFormat }}
+ */
+const RECORD_CSV = {
   issues: [
-    "issueId",
-    "siteId",
-    "siteName",
-    "checkId",
-    "source",
-    "createdAt",
-    "category",
-    "severity",
-    "severityBand",
-    "status",
-    "deadlineAt",
-    "firstResponseAt",
-    "responseBasis",
-    "responseState",
-    "resolvedAt",
-    "reopened",
-    "sightings",
-    "followUpTasks",
-    "latestActivityAt",
+    ["Issue ID", (i) => i.issueId],
+    ["Site", (i) => i.siteName ?? i.siteId],
+    ["Site ID", (i) => i.siteId],
+    ["Category", (i) => i.category],
+    ["Severity (1-5)", (i) => i.severity],
+    ["State", (i) => (isResolved(i) ? "Resolved" : "Open")],
+    ["Created", (i) => i.createdAt],
+    ["Response deadline", (i) => i.deadlineAt],
+    ["First response", (i) => i.firstResponseAt],
+    [
+      "Response state",
+      (i) =>
+        RESPONSE_WORDS[
+          /** @type {keyof typeof RESPONSE_WORDS} */ (i.responseState)
+        ] ?? "Unknown",
+    ],
+    ["Resolved", (i) => i.resolvedAt],
+    ["Parent check", (i) => i.checkId],
   ],
   checks: [
-    "checkId",
-    "siteId",
-    "siteName",
-    "source",
-    "state",
-    "startedAt",
-    "completedAt",
-    "activityAt",
-    "day",
-    "issues",
+    ["Check ID", (c) => c.checkId],
+    ["Site", (c) => c.siteName ?? c.siteId],
+    ["Site ID", (c) => c.siteId],
+    [
+      "Recorded state",
+      (c) => (c.state === "completed" ? "Completed" : "Unfinished"),
+    ],
+    // The time the list dates the Check by, which a completed Check has even without a finish time.
+    ["Completed or started", (c) => c.activityAt],
+    ["Issue IDs", (c) => c.issueIds.join(" ")],
   ],
+};
+
+/** CSV columns per dataset, fixed so a spreadsheet built on one keeps working. */
+export const EXPORT_COLUMNS = Object.freeze({
+  issues: RECORD_CSV.issues.map(([header]) => header),
+  checks: RECORD_CSV.checks.map(([header]) => header),
   sites: [
     "siteId",
     "name",
@@ -1223,24 +1252,52 @@ export function exportRowCount(snap, { dataset, interval, filter, list }) {
  */
 export function exportRows(snap, { dataset, interval, filter, list }) {
   const columns = [...EXPORT_COLUMNS[dataset]];
+  /**
+   * @param {CsvFormat} format
+   * @param {Record<string, any>[]} rows
+   * @returns {Record<string, unknown>[]}
+   */
+  const written = (format, rows) =>
+    rows.map((row) =>
+      Object.fromEntries(format.map(([header, value]) => [header, value(row)])),
+    );
   if (dataset === "issues")
     return {
       columns,
-      rows: sortRows(
-        matchingIssues(snap, interval, filter, list.filters),
-        list.sort,
-        ["siteId", "issueId"],
+      rows: written(
+        RECORD_CSV.issues,
+        sortRows(
+          matchingIssues(snap, interval, filter, list.filters),
+          list.sort,
+          ["siteId", "issueId"],
+        ),
       ),
     };
-  if (dataset === "checks")
+  if (dataset === "checks") {
+    /** @type {Map<string, string[]>} */
+    const raised = new Map();
+    for (const i of snap.tables.issues) {
+      if (!i.checkId) continue;
+      const key = `${i.siteId}|${i.checkId}`;
+      const ids = raised.get(key);
+      if (ids) ids.push(i.issueId);
+      else raised.set(key, [i.issueId]);
+    }
     return {
       columns,
-      rows: sortRows(
-        matchingChecks(snap, interval, filter, list.filters),
-        list.sort,
-        ["siteId", "checkId"],
+      rows: written(
+        RECORD_CSV.checks,
+        sortRows(
+          matchingChecks(snap, interval, filter, list.filters),
+          list.sort,
+          ["siteId", "checkId"],
+        ).map((c) => ({
+          ...c,
+          issueIds: (raised.get(`${c.siteId}|${c.checkId}`) ?? []).sort(),
+        })),
       ),
     };
+  }
   const { rows } = filteredSiteRows(snap, interval, filter, list.filters);
   return {
     columns,

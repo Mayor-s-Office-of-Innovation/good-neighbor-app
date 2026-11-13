@@ -253,6 +253,8 @@ import {
   runAnalyticsCatalogQuery,
   runAnalyticsQuery,
 } from "../src/handlers/admin-analytics.js";
+import { getRecordPhotos } from "../src/handlers/record-photos.js";
+import { seedInsightsRecords } from "./lib/insights-records-seed.mjs";
 import { reportingRoutes } from "../src/handlers/admin-reporting.js";
 
 import { get311Media } from "../src/integrations/sf311-media.js";
@@ -465,6 +467,7 @@ const routes = [
     "/admin/v1/system-status/{siteId}/media/{checkId}/{artifactId}",
     getStatusMedia,
   ),
+  route("GET", "/admin/v1/sites/{siteId}/record-photos", getRecordPhotos),
   route(
     "GET",
     "/admin/v1/system-status/{siteId}/duplicates/{taskId}",
@@ -876,6 +879,13 @@ async function main() {
   await ensureLocalInfra();
   if (process.env.LOCAL_SITE_ADMIN_SEED === "true") await seedLocalSiteAdmin();
   await seedInsightsNames();
+  // The record panels read photos and notes from the table, not the snapshot.
+  await seedInsightsRecords(
+    join(
+      dirname(/** @type {string} */ (process.env.INSIGHTS_PROJECTION_DIR)),
+      "records.jsonl",
+    ),
+  );
   server.listen(PORT, "127.0.0.1", () => {
     console.log(`[api] listening on http://localhost:${PORT}`);
     console.log(

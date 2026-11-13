@@ -16,6 +16,8 @@ import { copyObject, headObject, putObject } from "../../src/s3.js";
 import { assertLocalSeedTarget } from "./site-admin-seed.mjs";
 
 const MARKER = { pk: "LOCAL_SEED#INSIGHTS_RECORDS", sk: "#META" };
+// The task statuses the photo route drops; other statuses would put rows on worklists.
+const DEAD_STATUSES = new Set(["superseded", "deleted"]);
 
 // A few labelled images stand in for every photo, so the seed makes only these
 // and copies them to each photo's own key.
@@ -57,6 +59,8 @@ export function recordRows(items) {
     ),
   });
   return items.flatMap((item) => {
+    // The photo route answers 404 for a Check with no header.
+    if (/^CHECK#[^#]+$/.test(item.sk)) return [keep(item, ["checkId"])];
     if (/^CHECK#[^#]+#ART#/.test(item.sk))
       return [
         keep(item, [
@@ -69,9 +73,28 @@ export function recordRows(items) {
         ]),
       ];
     if (/^TASK#[^#]+$/.test(item.sk))
-      return [keep(item, ["taskId", "checkId", "sourceArtifactIds"])];
-    if (/^TASK#[^#]+#UPDATE#/.test(item.sk) && (item.notes || item.photoKeys))
-      return [keep(item, ["notes", "photoKeys", "occurredAt"])];
+      return [
+        keep(item, [
+          "taskId",
+          "checkId",
+          "sourceArtifactIds",
+          "assessmentId",
+          "conditionId",
+          // The photo route leaves out dead tasks; worklists skip them too.
+          ...(DEAD_STATUSES.has(item.status) ? ["status"] : []),
+        ]),
+      ];
+    // An Issue's panel also shows its duplicates' and follow-up tasks' photos.
+    if (/^ASSESSMENT#[^#]+#COND#/.test(item.sk))
+      return [keep(item, ["taskIds"])];
+    if (/^DUP_LINK#/.test(item.sk))
+      return [keep(item, ["taskId", "originalTaskId"])];
+    if (/^DUP_OVERRIDE#/.test(item.sk)) return [keep(item, ["taskId"])];
+    if (
+      /^TASK#[^#]+#UPDATE#/.test(item.sk) &&
+      (item.notes || item.photoKeys || item.text)
+    )
+      return [keep(item, ["notes", "text", "photoKeys", "occurredAt"])];
     if (/^TASK#[^#]+#MEDIA#/.test(item.sk))
       return [keep(item, ["artifactId", "s3Key", "thumbS3Key", "capturedAt"])];
     return [];

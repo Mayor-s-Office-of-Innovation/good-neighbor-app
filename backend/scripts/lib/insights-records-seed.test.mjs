@@ -40,6 +40,20 @@ describe("recordRows", () => {
     }
   });
 
+  it("keeps the links that put duplicates and follow-ups in their Issue", () => {
+    const links = rows.filter((r) => r.sk.startsWith("DUP_LINK#"));
+    const conditions = rows.filter((r) => /#COND#/.test(r.sk));
+    expect(links.length).toBeGreaterThan(0);
+    expect(conditions.length).toBeGreaterThan(0);
+    for (const link of links)
+      for (const id of [link.taskId, link.originalTaskId])
+        expect(bySk.get(`${link.pk}|TASK#${id}`)).toBeDefined();
+    const onCondition = rows.filter(
+      (r) => /^TASK#[^#]+$/.test(r.sk) && r.conditionId,
+    );
+    expect(onCondition.length).toBeGreaterThan(0);
+  });
+
   it("spreads photos over every pooled image", () => {
     const keys = rows.flatMap((r) => (r.s3Key ? [r.s3Key] : []));
     const used = new Set(
@@ -49,8 +63,15 @@ describe("recordRows", () => {
   });
 
   it("drops the fields the dev table's worklists index", () => {
-    expect(rows.some((r) => "status" in r || "gsi1pk" in r)).toBe(false);
+    expect(rows.some((r) => "gsi1pk" in r)).toBe(false);
     expect(rows.length).toBeLessThan(items.length);
+  });
+
+  it("keeps only a replaced or deleted task's status, so its photos stay out of the Issue", () => {
+    const statuses = new Set(
+      rows.flatMap((r) => ("status" in r ? [r.status] : [])),
+    );
+    expect([...statuses].sort()).toEqual(["superseded"]);
   });
 });
 

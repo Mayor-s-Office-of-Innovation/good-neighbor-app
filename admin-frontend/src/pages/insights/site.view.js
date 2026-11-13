@@ -3,9 +3,12 @@ import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
 import { adminApi } from "../../services/admin-api.js";
 import { periodApiParams, periodSearch, readPeriod } from "./insights-query.js";
-import { safeReturnPath } from "./insights-routes.js";
+import { carriedQuery, safeReturnPath } from "./insights-routes.js";
 import { reportSignInError, sessionOf } from "./insights-session.js";
 import { LatestLoad, superseded } from "./latest-load.js";
+import { recordHref } from "./record-links.js";
+import { plainClick } from "./overview-rules.js";
+import { RecordPanel, cameBack, hopOf, markWayBack } from "./record-panel.js";
 import {
   drawPeriodControl,
   incompletePill,
@@ -49,14 +52,6 @@ import {
 
 const LISTS = /** @type {SiteList[]} */ (Object.keys(SITE_LISTS));
 
-/** A plain left click; any other opens the link's own address, as links do. @param {MouseEvent} event */
-const plainClick = (event) =>
-  event.button === 0 &&
-  !event.metaKey &&
-  !event.ctrlKey &&
-  !event.shiftKey &&
-  !event.altKey;
-
 class InsightsSite extends HTMLElement {
   connectedCallback() {
     this.session = sessionOf(this);
@@ -88,6 +83,8 @@ class InsightsSite extends HTMLElement {
         ]),
       )
     );
+    /** @type {SiteList} the list the open panel's Issue came from */
+    this.panelList = "response";
     /** @type {Map<string, string>} */
     this.managerNames = new Map();
     this.loads = new LatestLoad();
@@ -117,6 +114,33 @@ class InsightsSite extends HTMLElement {
       <div data-region="period">${sitePeriodView({ label: periodName(interval), range: interval ? rangeLabel(interval) : "" })}</div>
       <div data-region="body"></div>
 `;
+    // Issues open beside the Site, so the tiles and list keep their place.
+    this.panel = new RecordPanel(this, {
+      fullLabel: t("admin.insights.panel.openRaw"),
+      back: () => this.here(),
+      siteId: this.siteId,
+      // Back from Raw data finds the same tiles and Issue, as Raw data's own list does.
+      left: (hop) => {
+        markWayBack();
+        this.session.siteFocus = {
+          path: this.here(),
+          issueId: hop.id,
+          list: this.panelList,
+          tiles: Object.fromEntries(
+            LISTS.map((list) => [list, this.lists[list].tile]),
+          ),
+          concerns: Object.fromEntries(
+            LISTS.map((list) => [list, this.lists[list].concern]),
+          ),
+        };
+      },
+    });
+    const focus = this.session.siteFocus;
+    /** @type {{ issueId: string, list: string, tiles: Record<string, string>, concerns: Record<string, string> } | null} the row to land on, coming back */
+    this.returnTo =
+      cameBack(this.session, this.here()) && focus.path === this.here()
+        ? focus
+        : null;
     this.addEventListener("click", this.clicked);
     this.drawPeriod();
     void this.loadNames();
@@ -127,7 +151,13 @@ class InsightsSite extends HTMLElement {
   disconnectedCallback() {
     this.loads?.abort();
     for (const list of LISTS) this.lists[list].controller?.abort();
+    this.panel?.destroy();
     this.removeEventListener("click", this.clicked);
+  }
+
+  /** The path a record's trail leads back to: this Site at this period. */
+  here() {
+    return this.dataset.here ?? location.pathname;
   }
 
   /** @param {string} name @returns {HTMLElement} */
@@ -145,6 +175,12 @@ class InsightsSite extends HTMLElement {
   }
 
   links() {
+    /** @param {string} kind */
+    const raw = (kind) => {
+      const query = new URLSearchParams(carriedQuery(location.search));
+      query.set("siteIds", this.siteId);
+      return `/insights/raw/${kind}?${query}`;
+    };
     return {
       back: backPath({
         asked: safeReturnPath(
@@ -155,6 +191,8 @@ class InsightsSite extends HTMLElement {
       }),
       // A new tab, so this page stays where it was.
       contacts: `/sites/${encodeURIComponent(this.siteId)}?section=details`,
+      issues: raw("issues"),
+      checks: raw("checks"),
     };
   }
 
@@ -242,9 +280,22 @@ class InsightsSite extends HTMLElement {
     if (!current()) return;
     this.removeAttribute("aria-busy");
     this.reply = reply;
+    const back = this.returnTo;
+    this.returnTo = null;
+    // Used once, so a later Back by another way starts with the default tiles.
+    if (back)
+      this.session.siteFocus = {
+        path: "",
+        issueId: "",
+        list: "",
+        tiles: {},
+        concerns: {},
+      };
     for (const list of LISTS) {
-      this.lists[list].tile = SITE_LISTS[list].first;
-      this.lists[list].concern = "";
+      // "" is a pick too: every tile in the list turned off.
+      this.lists[list].tile =
+        back && list in back.tiles ? back.tiles[list] : SITE_LISTS[list].first;
+      this.lists[list].concern = back?.concerns[list] ?? "";
     }
     this.drawHead();
     this.region("freshness").innerHTML = freshnessView(reply.meta);
@@ -261,9 +312,11 @@ class InsightsSite extends HTMLElement {
           severity: this.lists.severity.tile,
           response: this.lists.response.tile,
         },
+        hrefs: this.urls,
       }),
     );
-    for (const list of LISTS) void this.loadIssues(list);
+    for (const list of LISTS)
+      void this.loadIssues(list, back?.list === list ? back.issueId : "");
   }
 
   /** @param {SiteList} list @returns {HTMLElement | null} */
@@ -294,8 +347,9 @@ class InsightsSite extends HTMLElement {
   /**
    * Lists the selected tiles' Issues; a failure here keeps the counts above.
    * @param {SiteList} list
+   * @param {string} [focusId] the Issue to land on, coming back
    */
-  async loadIssues(list) {
+  async loadIssues(list, focusId = "") {
     const state = this.lists[list];
     const mine = ++state.generation;
     state.issues = null;
@@ -321,6 +375,12 @@ class InsightsSite extends HTMLElement {
       state.failed = failureText(err, t("admin.insights.issuesFailed"));
     }
     this.drawIssues(list);
+    if (focusId)
+      /** @type {HTMLElement | null} */ (
+        this.issuesRegion(list)?.querySelector(
+          `[data-issue-row="${CSS.escape(focusId)}"] a[data-panel-kind]`,
+        )
+      )?.focus();
   }
 
   /** Adds the next page under the rows already shown. @param {SiteList} list */
@@ -364,6 +424,11 @@ class InsightsSite extends HTMLElement {
       tile: state.tile,
       concern: state.concern,
       more: state.more,
+      issueHref: (issue) =>
+        recordHref(
+          { kind: "issue", siteId: issue.siteId, id: issue.issueId },
+          { search: location.search, back: this.here() },
+        ),
     });
     // The redraw replaces Load more, so keyboard users keep their place.
     if (focused)
@@ -462,6 +527,7 @@ class InsightsSite extends HTMLElement {
     if (back) next.set("return", back);
     const path = `${location.pathname}?${next}`;
     history.replaceState(history.state, "", path);
+    this.dataset.here = safeReturnPath(path) || location.pathname;
     this.dispatchEvent(new CustomEvent("insights-url", { bubbles: true }));
     this.urls = this.links();
     this.rememberBack();
@@ -473,6 +539,7 @@ class InsightsSite extends HTMLElement {
   /** @param {Event} event */
   clicked = (event) => {
     const target = /** @type {Element} */ (event.target);
+    if (this.panel.dialog?.contains(target)) return;
     // The app's router reloads the page on a hash change, so a concern's link scrolls here instead.
     const jump = target.closest('a[href^="#insights-"]');
     if (jump && plainClick(/** @type {MouseEvent} */ (event))) {
@@ -485,6 +552,28 @@ class InsightsSite extends HTMLElement {
       heading?.scrollIntoView({ behavior: "smooth", block: "start" });
       heading?.focus({ preventScroll: true });
       return;
+    }
+    // A click anywhere on an Issue row opens it, as on Raw data.
+    const link =
+      target.closest("a[data-panel-kind]") ??
+      // A drag selects text, not the row.
+      (target.closest("a, button, [popover]") ||
+      String(document.getSelection?.() ?? "")
+        ? null
+        : target
+            .closest("[data-issue-row]")
+            ?.querySelector("a[data-panel-kind]"));
+    if (link && plainClick(/** @type {MouseEvent} */ (event))) {
+      const hop = hopOf(link);
+      if (hop) {
+        event.preventDefault();
+        this.panelList = this.listOf(link) ?? this.panelList;
+        this.panel.open(hop, /** @type {HTMLElement} */ (link));
+        return;
+      }
+      // A row without its Site can't open in the panel, so it opens the full record.
+      if (link !== target.closest("a"))
+        return void (/** @type {HTMLElement} */ (link).click());
     }
     const button = target.closest("button");
     if (!button || !this.contains(button)) return;

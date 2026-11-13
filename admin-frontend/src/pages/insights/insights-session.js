@@ -9,6 +9,17 @@ import { createReportJobs } from "./report-job.js";
 /** @typedef {{ managerId: Map<string, string>, providerId: Map<string, string> }} Names */
 /** @typedef {ReturnType<typeof createAdminCatalog>} AdminCatalog */
 
+/** @typedef {{ path: string, reply: Record<string, any> | null, rows: Record<string, any>[], nextCursor: string, focus: string }} RawMemory */
+
+/** @returns {RawMemory} */
+export const emptyRaw = () => ({
+  path: "",
+  reply: null,
+  rows: [],
+  nextCursor: "",
+  focus: "",
+});
+
 /** @param {Map<string, string>} names @param {{ value: string }[]} values */
 const optionsFor = (names, values) =>
   values
@@ -72,8 +83,31 @@ export function createInsightsSession(catalog = createAdminCatalog()) {
     );
     return scope;
   };
+  const exportJobs = () =>
+    createReportJobs({ api: adminApi, create: adminApi.createReportingExport });
   const session = {
     reportJobs: createReportJobs({ api: adminApi }),
+    // One per list, so a Checks page never offers the Issues file as its own.
+    exportJobs: { issues: exportJobs(), checks: exportJobs() },
+    /**
+     * Each Raw data list as last shown, every Load more page included, so
+     * the way back from a record lands on the same row.
+     * @type {Record<"issues" | "checks", RawMemory>}
+     */
+    raw: { issues: emptyRaw(), checks: emptyRaw() },
+    /**
+     * Names of records already opened, for the record trail.
+     * @type {Map<string, string>}
+     */
+    recordNames: new Map(),
+    /** A list or Site page a record's crumb leads back to, so it restores its rows. */
+    returning: "",
+    /**
+     * The Issue a Site page opened before it was left for Raw data, the
+     * list it was in, and each list's tiles and concern.
+     * @type {{ path: string, issueId: string, list: string, tiles: Record<string, string>, concerns: Record<string, string> }}
+     */
+    siteFocus: { path: "", issueId: "", list: "", tiles: {}, concerns: {} },
     /**
      * For the way back. `alsoPath` is that Overview at the Site's period;
      * `selected` holds its picks, which are too long for the URL.
@@ -118,6 +152,10 @@ export function createInsightsSession(catalog = createAdminCatalog()) {
         },
       };
     },
+    /** Read from the data, where older category names are already merged. @returns {Promise<string[]>} */
+    categories() {
+      return scopeRead().then((read) => read.categories ?? []);
+    },
     /** Every Site's name, so Overview can say how many Sites there are in all. @returns {Promise<Option[]>} */
     siteOptions() {
       sites ??= scopeRead().then(
@@ -136,6 +174,26 @@ export function createInsightsSession(catalog = createAdminCatalog()) {
         },
       );
       return sites;
+    },
+    /** Only Raw data filters by Program. Labels are rebuilt each time, so a renamed Program shows. @returns {Promise<Option[]>} */
+    async programOptions() {
+      const [read] = await Promise.all([
+        scopeRead(),
+        // Without names the options still work, labelled by ID, and are read again next time.
+        catalog.ensure(START_UP_LISTS).catch(() => {}),
+      ]);
+      return optionsFor(
+        new Map(
+          catalog.programs.map(
+            (/** @type {any} */ p) =>
+              /** @type {[string, string]} */ ([
+                p.programId,
+                p.name || p.programId,
+              ]),
+          ),
+        ),
+        read.groups?.programId ?? [],
+      );
     },
   };
   return session;
