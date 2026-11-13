@@ -72,14 +72,14 @@
   "devDependencies": {
     "@eslint/js": "9.9.1",
     "@types/aws-lambda": "8.10.145",
-    "@types/node": "22.5.4",
+    "@types/node": "26.6.5",
     "concurrently": "10.0.4",
     "dynamodb-admin": "5.3.3",
     "dynamodb-local": "0.0.38",
     "esbuild": "0.27.2",
     "eslint": "9.9.1",
     "eslint-plugin-jsdoc": "^64.5.4",
-    "typescript": "5.5.4",
+    "typescript": "^5.6.3",
     "vitest": "^4.1.12"
   },
   "optionalDependencies": {
