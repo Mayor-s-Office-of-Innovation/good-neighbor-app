@@ -408,7 +408,7 @@ export class AppRoot extends HTMLElement {
   }
 
   _beginEnrollmentFromUrl() {
-    // A one-time enrollment link is an explicit request to replace the cached
+    // An enrollment link is an explicit request to replace the cached
     // binding. Mount setup even when IndexedDB still holds an older (possibly
     // revoked) session. Clearing an earlier AUTH presentation keeps its modal
     // from covering the automatic redemption state.

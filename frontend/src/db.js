@@ -212,7 +212,7 @@ export async function activateSiteBinding(siteId) {
  * The site-record fields a minted device session contributes. Registration,
  * enrollment, binding select, and the Home Screen handoff all store this one
  * shape; callers add their own provenance (code, providerSiteId) on top.
- * @param {{ deviceId: string, token: string, refreshToken: string, expiresIn: number, tokenGeneration: number, accessLevel?: string, bindingId?: string, physicalDeviceId?: string, absoluteExpiresAt?: string, site?: { siteId: string } }} session
+ * @param {{ deviceId: string, token: string, refreshToken: string, expiresIn: number, tokenGeneration: number, accessLevel?: string, bindingId?: string, enrollmentGrantId?: string, physicalDeviceId?: string, absoluteExpiresAt?: string, site?: { siteId: string } }} session
  * @returns {Record<string, any>}
  */
 export function bindingFromSession(session) {
@@ -221,6 +221,7 @@ export function bindingFromSession(session) {
     siteId: session.site?.siteId,
     deviceId: session.deviceId,
     bindingId: session.bindingId,
+    enrollmentGrantId: session.enrollmentGrantId,
     physicalDeviceId: session.physicalDeviceId,
     token: session.token,
     refreshToken: session.refreshToken,
@@ -340,6 +341,7 @@ const SITE_BINDING_FIELDS = [
   "code",
   "deviceId",
   "bindingId",
+  "enrollmentGrantId",
   "physicalDeviceId",
   "token",
   "refreshToken",

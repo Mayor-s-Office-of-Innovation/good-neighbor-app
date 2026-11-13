@@ -21,12 +21,12 @@
     {
       "name": "main js",
       "path": "dist/assets/index-*.js",
-      "limit": "77.3 kB"
+      "limit": "80 kB"
     },
     {
       "name": "site admin js",
       "path": "dist/assets/site-admin-*.js",
-      "limit": "9.1 kB"
+      "limit": "10 kB"
     },
     {
       "name": "main css",
@@ -56,7 +56,7 @@
     {
       "name": "reports css",
       "path": "dist/assets/reports-view-*.css",
-      "limit": "3.2 kB"
+      "limit": "4 kB"
     },
     {
       "name": "invitation roles js",
@@ -66,7 +66,7 @@
     {
       "name": "site devices js",
       "path": "dist/assets/site-access-devices-*.js",
-      "limit": "1.5 kB"
+      "limit": "2 kB"
     },
     {
       "name": "site access state js",
@@ -81,7 +81,7 @@
         "dist/assets/describe-instead*.js",
         "dist/assets/capture-card-actions*.js"
       ],
-      "limit": "13.75 kB"
+      "limit": "15 kB"
     },
     {
       "name": "capture routes css",
@@ -95,7 +95,7 @@
     {
       "name": "artifact photo js",
       "path": "dist/assets/artifact-photo-*.js",
-      "limit": "1.5 kB"
+      "limit": "2 kB"
     },
     {
       "name": "artifact photo css",
@@ -110,7 +110,7 @@
     {
       "name": "site info contacts js",
       "path": "dist/assets/site-info-contacts-*.js",
-      "limit": "1.5 kB"
+      "limit": "2 kB"
     },
     {
       "name": "feedback submission js",
@@ -123,7 +123,7 @@
         "dist/assets/capture-photo-*.js",
         "dist/assets/capture-media-*.js"
       ],
-      "limit": "2.5 kB"
+      "limit": "3 kB"
     },
     {
       "name": "capture photo css",

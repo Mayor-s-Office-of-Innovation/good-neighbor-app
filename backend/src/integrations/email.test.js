@@ -168,7 +168,7 @@ describe("sendManagerEnrollmentEmail", () => {
     expect(text).toContain(
       "runs in any smartphone, tablet, or desktop PC/Mac browser",
     );
-    expect(text).toContain("enrolls one device for City Hall only");
+    expect(text).toContain("gives access to City Hall until");
     expect(text).toContain("- The Good Neighbor app team -");
     expect(JSON.stringify(info.mock.calls)).not.toContain("secret-token");
     expect(JSON.stringify(info.mock.calls)).not.toContain(
@@ -198,7 +198,7 @@ describe("sendProviderManagerEnrollmentEmail", () => {
       "You've been assigned as a manager for Community Partners under the Good Neighbor policy.",
     );
     expect(text).toContain("the Provider had 2 active Sites");
-    expect(text).toContain("enrolls one device for Community Partners only");
+    expect(text).toContain("gives access to Community Partners until");
     expect(text).toContain("- The Good Neighbor app team -");
     expect(JSON.stringify(info.mock.calls)).not.toContain("provider-token");
   });

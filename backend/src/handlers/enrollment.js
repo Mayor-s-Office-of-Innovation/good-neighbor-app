@@ -27,7 +27,7 @@ const INACTIVITY_LIMIT_DAYS = 60;
 const INVALID_GRANT = { error: "invalid_enrollment_grant" };
 
 /**
- * Redeem a one-time enrollment grant into a physical-device identity,
+ * Redeem an unexpired enrollment grant into a physical-device identity,
  * one Site binding, and the existing device-token compatibility session.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
@@ -90,12 +90,9 @@ export const redeemEnrollmentGrant = async (event) => {
   ) {
     return rejectEnrollment(event, "invalid_credentials");
   }
-  // Both credentials consume the same grant; pin its canonical verifier in the transaction.
+  // Both credentials authorize the same grant; pin its verifier in the transaction.
   const grantTokenHash = grant.tokenHash;
-  if (grant.status === "redeemed") {
-    return rejectEnrollment(event, "already_used", 409, grant);
-  }
-  if (grant.status !== "pending") {
+  if (!["pending", "redeemed"].includes(grant.status)) {
     return rejectEnrollment(event, "cancelled", 410, grant);
   }
   if (grant.expiresAt <= nowIso) {
@@ -132,6 +129,7 @@ export const redeemEnrollmentGrant = async (event) => {
       new GetCommand({
         TableName: tableName,
         Key: { pk: `SITE#${siteId}`, sk: "#META" },
+        ConsistentRead: true,
       }),
     ),
     ddb.send(
@@ -199,13 +197,19 @@ export const redeemEnrollmentGrant = async (event) => {
   if (
     !site ||
     site.status === "inactive" ||
+    (grant.siteCredentialGeneration !== undefined &&
+      Number(grant.siteCredentialGeneration) !==
+        Number(site.siteCredentialGeneration ?? 0)) ||
     !authority ||
     authority.status !== "active" ||
     (accessLevel === "manager" &&
       grant.membershipGeneration !== undefined &&
       Number(authority.generation ?? 0) !==
         Number(grant.membershipGeneration)) ||
-    (accessLevel === "general" && authority.accessLevel !== "manager") ||
+    (accessLevel === "general" &&
+      (authority.accessLevel !== "manager" ||
+        Number(authority.siteCredentialGeneration ?? 0) !==
+          Number(site.siteCredentialGeneration ?? 0))) ||
     (accessLevel === "general" &&
       !providerIssued &&
       (!issuerMembership ||
@@ -332,7 +336,7 @@ export const redeemEnrollmentGrant = async (event) => {
               UpdateExpression:
                 "SET #status = :redeemed, redeemedAt = :now, redeemedBindingId = :bindingId, redeemedPhysicalDeviceId = :physicalDeviceId",
               ConditionExpression:
-                "#status = :pending AND expiresAt > :now AND tokenHash = :tokenHash",
+                "#status IN (:pending, :redeemed) AND expiresAt > :now AND tokenHash = :tokenHash",
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
                 ":pending": "pending",
@@ -349,8 +353,7 @@ export const redeemEnrollmentGrant = async (event) => {
               TableName: tableName,
               Key: { pk: lookup.pk, sk: lookup.sk },
               UpdateExpression: "SET redeemedAt = :now, expiresAt = :retention",
-              ConditionExpression:
-                "grantId = :grantId AND attribute_not_exists(redeemedAt)",
+              ConditionExpression: "grantId = :grantId",
               ExpressionAttributeValues: {
                 ":grantId": grantId,
                 ":now": nowIso,
@@ -358,22 +361,6 @@ export const redeemEnrollmentGrant = async (event) => {
               },
             },
           },
-          ...(accessLevel === "manager"
-            ? [
-                {
-                  Delete: {
-                    TableName: tableName,
-                    Key: {
-                      pk: `SITE#${siteId}`,
-                      sk: `${grant.issuedBy === "manager-email-recovery" ? "MANAGER_RECOVERY_GRANT_CURRENT" : "MANAGER_GRANT_CURRENT"}#${membershipId}`,
-                    },
-                    ConditionExpression:
-                      "attribute_not_exists(pk) OR grantId = :grantId",
-                    ExpressionAttributeValues: { ":grantId": grantId },
-                  },
-                },
-              ]
-            : []),
           ...(providerIssued && accessLevel === "general"
             ? []
             : [
@@ -403,7 +390,22 @@ export const redeemEnrollmentGrant = async (event) => {
                 ...providerAuthority.checks,
                 { ConditionCheck: providerAuthority.siteCheck },
               ]
-            : []),
+            : [
+                {
+                  ConditionCheck: {
+                    TableName: tableName,
+                    Key: { pk: `SITE#${siteId}`, sk: "#META" },
+                    ConditionExpression:
+                      "#status = :active AND (siteCredentialGeneration = :generation OR (attribute_not_exists(siteCredentialGeneration) AND :generation = :zero))",
+                    ExpressionAttributeNames: { "#status": "status" },
+                    ExpressionAttributeValues: {
+                      ":active": "active",
+                      ":generation": siteGeneration,
+                      ":zero": 0,
+                    },
+                  },
+                },
+              ]),
           ...(accessLevel === "general" && !providerIssued
             ? [
                 {
@@ -490,6 +492,7 @@ export const redeemEnrollmentGrant = async (event) => {
   }
   return withMediaCookies(
     jsonResponse(201, {
+      enrollmentGrantId: grant.grantId,
       physicalDeviceId,
       bindingId,
       deviceId: bindingId,
@@ -750,7 +753,7 @@ async function redeemProviderEnrollment(context) {
               UpdateExpression:
                 "SET #status = :redeemed, redeemedAt = :now, redeemedEnrollmentId = :enrollmentId, redeemedPhysicalDeviceId = :physicalDeviceId, redeemedSiteCount = :siteCount",
               ConditionExpression:
-                "#status = :pending AND expiresAt > :now AND tokenHash = :tokenHash",
+                "#status IN (:pending, :redeemed) AND expiresAt > :now AND tokenHash = :tokenHash",
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
                 ":pending": "pending",
@@ -768,25 +771,12 @@ async function redeemProviderEnrollment(context) {
               TableName: tableName,
               Key: { pk: lookup.pk, sk: lookup.sk },
               UpdateExpression: "SET redeemedAt = :now, expiresAt = :retention",
-              ConditionExpression:
-                "grantId = :grantId AND attribute_not_exists(redeemedAt)",
+              ConditionExpression: "grantId = :grantId",
               ExpressionAttributeValues: {
                 ":grantId": grant.grantId,
                 ":now": nowIso,
                 ":retention": Math.floor(now.getTime() / 1000) + 30 * 86400,
               },
-            },
-          },
-          {
-            Delete: {
-              TableName: tableName,
-              Key: {
-                pk: `PROVIDER#${providerId}`,
-                sk: `PROVIDER_MANAGER_GRANT_CURRENT#${membershipId}`,
-              },
-              ConditionExpression:
-                "attribute_not_exists(pk) OR grantId = :grantId",
-              ExpressionAttributeValues: { ":grantId": grant.grantId },
             },
           },
           {
@@ -855,6 +845,7 @@ async function redeemProviderEnrollment(context) {
   });
   return withMediaCookies(
     jsonResponse(201, {
+      enrollmentGrantId: grant.grantId,
       physicalDeviceId,
       bindingId: initial.bindingId,
       deviceId: initial.bindingId,
@@ -881,7 +872,7 @@ async function redeemProviderEnrollment(context) {
 }
 
 /**
- * Notification failure must not roll back a successfully redeemed one-time
+ * Notification failure must not roll back a successfully redeemed
  * grant. Delivery evidence remains on the redeemed grant and safe logs feed
  * the operational alarm.
  * @param {{event:import("aws-lambda").APIGatewayProxyEventV2, tableName:string, grant:Record<string, any>, membership:Record<string, any>, site:Record<string, any>, label:string, enrolledAt:string}} input

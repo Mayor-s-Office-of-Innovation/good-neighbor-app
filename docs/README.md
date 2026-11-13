@@ -52,6 +52,8 @@
 - **[ADR 0018](./adr/0018-provider-issued-site-invitations.md)** — Provider Manager invitations for named Site Managers and Site Team Members, with Site-scoped authority checks.
 
 - **[ADR 0019](./adr/0019-home-screen-session-continuity.md)** — Home Screen cookie bootstrap, grouped Browser and Home Screen sessions, bookmark restoration, and cross-tab refresh coordination.
+- **[ADR 0022](./adr/0022-reusable-enrollment-invitations.md)** — invitation reuse across browsers, original expiry, authority checks, and cancellation.
+
 - **[ADR 0020](./adr/0020-retryable-refresh-recovery.md)** — durable refresh attempts and bounded encrypted recovery after interrupted rotation.
 
 ## Operations

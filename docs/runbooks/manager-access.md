@@ -97,7 +97,8 @@ API log group. Terraform changes are planned/applied through CI, not from a lapt
 
 ## Invitation confirmation and manual enrollment codes
 
-Provider and Site Manager invitations expire after 24 hours and remain single use.
+Administrator-issued Provider and Site Manager invitations expire after 24 hours
+and can be reused in another browser until that original expiry (ADR 0022).
 Opening an enrollment link shows a confirmation screen; only submitting **Enroll
 this device** redeems it. Staff and recovery links use the same confirmation screen.
 
@@ -107,21 +108,25 @@ The email includes a six-character uppercase letter/digit code and a plain `#log
 existing six-character login screen, including on a previously enrolled device.
 The code is entered in the normal code field and submitted with Continue.
 It redeems the same scoped manager grant; no separate enrollment-code screen is used.
-Codes are single use and stored only as verifiers. The plain link contains no code.
+Codes follow the same expiry and reuse rules and are stored only as verifiers.
+The plain link contains no code.
 
 Provider issuance still rejects a second unexpired invitation until it is cancelled
 or expires. Site Manager issuance retains its existing replacement behavior.
 Choosing Email code does not revoke previously enrolled devices.
 
-### Troubleshooting consumed invitations
+### Troubleshooting interrupted enrollment
 
-A successful redemption proves a client received credentials, not that the named
-recipient personally used the app. Email-security browsers may execute JavaScript.
+A successful redemption proves credentials were minted, not that they reached
+the client or that the named recipient personally used the app. Email-security browsers may execute JavaScript.
 Confirmation reduces accidental scanning redemptions; use manual codes when a
 scanner also interacts with confirmation controls.
 
-API responses distinguish verified used (409), expired/cancelled (410), changed
-access (403), and transaction conflict (409) invitations. Unknown credentials
+An unexpired used invitation can be retried, including in another browser.
+An already enrolled browser checks its saved session and opens the app. If a
+response was lost and the page was reloaded, reopen the original email link.
+API responses distinguish expired/cancelled (410), changed access (403), and
+transaction conflict (409) invitations. Unknown credentials
 remain a generic 401. The UI displays a support reference when available.
 Old grants whose token lookup was deleted before this change remain generic
 invalid-invitation errors; no historical secrets or lookups are reconstructed.
@@ -133,7 +138,8 @@ physical-device ID, and a coarse browser/device description. Never log the reque
 body, raw token/code, or complete invitation URL. Correlate request IDs with API
 Gateway access logs when investigating scanner activity.
 
-If scanner consumption is suspected, review/revoke the affected enrollment before
+If scanner enrollment is suspected, cancel the invitation and review/revoke the
+affected enrollment before
 issuing a replacement. A replacement invitation does not invalidate its predecessor's
 already-created sessions. The deployed frontend must include the confirmation
 change before scanning tests are meaningful.

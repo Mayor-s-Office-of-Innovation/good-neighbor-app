@@ -3,7 +3,7 @@ export const faq = [
   {
     id: "FAQ-01",
     title: "How do I enroll my phone?",
-    text: "Open your unique enrollment link on the phone and browser you intend to use.\nCheck the Site shown, then choose “Enroll”\nConfirm that the home screen shows the correct Site.\nNote: this is a one-time link.\nNo enrollment link? Check with your site manager (if you’re a site team member) or your City compliance program manager (if you’re a site or provider manager) to be sent a “magic link” for enrollment. If you’ve been sent an email but it didn’t arrive, check your email.",
+    text: "Open your unique enrollment link on the phone and browser you intend to use.\nCheck the Site shown, then choose “Enroll”\nConfirm that the home screen shows the correct Site.\nYou can use the same link in another browser before it expires.\nNo enrollment link? Check with your site manager (if you’re a site team member) or your City compliance program manager (if you’re a site or provider manager) to be sent a “magic link” for enrollment. If you’ve been sent an email but it didn’t arrive, check your email.",
   },
   {
     id: "FAQ-02",
@@ -13,7 +13,7 @@ export const faq = [
   {
     id: "FAQ-03",
     title: "I’m a Site Manager. How do I enroll another staff member?",
-    text: "Open “Manage access,” give the team device a recognizable name, create an enrollment (“magic”) link and share it or show its QR code. The staff member opens it on their own device and completes enrollment. Each team invitation works once and expires after eight hours; create a separate link for each device.",
+    text: "Open “Manage access,” give the team device a recognizable name, create an enrollment (“magic”) link and share it or show its QR code. The staff member opens it on their own device and completes enrollment. Each team invitation expires after eight hours and can be used in another browser before then. Share it only with the intended person.",
   },
   {
     id: "FAQ-04",
@@ -32,18 +32,18 @@ export const faq = [
   },
   {
     id: "FAQ-07",
-    title: "My invitation is expired or already used. What now?",
-    text: "If you already enrolled this browser, click on the magic link but use “Already enrolled? Click to login”. Otherwise ask for a fresh invitation. An authorized Site Manager can also send a code to your email, rather than a magic link. Do not try and enroll again on an existing magic link, or use an already-used link on another device – it won’t work.",
+    title: "My invitation is expired or enrollment was interrupted. What now?",
+    text: "Retry the same invitation if it has not expired. You can open it in another browser, even after enrolling in your email app. Existing sessions keep working. If the invitation has expired or been cancelled, ask for a new one.",
   },
   {
     id: "FAQ-08",
     title: "What if I change phones, browsers or Sites?",
-    text: "A new browser or phone needs its own magic link.\nUse the Site switcher at the top of the screen to switch to Sites you are authorized to access. If you do switch sites, make sure you’re at the correct Site before recording work – the app may prompt you to confirm, if your location looks far from the selected Site. Clearing browser data or using private browsing can lose access.\nIf you don’t see the Site listed, you’ll need a new magic link for that site. Check with your site manager or your provider manager.",
+    text: "A new browser or phone can use your existing invitation before it expires; otherwise, ask for a new one.\nUse the Site switcher at the top of the screen to switch to Sites you are authorized to access. If you do switch sites, make sure you’re at the correct Site before recording work – the app may prompt you to confirm, if your location looks far from the selected Site. Clearing browser data or using private browsing can lose access.\nIf you don’t see the Site listed, you’ll need a new magic link for that site. Check with your site manager or your provider manager.",
   },
   {
     id: "FAQ-09",
     title: "What if a phone is lost or a staff member leaves?",
-    text: "Ask the Site Manager or your City compliance manager to revoke device access.\nDo not share enrollment links publicly.\nLogging out unlinks the device and will require a new magic link, so don’t use it for “reset” or troubleshooting, unless your compliance manager suggests it.",
+    text: "Ask the Site Manager or your City compliance manager to revoke device access.\nDo not share enrollment links publicly.\nLogging out unlinks the device and requires enrollment again, so don’t use it for “reset” or troubleshooting, unless your compliance manager suggests it.",
   },
   {
     id: "FAQ-10",

@@ -36,7 +36,7 @@ export const handler = async (event) => {
   }
 
   // Resolve manager invitations without consuming them. The normal login submit
-  // redeems the grant, retaining its provider/site scope and single-use rules.
+  // redeems the grant, retaining its provider/site scope and expiry.
   if (/^[A-Z0-9]{6}$/.test(code)) {
     const limited = await checkCodeAttemptLimit(undefined, "lookup", event);
     if (limited) return limited;
@@ -65,14 +65,11 @@ export const handler = async (event) => {
           (grant.deliveryMode === "code" && grant.tokenHash)) !== hash
       )
         return jsonResponse(401, { error: "invalid_enrollment_grant" });
-      const terminal =
-        grant.status === "redeemed"
-          ? "enrollment_already_used"
-          : grant.status === "cancelled"
-            ? "enrollment_cancelled"
-            : grant.expiresAt <= new Date().toISOString()
-              ? "enrollment_expired"
-              : null;
+      const terminal = !["pending", "redeemed"].includes(grant.status)
+        ? "enrollment_cancelled"
+        : grant.expiresAt <= new Date().toISOString()
+          ? "enrollment_expired"
+          : null;
       // Lazily give historical ISO lookup rows a bounded TTL too. Identity and
       // observed expiry are pinned so a concurrent retirement cannot be undone.
       if (typeof Item.expiresAt !== "number") {
@@ -100,8 +97,6 @@ export const handler = async (event) => {
         }
       }
       if (terminal) return jsonResponse(410, { error: terminal });
-      if (grant.status !== "pending")
-        return jsonResponse(401, { error: "invalid_enrollment_grant" });
       return jsonResponse(200, { code, enrollment: true });
     }
   }

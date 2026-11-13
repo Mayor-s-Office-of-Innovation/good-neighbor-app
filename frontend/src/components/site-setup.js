@@ -11,6 +11,8 @@ import {
   saveDiscoveredBindings,
   setSite,
 } from "../db.js";
+import { clearAuthState } from "../services/backend-health.js";
+import { getSiteSettings } from "../services/api.js";
 import { t } from "../i18n/i18n.js";
 import {
   formatSiteCode,
@@ -70,7 +72,9 @@ export class SiteSetup extends HTMLElement {
 
     if (enrollment) {
       stripEnrollmentFromUrl();
-      // Loading a link must never consume it: scanners execute JavaScript.
+      // A saved session from this invitation can open directly. Loading a new
+      // invitation must never redeem it: scanners execute JavaScript.
+      void this._resumeEnrollment(enrollment.grantId);
       return;
     }
 
@@ -493,6 +497,22 @@ export class SiteSetup extends HTMLElement {
     this.dispatchEvent(
       new CustomEvent("sitebound", { bubbles: true, detail: site }),
     );
+  }
+
+  async _resumeEnrollment(grantId) {
+    try {
+      const current = await getSite();
+      if (current?.enrollmentGrantId !== grantId || !current?.token) return;
+      // Local provenance is a navigation hint, never proof of current access.
+      await getSiteSettings();
+      if (this._cancelled || this._checking || !this.isConnected) return;
+      this.dispatchEvent(
+        new CustomEvent("sitebound", { bubbles: true, detail: current }),
+      );
+    } catch {
+      // A revoked or unavailable session leaves the invitation ready to submit.
+      if (this.isConnected && !this._checking) clearAuthState();
+    }
   }
 
   async _redeemEnrollment({ grantId = "", token = "", code }) {

@@ -6,6 +6,8 @@ Accepted (2026-10-03). Supersedes the lifetime and role portions of
 [ADR 0010](./0010-device-token-auth.md); its signed-token and live-revocation
 mechanism remains in use.
 
+Invitation single-use rules superseded by [ADR 0022](./0022-reusable-enrollment-invitations.md).
+
 ## Context
 
 A browser can serve more than one Site, while authorization and revocation are

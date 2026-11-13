@@ -460,8 +460,10 @@ blocking setup or existing sessions. PWA install offers remain suppressed in
 recognized webviews because their browser controls may not support installation.
 Detection uses known user-agent markers only; unrecognized webviews can evade
 it. The warning's external-browser action is best effort, not a guaranteed
-handoff. Invitation redemption remains single-use; opening another browser does
-not transfer locally stored access or drafts.
+handoff. An unexpired invitation can establish independent access in another
+browser, even after use in a webview; existing sessions keep working. Opening
+another browser does not transfer locally stored drafts. Original expiry and
+current authority checks still apply; see [ADR 0022](./adr/0022-reusable-enrollment-invitations.md).
 
 The invitation screen's Open the app recovery link uses `data-reload` to bypass
 SPA navigation and restart session loading from local storage. Setup pauses its

@@ -16,8 +16,12 @@ const setup = vi.hoisted(() => ({
   registerDevice: vi.fn(),
   redeemEnrollmentGrant: vi.fn(),
   getSite: vi.fn(),
+  getSiteSettings: vi.fn(),
   saveDiscoveredBindings: vi.fn(),
   setSite: vi.fn(),
+}));
+vi.mock("../services/api.js", () => ({
+  getSiteSettings: setup.getSiteSettings,
 }));
 vi.mock("../services/onboarding.js", () => ({
   formatSiteCode: (value) => value,
@@ -69,6 +73,7 @@ afterEach(() => {
   setup.registerDevice.mockReset();
   setup.redeemEnrollmentGrant.mockReset();
   setup.getSite.mockReset();
+  setup.getSiteSettings.mockReset();
   setup.saveDiscoveredBindings.mockReset();
   setup.setSite.mockReset();
 });
@@ -578,3 +583,61 @@ it.each([
     expect(component._request.requesting).toBe(false);
   },
 );
+
+describe("resuming the invitation's saved access", () => {
+  it("opens an already enrolled browser only after checking its session", async () => {
+    const current = { enrollmentGrantId: "invitation", token: "synthetic" };
+    setup.getSite.mockResolvedValue(current);
+    setup.getSiteSettings.mockResolvedValue({ site: {} });
+    const component = Object.assign(new SiteSetup(), {
+      isConnected: true,
+      dispatchEvent: vi.fn(),
+    });
+    vi.stubGlobal(
+      "CustomEvent",
+      class {
+        constructor(type, init) {
+          this.type = type;
+          this.detail = init.detail;
+        }
+      },
+    );
+    await component._resumeEnrollment("invitation");
+    expect(setup.getSiteSettings).toHaveBeenCalledTimes(1);
+    expect(component.dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "sitebound", detail: current }),
+    );
+    expect(setup.redeemEnrollmentGrant).not.toHaveBeenCalled();
+  });
+
+  it("does not confuse another site's invitation with existing access", async () => {
+    setup.getSite.mockResolvedValue({
+      enrollmentGrantId: "other",
+      token: "synthetic",
+    });
+    const component = Object.assign(new SiteSetup(), {
+      isConnected: true,
+      dispatchEvent: vi.fn(),
+    });
+    await component._resumeEnrollment("invitation");
+    expect(setup.getSiteSettings).not.toHaveBeenCalled();
+    expect(component.dispatchEvent).not.toHaveBeenCalled();
+  });
+
+  it("keeps confirmation available when saved access has been revoked", async () => {
+    setup.getSite.mockResolvedValue({
+      enrollmentGrantId: "invitation",
+      token: "synthetic",
+    });
+    setup.getSiteSettings.mockRejectedValue(
+      Object.assign(new Error("revoked"), { status: 403 }),
+    );
+    const component = Object.assign(new SiteSetup(), {
+      isConnected: true,
+      dispatchEvent: vi.fn(),
+    });
+    await component._resumeEnrollment("invitation");
+    expect(component.dispatchEvent).not.toHaveBeenCalled();
+    expect(setup.redeemEnrollmentGrant).not.toHaveBeenCalled();
+  });
+});

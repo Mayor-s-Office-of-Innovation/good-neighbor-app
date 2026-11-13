@@ -1,3 +1,4 @@
+import { currentGrantDeletion } from "./enrollment-retention.js";
 import { getPerson } from "../lib/people.js";
 import {
   generateEnrollmentCode,
@@ -174,6 +175,8 @@ export const createManagerGrant = (event) =>
       membershipId,
       siteId,
       accessLevel: "manager",
+      membershipGeneration: Number(membership.generation ?? 1),
+      siteCredentialGeneration: Number(site.siteCredentialGeneration ?? 0),
       tokenHash,
       deliveryMode,
       deliveryChannel,
@@ -197,7 +200,7 @@ export const createManagerGrant = (event) =>
             (item) =>
               item.membershipId === membershipId &&
               item.issuedBy !== "manager-email-recovery" &&
-              item.status === "pending" &&
+              ["pending", "redeemed"].includes(item.status) &&
               item.expiresAt > nowIso,
           );
     /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
@@ -258,10 +261,11 @@ export const createManagerGrant = (event) =>
             Key: { pk: replaced.pk, sk: replaced.sk },
             UpdateExpression:
               "SET #status = :replaced, replacedAt = :now, replacedByGrantId = :grantId",
-            ConditionExpression: "#status = :pending",
+            ConditionExpression: "#status IN (:pending, :redeemed)",
             ExpressionAttributeNames: { "#status": "status" },
             ExpressionAttributeValues: {
               ":pending": "pending",
+              ":redeemed": "redeemed",
               ":replaced": "replaced",
               ":now": nowIso,
               ":grantId": grantId,
@@ -325,7 +329,7 @@ export const createManagerGrant = (event) =>
         Key: { pk: grant.pk, sk: grant.sk },
         UpdateExpression:
           "SET deliveryStatus = :deliveryStatus, deliveryProvider = :provider, deliveryMessageId = :messageId, deliveryUpdatedAt = :now",
-        ConditionExpression: "#status = :pending",
+        ConditionExpression: "#status IN (:pending, :redeemed)",
         ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: {
           ":deliveryStatus": deliveryStatus,
@@ -333,6 +337,7 @@ export const createManagerGrant = (event) =>
           ":messageId": messageId,
           ":now": new Date().toISOString(),
           ":pending": "pending",
+          ":redeemed": "redeemed",
         },
       }),
     );
@@ -362,9 +367,17 @@ export const cancelManagerGrant = (event) =>
       }),
     );
     const grant = (result.Items ?? []).find((item) => item.grantId === grantId);
-    if (!grant || grant.status !== "pending") {
+    if (!grant || !["pending", "redeemed"].includes(grant.status)) {
       return jsonResponse(404, { error: "manager_grant_not_found" });
     }
+    const pointerDeletion = await currentGrantDeletion(
+      tableName,
+      {
+        pk: `SITE#${siteId}`,
+        sk: `${grant.issuedBy === "manager-email-recovery" ? "MANAGER_RECOVERY_GRANT_CURRENT" : "MANAGER_GRANT_CURRENT"}#${grant.membershipId}`,
+      },
+      grantId,
+    );
     const now = new Date().toISOString();
     const actor = actorId(event);
     try {
@@ -377,10 +390,11 @@ export const cancelManagerGrant = (event) =>
                 Key: { pk: grant.pk, sk: grant.sk },
                 UpdateExpression:
                   "SET #status = :cancelled, cancelledAt = :now, cancelledBy = :actor",
-                ConditionExpression: "#status = :pending",
+                ConditionExpression: "#status IN (:pending, :redeemed)",
                 ExpressionAttributeNames: { "#status": "status" },
                 ExpressionAttributeValues: {
                   ":pending": "pending",
+                  ":redeemed": "redeemed",
                   ":cancelled": "cancelled",
                   ":now": now,
                   ":actor": actor,
@@ -393,18 +407,7 @@ export const cancelManagerGrant = (event) =>
                 Key: { pk: `ENROLLMENT_TOKEN#${grant.tokenHash}`, sk: "#META" },
               },
             },
-            {
-              Delete: {
-                TableName: tableName,
-                Key: {
-                  pk: `SITE#${siteId}`,
-                  sk: `${grant.issuedBy === "manager-email-recovery" ? "MANAGER_RECOVERY_GRANT_CURRENT" : "MANAGER_GRANT_CURRENT"}#${grant.membershipId}`,
-                },
-                ConditionExpression:
-                  "attribute_not_exists(pk) OR grantId = :grantId",
-                ExpressionAttributeValues: { ":grantId": grantId },
-              },
-            },
+            ...pointerDeletion,
             put(tableName, {
               pk: `SITE#${siteId}`,
               sk: `AUDIT#${now}#${randomUUID()}`,
@@ -438,9 +441,11 @@ export const cancelManagerGrant = (event) =>
  */
 function publicGrant(item, now) {
   const status =
-    item.status === "pending" && item.expiresAt <= now
+    ["pending", "redeemed"].includes(item.status) && item.expiresAt <= now
       ? "expired"
-      : item.status;
+      : item.status === "redeemed"
+        ? "pending"
+        : item.status;
   return {
     deliveryMode: item.deliveryMode ?? "link",
     deliveryChannel: item.deliveryChannel ?? "email",

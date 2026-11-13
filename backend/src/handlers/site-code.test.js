@@ -220,11 +220,12 @@ describe("terminal enrollment code lookup", () => {
     send.mockReset();
   });
   it.each([
-    ["redeemed", "2099-01-01T00:00:00Z", "enrollment_already_used"],
+    ["redeemed", "2099-01-01T00:00:00Z", null],
+    ["redeemed", "2000-01-01T00:00:00Z", "enrollment_expired"],
     ["cancelled", "2099-01-01T00:00:00Z", "enrollment_cancelled"],
     ["pending", "2000-01-01T00:00:00Z", "enrollment_expired"],
   ])(
-    "rejects %s codes at the probe and bounds historical lookup retention",
+    "validates %s codes at the probe and bounds historical lookup retention",
     async (status, expiresAt, error) => {
       vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
       vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
@@ -253,8 +254,8 @@ describe("terminal enrollment code lookup", () => {
         })
         .mockResolvedValueOnce({});
       const result = await callHandler({ code: "ABC234" });
-      expect(result.statusCode).toBe(410);
-      expect(JSON.parse(result.body).error).toBe(error);
+      expect(result.statusCode).toBe(error ? 410 : 200);
+      expect(JSON.parse(result.body).error).toBe(error ?? undefined);
       const values = send.mock.calls[2][0].input.ExpressionAttributeValues;
       const at =
         status === "redeemed"

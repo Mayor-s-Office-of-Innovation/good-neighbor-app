@@ -146,10 +146,11 @@ async function issueRecoveryLinks(email, verifier, now) {
           Key: { pk: grant.pk, sk: grant.sk },
           UpdateExpression:
             "SET deliveryStatus = :deliveryStatus, deliveryProvider = :provider, deliveryMessageId = :messageId, deliveryUpdatedAt = :now",
-          ConditionExpression: "#status = :pending",
+          ConditionExpression: "#status IN (:pending, :redeemed)",
           ExpressionAttributeNames: { "#status": "status" },
           ExpressionAttributeValues: {
             ":pending": "pending",
+            ":redeemed": "redeemed",
             ":deliveryStatus": delivery.status,
             ":provider": delivery.provider,
             ":messageId": delivery.messageId,
@@ -209,7 +210,7 @@ async function issueGrant(tableName, site, membership, now) {
           (item) =>
             item.membershipId === membership.membershipId &&
             item.issuedBy === "manager-email-recovery" &&
-            item.status === "pending" &&
+            ["pending", "redeemed"].includes(item.status) &&
             item.expiresAt > nowIso,
         );
   const grantId = randomUUID();
@@ -226,6 +227,8 @@ async function issueGrant(tableName, site, membership, now) {
     siteId: site.siteId,
     siteName: site.name,
     accessLevel: "manager",
+    membershipGeneration: Number(membership.generation ?? 1),
+    siteCredentialGeneration: Number(site.siteCredentialGeneration ?? 0),
     tokenHash,
     status: "pending",
     deliveryStatus: "queued",
@@ -291,10 +294,11 @@ async function issueGrant(tableName, site, membership, now) {
           Key: { pk: replaced.pk, sk: replaced.sk },
           UpdateExpression:
             "SET #status = :replaced, replacedAt = :now, replacedByGrantId = :grantId",
-          ConditionExpression: "#status = :pending",
+          ConditionExpression: "#status IN (:pending, :redeemed)",
           ExpressionAttributeNames: { "#status": "status" },
           ExpressionAttributeValues: {
             ":pending": "pending",
+            ":redeemed": "redeemed",
             ":replaced": "replaced",
             ":now": nowIso,
             ":grantId": grantId,

@@ -37,6 +37,7 @@ const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
  * @property {"general"|"manager"} [accessLevel]
  * @property {string} [physicalDeviceId]
  * @property {string} [bindingId]
+ * @property {string} [enrollmentGrantId]
  */
 
 /**
@@ -78,7 +79,7 @@ export async function registerDevice(code, opts = {}) {
 }
 
 /**
- * Redeem a one-time enrollment link. The secret is sent only in the JSON body;
+ * Redeem an unexpired enrollment link. The secret is sent only in the JSON body;
  * callers should remove it from the URL before awaiting this request.
  * @param {string} grantId
  * @param {string} token

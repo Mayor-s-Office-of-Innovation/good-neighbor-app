@@ -5,6 +5,8 @@
 Accepted (2026-10-13). Extends
 [ADR 0015](./0015-device-bindings-and-manager-enrollment.md).
 
+Invitation single-use rules superseded by [ADR 0022](./0022-reusable-enrollment-invitations.md).
+
 ## Context
 
 Some Provider Managers work across every Site operated by one Provider. Issuing

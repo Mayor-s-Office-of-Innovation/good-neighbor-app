@@ -1597,6 +1597,10 @@ await test("managed device sessions against isolated DynamoDB Local", async (t) 
         assert.equal(enrollments.Items.length, 1);
       },
     );
+    const { reusableEnrollmentCases } = await import(
+      "./reusable-enrollment-cases.mjs"
+    );
+    await reusableEnrollmentCases(t, { ddb, table, allowed, supervisor });
   } finally {
     ddb.destroy();
     client.destroy();

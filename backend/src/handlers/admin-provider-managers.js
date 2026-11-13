@@ -1,3 +1,4 @@
+import { currentGrantDeletion } from "./enrollment-retention.js";
 import {
   getPerson,
   personRecord,
@@ -461,11 +462,21 @@ export const cancelProviderManagerGrant = (event) =>
     const grantId = event.pathParameters?.grantId ?? "";
     const grants = await query(providerId, "PROVIDER_MANAGER_GRANT#");
     const grant = (grants.Items ?? []).find(
-      (item) => item.grantId === grantId && item.status === "pending",
+      (item) =>
+        item.grantId === grantId &&
+        ["pending", "redeemed"].includes(item.status),
     );
     if (!grant) {
       return jsonResponse(404, { error: "provider_manager_grant_not_found" });
     }
+    const pointerDeletion = await currentGrantDeletion(
+      getDynamoTableName(),
+      providerKey(
+        providerId,
+        `PROVIDER_MANAGER_GRANT_CURRENT#${grant.membershipId}`,
+      ),
+      grantId,
+    );
     const now = new Date().toISOString();
     try {
       await ddb.send(
@@ -477,10 +488,11 @@ export const cancelProviderManagerGrant = (event) =>
                 Key: { pk: grant.pk, sk: grant.sk },
                 UpdateExpression:
                   "SET #status = :cancelled, cancelledAt = :now, cancelledBy = :actor",
-                ConditionExpression: "#status = :pending",
+                ConditionExpression: "#status IN (:pending, :redeemed)",
                 ExpressionAttributeNames: { "#status": "status" },
                 ExpressionAttributeValues: {
                   ":pending": "pending",
+                  ":redeemed": "redeemed",
                   ":cancelled": "cancelled",
                   ":now": now,
                   ":actor": actorId(event),
@@ -493,18 +505,7 @@ export const cancelProviderManagerGrant = (event) =>
                 Key: { pk: `ENROLLMENT_TOKEN#${grant.tokenHash}`, sk: "#META" },
               },
             },
-            {
-              Delete: {
-                TableName: getDynamoTableName(),
-                Key: providerKey(
-                  providerId,
-                  `PROVIDER_MANAGER_GRANT_CURRENT#${grant.membershipId}`,
-                ),
-                ConditionExpression:
-                  "attribute_not_exists(pk) OR grantId = :grantId",
-                ExpressionAttributeValues: { ":grantId": grantId },
-              },
-            },
+            ...pointerDeletion,
           ],
         }),
       );
@@ -789,9 +790,11 @@ function publicGrant(item, now) {
     providerName: item.providerName,
     siteCount: item.redeemedSiteCount ?? item.siteCountAtIssue,
     status:
-      item.status === "pending" && item.expiresAt <= now
+      ["pending", "redeemed"].includes(item.status) && item.expiresAt <= now
         ? "expired"
-        : item.status,
+        : item.status === "redeemed"
+          ? "pending"
+          : item.status,
     deliveryStatus: item.deliveryStatus,
     deliveryProvider: item.deliveryProvider,
     securityNotificationStatus: item.securityNotificationStatus,

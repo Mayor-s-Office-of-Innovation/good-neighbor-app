@@ -51,9 +51,14 @@ afterEach(() => {
 });
 
 describe("Manager enrollment redemption", () => {
-  it.each(["link", "code"])(
-    "atomically enrolls a Provider Manager at every active Site (%s)",
-    async (deliveryMode) => {
+  it.each([
+    ["link", "pending"],
+    ["code", "pending"],
+    ["link", "redeemed"],
+    ["code", "redeemed"],
+  ])(
+    "atomically enrolls a Provider Manager at every active Site (%s, %s)",
+    async (deliveryMode, status) => {
       const token =
         deliveryMode === "code" ? "A1B2C3" : "provider-wide-secret-token";
       const tokenHash = /^[A-Z0-9]{6}$/.test(token)
@@ -79,7 +84,7 @@ describe("Manager enrollment redemption", () => {
             membershipId: "membership-1",
             membershipGeneration: 3,
             accessLevel: "manager",
-            status: "pending",
+            status,
             tokenHash,
             deliveryMode,
             expiresAt: "2099-01-01T00:00:00.000Z",
@@ -153,7 +158,7 @@ describe("Manager enrollment redemption", () => {
       expect(send.mock.calls[4][0]).toBeInstanceOf(QueryCommand);
       const transaction = send.mock.calls[6][0];
       expect(transaction).toBeInstanceOf(TransactWriteCommand);
-      expect(transaction.input.TransactItems).toHaveLength(16);
+      expect(transaction.input.TransactItems).toHaveLength(15);
       const siteConditions = transaction.input.TransactItems.filter(
         (/** @type {any} */ item) =>
           item.ConditionCheck?.Key?.pk?.startsWith("SITE#"),
@@ -187,9 +192,14 @@ describe("Manager enrollment redemption", () => {
     },
   );
 
-  it.each(["link", "code"])(
-    "atomically consumes one grant and creates a fresh binding on an existing physical identity (%s)",
-    async (deliveryMode) => {
+  it.each([
+    ["link", "pending"],
+    ["code", "pending"],
+    ["link", "redeemed"],
+    ["code", "redeemed"],
+  ])(
+    "atomically reuses a grant and creates a fresh binding on an existing physical identity (%s, %s)",
+    async (deliveryMode, status) => {
       const token =
         deliveryMode === "code" ? "A1B2C3" : "one-time-secret-token";
       const tokenHash = /^[A-Z0-9]{6}$/.test(token)
@@ -213,7 +223,7 @@ describe("Manager enrollment redemption", () => {
             siteId: "site-1",
             membershipId: "membership-1",
             accessLevel: "manager",
-            status: "pending",
+            status,
             tokenHash,
             deliveryMode,
             expiresAt: "2099-01-01T00:00:00.000Z",
@@ -281,9 +291,17 @@ describe("Manager enrollment redemption", () => {
       const transaction = send.mock.calls[5][0];
       expect(transaction).toBeInstanceOf(TransactWriteCommand);
       expect(transaction.input.TransactItems).toHaveLength(9);
-      expect(transaction.input.TransactItems[2].Delete.Key).toEqual({
+      expect(
+        transaction.input.TransactItems.some(
+          (/** @type {any} */ write) => write.Delete,
+        ),
+      ).toBe(false);
+      expect(
+        transaction.input.TransactItems[0].Update.ConditionExpression,
+      ).toContain("#status IN (:pending, :redeemed)");
+      expect(transaction.input.TransactItems[3].ConditionCheck.Key).toEqual({
         pk: "SITE#site-1",
-        sk: "MANAGER_GRANT_CURRENT#membership-1",
+        sk: "#META",
       });
       expect(transaction.input.TransactItems[4].Update.Key).toEqual({
         pk: "PHYSICAL_DEVICE#physical_device_1",
@@ -335,7 +353,8 @@ describe("Manager enrollment redemption", () => {
   );
 
   it.each([
-    ["redeemed", "2099-01-01T00:00:00.000Z", 409, "enrollment_already_used"],
+    ["redeemed", "2000-01-01T00:00:00.000Z", 410, "enrollment_expired"],
+    ["replaced", "2099-01-01T00:00:00.000Z", 410, "enrollment_cancelled"],
     ["pending", "2000-01-01T00:00:00.000Z", 410, "enrollment_expired"],
     ["cancelled", "2099-01-01T00:00:00.000Z", 410, "enrollment_cancelled"],
   ])(
@@ -568,6 +587,7 @@ describe("Manager enrollment redemption", () => {
           Item: {
             pk: "SITE#site-1",
             sk: "DEVICE_BINDING#manager-1",
+            siteCredentialGeneration: 4,
             status: "active",
             accessLevel: "manager",
           },
@@ -596,7 +616,7 @@ describe("Manager enrollment redemption", () => {
         accessLevel: "general",
       });
       const transaction = send.mock.calls[6][0];
-      expect(transaction.input.TransactItems).toHaveLength(10);
+      expect(transaction.input.TransactItems).toHaveLength(11);
       expect(
         transaction.input.TransactItems[0].Update.ExpressionAttributeValues[
           ":tokenHash"
@@ -613,7 +633,7 @@ describe("Manager enrollment redemption", () => {
             Date.parse(retired.ExpressionAttributeValues[":at"]) / 1000,
           ),
       ).toBe(30 * 86400);
-      expect(transaction.input.TransactItems[5].Put.Item).toMatchObject({
+      expect(transaction.input.TransactItems[6].Put.Item).toMatchObject({
         accessLevel: "general",
         label: "Night team tablet",
       });

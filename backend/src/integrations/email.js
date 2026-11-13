@@ -318,14 +318,14 @@ export async function sendManagerAccessEmail(email) {
       (link) =>
         `${link.siteName}: ${link.enrollmentUrl}\nExpires ${managerExpiry(link.expiresAt)}`,
     );
-    const text = `Hello ${email.managerName},\n\nUse the applicable one-time link below to enroll this device as a Site Manager. Each link enrolls one Site only.\n\n${lines.join("\n\n")}\n\nDo not forward these links. If you did not request access, contact the City administrator.`;
+    const text = `Hello ${email.managerName},\n\n${t("enrollment.email.recovery")}\n\n${lines.join("\n\n")}\n\nDo not forward these links. If you did not request access, contact the City administrator.`;
     const htmlLinks = email.links
       .map(
         (link) =>
           `<li><strong>${escapeHtml(link.siteName)}</strong>: <a href="${escapeHtml(link.enrollmentUrl)}">Enroll this Site</a><br>Expires ${escapeHtml(managerExpiry(link.expiresAt))}</li>`,
       )
       .join("");
-    const html = `<p>Hello ${escapeHtml(email.managerName)},</p><p>Use the applicable one-time link below to enroll this device as a Site Manager. Each link enrolls one Site only.</p><ul>${htmlLinks}</ul><p>Do not forward these links. If you did not request access, contact the City administrator.</p>`;
+    const html = `<p>Hello ${escapeHtml(email.managerName)},</p><p>${t("enrollment.email.recovery")}</p><ul>${htmlLinks}</ul><p>Do not forward these links. If you did not request access, contact the City administrator.</p>`;
     const response = await sendEmail({
       from,
       to: email.to,

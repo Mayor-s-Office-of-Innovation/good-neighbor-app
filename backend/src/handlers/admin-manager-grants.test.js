@@ -236,48 +236,51 @@ describe("City-issued Manager enrollment grants", () => {
     expect(String(response.body)).not.toContain("private SES error");
   });
 
-  it("replaces the membership's prior unexpired pending grant", async () => {
-    send
-      .mockResolvedValueOnce({ Item: { siteId: "site-1", name: "Site One" } })
-      .mockResolvedValueOnce({
-        Item: {
-          membershipId: "membership-1",
-          status: "active",
-          name: "Alex Rivera",
-          email: "alex@example.org",
-        },
-      })
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            pk: "SITE#site-1",
-            sk: "MANAGER_GRANT#old#grant-old",
-            grantId: "grant-old",
+  it.each(["pending", "redeemed"])(
+    "replaces the membership's prior unexpired %s grant",
+    async (status) => {
+      send
+        .mockResolvedValueOnce({ Item: { siteId: "site-1", name: "Site One" } })
+        .mockResolvedValueOnce({
+          Item: {
             membershipId: "membership-1",
-            status: "pending",
-            expiresAt: "2099-01-01T00:00:00.000Z",
-            tokenHash: "old-token-hash",
+            status: "active",
+            name: "Alex Rivera",
+            email: "alex@example.org",
           },
-        ],
-      })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({});
-    const response = await call(
-      createManagerGrant,
-      event({ membershipId: "membership-1" }, { siteId: "site-1" }),
-    );
-    expect(response.statusCode).toBe(201);
-    const transaction = send.mock.calls[4][0];
-    expect(transaction.input.TransactItems).toHaveLength(6);
-    expect(transaction.input.TransactItems[4].Update).toMatchObject({
-      Key: { pk: "SITE#site-1", sk: "MANAGER_GRANT#old#grant-old" },
-    });
-    expect(transaction.input.TransactItems[5].Delete.Key).toEqual({
-      pk: "ENROLLMENT_TOKEN#old-token-hash",
-      sk: "#META",
-    });
-  });
+        })
+        .mockResolvedValueOnce({
+          Items: [
+            {
+              pk: "SITE#site-1",
+              sk: "MANAGER_GRANT#old#grant-old",
+              grantId: "grant-old",
+              membershipId: "membership-1",
+              status,
+              expiresAt: "2099-01-01T00:00:00.000Z",
+              tokenHash: "old-token-hash",
+            },
+          ],
+        })
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({});
+      const response = await call(
+        createManagerGrant,
+        event({ membershipId: "membership-1" }, { siteId: "site-1" }),
+      );
+      expect(response.statusCode).toBe(201);
+      const transaction = send.mock.calls[4][0];
+      expect(transaction.input.TransactItems).toHaveLength(6);
+      expect(transaction.input.TransactItems[4].Update).toMatchObject({
+        Key: { pk: "SITE#site-1", sk: "MANAGER_GRANT#old#grant-old" },
+      });
+      expect(transaction.input.TransactItems[5].Delete.Key).toEqual({
+        pk: "ENROLLMENT_TOKEN#old-token-hash",
+        sk: "#META",
+      });
+    },
+  );
 
   it("returns a conflict when another grant wins the current pointer", async () => {
     const conflict = new Error("conflict");
@@ -308,37 +311,41 @@ describe("City-issued Manager enrollment grants", () => {
     expect(sendManagerEnrollmentEmail).not.toHaveBeenCalled();
   });
 
-  it("cancels a pending grant and removes its token lookup atomically", async () => {
-    send
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            pk: "SITE#site-1",
-            sk: "MANAGER_GRANT#time#grant-1",
-            grantId: "grant-1",
-            membershipId: "membership-1",
-            status: "pending",
-            tokenHash: "token-hash",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({});
-    const response = await call(
-      cancelManagerGrant,
-      event(undefined, { siteId: "site-1", grantId: "grant-1" }),
-    );
-    expect(response.statusCode).toBe(200);
-    const transaction = send.mock.calls[1][0];
-    expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems[1].Delete.Key).toEqual({
-      pk: "ENROLLMENT_TOKEN#token-hash",
-      sk: "#META",
-    });
-    expect(transaction.input.TransactItems[2].Delete.Key).toEqual({
-      pk: "SITE#site-1",
-      sk: "MANAGER_GRANT_CURRENT#membership-1",
-    });
-  });
+  it.each(["pending", "redeemed"])(
+    "cancels a %s grant and removes its token lookup atomically",
+    async (status) => {
+      send
+        .mockResolvedValueOnce({
+          Items: [
+            {
+              pk: "SITE#site-1",
+              sk: "MANAGER_GRANT#time#grant-1",
+              grantId: "grant-1",
+              membershipId: "membership-1",
+              status,
+              tokenHash: "token-hash",
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ Item: { grantId: "grant-1" } })
+        .mockResolvedValueOnce({});
+      const response = await call(
+        cancelManagerGrant,
+        event(undefined, { siteId: "site-1", grantId: "grant-1" }),
+      );
+      expect(response.statusCode).toBe(200);
+      const transaction = send.mock.calls[2][0];
+      expect(transaction).toBeInstanceOf(TransactWriteCommand);
+      expect(transaction.input.TransactItems[1].Delete.Key).toEqual({
+        pk: "ENROLLMENT_TOKEN#token-hash",
+        sk: "#META",
+      });
+      expect(transaction.input.TransactItems[2].Delete.Key).toEqual({
+        pk: "SITE#site-1",
+        sk: "MANAGER_GRANT_CURRENT#membership-1",
+      });
+    },
+  );
 });
 
 /**

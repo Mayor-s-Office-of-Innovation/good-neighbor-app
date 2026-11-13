@@ -245,6 +245,7 @@ const createStaffGrantAttempt = async (event) => {
     entityType: "ENROLLMENT_GRANT",
     grantId,
     siteId,
+    siteCredentialGeneration: Number(site.siteCredentialGeneration ?? 0),
     accessLevel,
     ...(membership
       ? {
@@ -455,7 +456,7 @@ export const cancelStaffGrant = async (event) => {
   const grant = grants.find((item) => item.grantId === grantId);
   if (
     !grant ||
-    grant.status !== "pending" ||
+    !["pending", "redeemed"].includes(grant.status) ||
     grant.issuedByBindingId !== issuerBindingId
   ) {
     return jsonResponse(404, { error: "staff_grant_not_found" });
@@ -471,10 +472,11 @@ export const cancelStaffGrant = async (event) => {
               Key: { pk: grant.pk, sk: grant.sk },
               UpdateExpression: "SET #status = :cancelled, cancelledAt = :now",
               ConditionExpression:
-                "#status = :pending AND issuedByBindingId = :issuer",
+                "#status IN (:pending, :redeemed) AND issuedByBindingId = :issuer",
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
                 ":pending": "pending",
+                ":redeemed": "redeemed",
                 ":cancelled": "cancelled",
                 ":now": now,
                 ":issuer": issuerBindingId,
@@ -706,9 +708,11 @@ function publicGrant(item, now = new Date().toISOString()) {
     accessLevel: item.accessLevel || "general",
     label: item.label,
     status:
-      item.status === "pending" && item.expiresAt <= now
+      ["pending", "redeemed"].includes(item.status) && item.expiresAt <= now
         ? "expired"
-        : item.status,
+        : item.status === "redeemed"
+          ? "pending"
+          : item.status,
     createdAt: item.createdAt,
     expiresAt: item.expiresAt,
   };

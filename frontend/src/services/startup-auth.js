@@ -1,6 +1,6 @@
 /**
  * Enrollment links must take precedence over a locally cached device binding.
- * Otherwise a revoked binding can mask a fresh one-time grant and leave that
+ * Otherwise a revoked binding can mask a fresh enrollment grant and leave that
  * grant pending forever.
  * A generic login bookmark is only a hint for an unbound browser. A real
  * enrollment grant still takes precedence so a person can enroll another site.

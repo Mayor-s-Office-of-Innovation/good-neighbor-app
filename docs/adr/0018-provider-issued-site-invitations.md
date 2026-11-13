@@ -4,6 +4,8 @@
 
 Accepted (2026-10-24). Extends ADRs 0015, 0016, and 0017.
 
+Invitation single-use rules superseded by [ADR 0022](./0022-reusable-enrollment-invitations.md).
+
 ## Decision
 
 An active Provider Manager may invite either a Site Manager or a Site Team Member
