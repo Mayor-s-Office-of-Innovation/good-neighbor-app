@@ -32,7 +32,7 @@ describe("SF311 CreateSR client helpers", () => {
       }),
     ).toEqual({
       SourceAgency: "76",
-      SourceRequestID: "task-123-1147200",
+      SourceRequestID: "2073f9c5c6aa6114e7df",
       SourceOperator: "Good Neighbor App",
       ResponsibleAgency: "5",
       ResponsibleAgencyRequestID: "",
@@ -94,13 +94,28 @@ describe("SF311 CreateSR client helpers", () => {
     });
   });
 
-  it("keeps SourceRequestID within HUB's 50-character limit", () => {
+  it("keeps SourceRequestID to 20 hexadecimal characters", () => {
     expect(
       sourceRequestId({
         taskId: "task-with-a-very-long-generated-id-that-keeps-going",
         serviceCode: "1.1.4.7.20.0",
       }),
-    ).toHaveLength(50);
+    ).toMatch(/^[0-9a-f]{20}$/);
+  });
+
+  it("keeps retries stable and distinguishes full task, service and filing identities", () => {
+    const taskId = "12345678-1234-4234-8234-123456789abc";
+    const serviceCode = "1.1.4.7.20.0";
+    const reference = sourceRequestId({ taskId, serviceCode });
+    expect(sourceRequestId({ taskId, serviceCode })).toBe(reference);
+    const variants = [
+      { taskId: "12345678-1234-4234-8234-123456789abd", serviceCode },
+      { taskId, serviceCode: "1.1.4.7.30.0" },
+      { taskId: `u-${taskId}`, serviceCode },
+      // Preserve service-code boundaries, not just their concatenated digits.
+      { taskId, serviceCode: "1.1.4.7.2.0.0" },
+    ];
+    expect(new Set([reference, ...variants.map(sourceRequestId)]).size).toBe(5);
   });
 
   it("builds an UpdateSR close payload with HUB field names", () => {
