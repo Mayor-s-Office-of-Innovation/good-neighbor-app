@@ -43,6 +43,8 @@
     "support:evaluate": "node scripts/evaluate-support.mjs",
     "test:site-details": "node scripts/test-site-admin-propagation.mjs",
     "insights:data": "node scripts/insights-data.mjs",
+    "insights:load": "node scripts/insights-load.mjs",
+    "insights:bench": "node scripts/insights-bench.mjs",
     "local:reconcile-compliance": "node --env-file=../.env.local scripts/reconcile-local-compliance.mjs",
     "test:site-imports": "node --test scripts/test-site-import-managers.mjs"
   },

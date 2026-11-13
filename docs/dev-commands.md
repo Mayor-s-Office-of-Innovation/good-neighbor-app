@@ -475,7 +475,7 @@ and 9461 (set `INSIGHTS_DDB_PORT` / `INSIGHTS_S3_PORT` to move them), so the dev
 stack's data is untouched. It needs Java 17+ and the binaries that
 `npm run local:services -w backend` installs. Extracts land in
 `backend/.local/insights-data/projection/` (`site_days`, `issues`,
-`site_contacts`, `sites` as Parquet, plus `manifest.json`); `check.json` lists
+`site_contacts`, `sites`, `checks` as Parquet, plus `manifest.json`); `check.json` lists
 any total that differs, read back from the written Parquet. Each run replaces
 its output folder, so `--out` refuses a folder this command didn't write.
 `--keep` leaves the emulators running.
@@ -487,6 +487,48 @@ no response time. Each task carries a real Guidance rule and its response
 window, including "Call 911" rules with no window. The data spans both DST
 changes. Names are numbered, emails use `example.org` and phones use the
 `415-555-01xx` range kept for fiction.
+
+The local API serves the Insights reporting endpoints (`/admin/v1/reporting/*`
+and `/admin/v1/reports/*`) from that folder; set `INSIGHTS_PROJECTION_DIR` to
+read another. Export and report files go to the local MinIO bucket
+`gnp-local-insights-jobs` (or `INSIGHTS_JOBS_BUCKET`), and jobs run in the same
+process. To time every endpoint against the year and check that Overview, the
+Issues list and a CSV export agree:
+
+```sh
+npm run insights:load -w backend
+# options: -- --copies 21 (about 500 Sites) --rounds 20 --parallel 10
+```
+
+To time the read design picked for Insights (DuckDB querying the Parquet
+files per request) at larger sizes, with the cold time, warm time and peak
+memory of each query in its own 2 GB Node process:
+
+```sh
+npm run insights:bench -w backend
+# options: -- --sites 500,1000 --years 1,2 --runs 30 --threads 1
+```
+
+Sizes are copies of the `insights:data` Sites and year, built once into
+`backend/.local/insights-bench/` and rebuilt when `insights:data` reruns.
+
+Options:
+
+- `--dir`: the `insights:data` output folder (default `backend/.local/insights-data`)
+- `--sites`: Site counts, comma-separated (default 500,1000)
+- `--years`: years of data, comma-separated (default 1,2)
+- `--runs`: warm runs per query after the first answer (default 30)
+- `--threads`: DuckDB threads (default 1; a 2 GB Lambda has about 1.2 vCPUs)
+- `--rebuild`: rebuild the sized files even if the input is unchanged
+- `--json`: also write every result to this file
+
+Columns:
+
+- `cold ms`: process start to the first answer, including imports, opening the files and the query
+- `peak RSS`: the process's peak resident memory, including DuckDB's native buffers
+- `peak heap`: the largest V8 heap in use, sampled after each answer
+- `warm p50` and `warm p95`: the median and 95th percentile time per answer over `--runs` answers in the same process
+- `files MB`: bytes on disk of the files the query reads
 
 ### Compliance letter email testing
 

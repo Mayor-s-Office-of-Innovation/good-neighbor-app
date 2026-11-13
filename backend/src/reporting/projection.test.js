@@ -167,6 +167,9 @@ describe("buildProjection over a lake written like an export", () => {
     expect(
       tables.issues.map((i) => [i.issueId, i.firstResponseAt, i.responseBasis]),
     ).toEqual([["t1", "2026-10-02T00:00:00.000Z", "timeline"]]);
+    expect(
+      tables.checks.map((c) => [c.checkId, c.state, c.day, c.issues]),
+    ).toEqual([["c1", "completed", "2026-10-01", 1]]);
   });
 
   it("times each Issue by the window its rule stored on the task", async () => {
@@ -477,6 +480,7 @@ describe("buildProjection over a lake written like an export", () => {
     writeFileSync(join(out, "stale.parquet"), "");
     await build();
     expect(readdirSync(out).sort()).toEqual([
+      "checks.parquet",
       "issues.parquet",
       "manifest.json",
       "site_contacts.parquet",
@@ -525,6 +529,7 @@ describe("buildProjection over a lake written like an export", () => {
       ["issues", "typeof(any_value(createdDay)), typeof(any_value(reopened))"],
       ["site_contacts", "typeof(any_value(basis)), 'n/a'"],
       ["sites", "typeof(any_value(hasLocation)), 'n/a'"],
+      ["checks", "typeof(any_value(day)), typeof(any_value(issues))"],
     ];
     const found = [];
     for (const [name, types] of probes) {
@@ -538,6 +543,7 @@ describe("buildProjection over a lake written like an export", () => {
       [0, "DATE", "BOOLEAN"],
       [0, "VARCHAR", "n/a"],
       [0, "BOOLEAN", "n/a"],
+      [0, "DATE", "INTEGER"],
     ]);
   });
 
@@ -559,6 +565,7 @@ describe("buildProjection over a lake written like an export", () => {
       "issues.parquet",
       "site_contacts.parquet",
       "sites.parquet",
+      "checks.parquet",
       "manifest.json",
     ]);
     const reader = await conn.runAndReadAll(

@@ -8,7 +8,15 @@ import {
   createPerson,
   updatePerson,
 } from "../src/handlers/admin-people.js";
-import { seedLocalSiteAdmin } from "./lib/site-admin-seed.mjs";
+import {
+  assertLocalSeedTarget,
+  seedLocalSiteAdmin,
+} from "./lib/site-admin-seed.mjs";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import { ddb } from "../src/db.js";
 import {
   getDuplicateLinks,
   separateDuplicate,
@@ -33,7 +41,11 @@ import {
 
 import { handler as supportHandler } from "../src/support/handler.js";
 import { createServer } from "node:http";
-import { ensureLocalInfra } from "./lib/ensure-infra.mjs";
+import { fileURLToPath } from "node:url";
+import {
+  LOCAL_INSIGHTS_JOBS_BUCKET,
+  ensureLocalInfra,
+} from "./lib/ensure-infra.mjs";
 import { resolveDeviceClaims } from "./lib/local-device-auth.mjs";
 import { buildProxyEvent } from "./lib/proxy-event.mjs";
 import {
@@ -241,10 +253,17 @@ import {
   runAnalyticsCatalogQuery,
   runAnalyticsQuery,
 } from "../src/handlers/admin-analytics.js";
+import { reportingRoutes } from "../src/handlers/admin-reporting.js";
 
 import { get311Media } from "../src/integrations/sf311-media.js";
 
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
+// Insights reads the synthetic year `npm run insights:data` writes, and keeps
+// its jobs in a local MinIO bucket that ensure-infra creates.
+process.env.INSIGHTS_PROJECTION_DIR ??= fileURLToPath(
+  new URL("../.local/insights-data/projection", import.meta.url),
+);
+process.env.INSIGHTS_JOBS_BUCKET ||= LOCAL_INSIGHTS_JOBS_BUCKET;
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
 // Stub-only requests (no Bearer token) always carry a site claim: the
 // principal fails closed when an authorizer is present without one.
@@ -678,6 +697,10 @@ const routes = [
     runAnalyticsCatalogQuery,
   ),
   route("POST", "/admin/v1/analytics/query", runAnalyticsQuery),
+  ...Object.entries(reportingRoutes).map(([key, handler]) => {
+    const [method, pattern] = key.split(" ");
+    return route(method, pattern, handler);
+  }),
 ];
 
 /**
@@ -833,9 +856,26 @@ const server = createServer(async (req, res) => {
   }
 });
 
+// Insights takes names from Manage's lists, so the synthetic ones must be there.
+async function seedInsightsNames() {
+  const file = join(
+    dirname(/** @type {string} */ (process.env.INSIGHTS_PROJECTION_DIR)),
+    "names.json",
+  );
+  if (!existsSync(file)) return;
+  assertLocalSeedTarget();
+  const items = JSON.parse(await readFile(file, "utf8"));
+  for (const Item of items)
+    await ddb.send(
+      new PutCommand({ TableName: process.env.DYNAMO_TABLE, Item }),
+    );
+  console.log(`[api] loaded ${items.length} Insights names from ${file}`);
+}
+
 async function main() {
   await ensureLocalInfra();
   if (process.env.LOCAL_SITE_ADMIN_SEED === "true") await seedLocalSiteAdmin();
+  await seedInsightsNames();
   server.listen(PORT, "127.0.0.1", () => {
     console.log(`[api] listening on http://localhost:${PORT}`);
     console.log(
