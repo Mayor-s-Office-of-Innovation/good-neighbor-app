@@ -1,4 +1,5 @@
-// Served by the analytics-query Lambda from one in-memory snapshot, so every number on a page agrees.
+// Served from one in-memory snapshot, so every number on a page agrees. The
+// analytics-query Lambda answers the routes; the insights-jobs Lambda runs the jobs.
 
 import { createHash } from "node:crypto";
 import { S3Client } from "@aws-sdk/client-s3";
@@ -43,12 +44,36 @@ import {
   dirSource,
   s3Source,
 } from "../reporting/api/snapshot.js";
+import { S3_TIMEOUTS } from "../reporting/contract.js";
 
 /** @typedef {import("aws-lambda").APIGatewayProxyEventV2} Event */
+
+// Counted from the base64 length, so a large body isn't decoded just to be refused.
+/**
+ * @param {string} body
+ * @param {boolean | undefined} base64
+ * @returns {number}
+ */
+function bodyBytes(body, base64) {
+  if (!base64) return Buffer.byteLength(body, "utf8");
+  const padding = body.endsWith("==") ? 2 : body.endsWith("=") ? 1 : 0;
+  return Math.floor((body.length * 3) / 4) - padding;
+}
 /** @typedef {import("../reporting/api/snapshot.js").Snapshot} Snapshot */
 
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,128}$/;
+// How long a request waits on a snapshot refresh before it answers from the old
+// one, well inside the gateway's 29 s.
+const LAMBDA_REFRESH_WAIT_MS = 3000;
+const FRESH_ONLY_REFRESH_WAIT_MS = 20_000;
+// A Lambda's first load answers 503 past this, leaving the report time inside 29 s.
+const LAMBDA_FIRST_LOAD_WAIT_MS = 20_000;
 const EXPORT_DATASETS = ["issues", "checks", "sites"];
+// The WAF skips these routes. Sized for LIMITS' most values at 200 characters,
+// each written as a 6-byte \u escape: 50 Sites and 6 groups of 50 for Trends.
+export const MAX_TRENDS_BODY_BYTES = 512 * 1024;
+// 2,000 Site IDs for a report.
+export const MAX_REPORT_BODY_BYTES = 2560 * 1024;
 // Params a request may carry; anything else is dropped before it's stored.
 const PERIOD_PARAMS = [
   "period",
@@ -200,10 +225,10 @@ export function createReportingHandlers({
 
   // One gate for every route, so none can skip the capability check.
   /**
-   * @param {Event} event
-   * @param {(ctx: { params: Record<string, unknown>, ownerKey: string }) => Promise<{ statusCode?: number, body: unknown }>} work
+   * @param {number} maxBodyBytes
+   * @returns {(event: Event, work: (ctx: { params: Record<string, unknown>, ownerKey: string }) => Promise<{ statusCode?: number, body: unknown }>) => Promise<import("aws-lambda").APIGatewayProxyResult>}
    */
-  const guarded = async (event, work) => {
+  const guardedUpTo = (maxBodyBytes) => async (event, work) => {
     const principal = adminPrincipal(event);
     if (!principal.capabilities.viewInsights)
       return jsonResponse(403, { error: "forbidden" });
@@ -218,6 +243,12 @@ export function createReportingHandlers({
       /** @type {Record<string, unknown>} */
       let params = { ...(event.queryStringParameters ?? {}) };
       if (event.body) {
+        // Decoded bytes, checked before JSON.parse, like the assessment route.
+        if (
+          Number.isFinite(maxBodyBytes) &&
+          bodyBytes(event.body, event.isBase64Encoded) > maxBodyBytes
+        )
+          throw requestError("request_too_large", 413);
         let body;
         try {
           body = readJsonBody(event);
@@ -235,8 +266,13 @@ export function createReportingHandlers({
       return jsonResponse(statusCode, body);
     } catch (err) {
       if (isRequestError(err)) {
-        // A 503 like snapshot_contract_mismatch is ours to fix, so log it.
-        if (err.statusCode >= 500)
+        // A missing latest.json would trip the error alarm before the first build, and
+        // the snapshot store logs an expired file once itself; any other 503 is ours to fix.
+        if (
+          err.statusCode >= 500 &&
+          !(/** @type {any} */ (err).missing) &&
+          !(/** @type {any} */ (err).expiredKey)
+        )
           logServerError("admin-reporting", err, {
             extra: { routeKey: /** @type {any} */ (event).routeKey },
           });
@@ -248,6 +284,9 @@ export function createReportingHandlers({
       return jsonResponse(502, { error: "reporting_failed" });
     }
   };
+  const guarded = guardedUpTo(Infinity);
+  const guardedTrends = guardedUpTo(MAX_TRENDS_BODY_BYTES);
+  const guardedReport = guardedUpTo(MAX_REPORT_BODY_BYTES);
 
   /**
    * @param {Event} event
@@ -358,7 +397,7 @@ export function createReportingHandlers({
 
     /** @param {Event} event */
     postTrends: (event) =>
-      guarded(event, async ({ params }) => {
+      guardedTrends(event, async ({ params }) => {
         const snap = await snapshots.current();
         const raw = /** @type {Record<string, any>} */ (params.scope ?? {});
         if (typeof raw !== "object" || Array.isArray(raw))
@@ -427,7 +466,7 @@ export function createReportingHandlers({
 
     /** @param {Event} event */
     postReport: (event) =>
-      guarded(event, async ({ params, ownerKey }) => {
+      guardedReport(event, async ({ params, ownerKey }) => {
         const queue = needJobs();
         const key = idempotencyKey(event);
         const stored = pick(params, ["siteIds", ...PERIOD_PARAMS]);
@@ -466,6 +505,30 @@ export function createReportingHandlers({
   };
 }
 
+/**
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {{ refreshMs?: number, refreshWaitMs: number, firstLoadWaitMs: number }}
+ */
+export function snapshotTimings(env) {
+  // The emulator E2E sets 0, so each spec sees the lake it has just set up.
+  const refreshMs = env.INSIGHTS_REFRESH_MS
+    ? Number(env.INSIGHTS_REFRESH_MS)
+    : NaN;
+  const freshOnly = Number.isFinite(refreshMs);
+  const lambda = Boolean(env.AWS_LAMBDA_FUNCTION_NAME);
+  return {
+    refreshMs: freshOnly ? refreshMs : undefined,
+    // 20 s outlasts a slow CI runner's reload but stops a hung one holding every request.
+    refreshWaitMs:
+      refreshMs === 0
+        ? FRESH_ONLY_REFRESH_WAIT_MS
+        : lambda || freshOnly
+          ? LAMBDA_REFRESH_WAIT_MS
+          : 0,
+    firstLoadWaitMs: lambda ? LAMBDA_FIRST_LOAD_WAIT_MS : 0,
+  };
+}
+
 /** @type {ReturnType<typeof createReportingHandlers> | null} */
 let fromEnv = null;
 
@@ -479,9 +542,10 @@ export function reportingHandlers(env = process.env) {
   const jobsReady =
     Boolean(env.INSIGHTS_JOBS_BUCKET) &&
     Boolean(env.INSIGHTS_JOBS_QUEUE_URL || !env.AWS_LAMBDA_FUNCTION_NAME);
-  const s3 = new S3Client(
-    env.AWS_ENDPOINT_URL_S3 ? { forcePathStyle: true } : {},
-  );
+  const s3 = new S3Client({
+    ...(env.AWS_ENDPOINT_URL_S3 ? { forcePathStyle: true } : {}),
+    requestHandler: S3_TIMEOUTS,
+  });
   const presignClient = env.S3_PUBLIC_PRESIGN_ENDPOINT
     ? new S3Client({
         endpoint: env.S3_PUBLIC_PRESIGN_ENDPOINT,
@@ -502,10 +566,22 @@ export function reportingHandlers(env = process.env) {
   handlers = createReportingHandlers({
     snapshots: createSnapshotStore({
       source,
+      ...snapshotTimings(env),
       onError: (err) =>
         logServerError("admin-reporting", /** @type {Error} */ (err), {
           extra: { step: "snapshot-refresh" },
         }),
+      // A load past refreshWaitMs may stall while Lambda is frozen, so dev logs show how close it runs.
+      onLoad: ({ snapshotId, ms }) =>
+        console.info(
+          JSON.stringify({
+            level: "INFO",
+            route: "admin-reporting",
+            step: "snapshot-load",
+            snapshotId,
+            ms,
+          }),
+        ),
     }),
     jobStore: jobsReady
       ? s3JobStore({

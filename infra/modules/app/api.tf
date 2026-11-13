@@ -1,6 +1,6 @@
 # API Gateway v2 HTTP API fronting the api Lambda. One integration for the app
 # routes — every key in api_routes targets it, and the Lambda dispatches on
-# event.routeKey — plus a second integration for the admin analytics routes,
+# event.routeKey — plus a second integration for the admin Insights routes,
 # which a dedicated DuckDB-carrying Lambda serves (analytics.tf), and a third
 # for the anonymous best-effort intakes (intake_routes → the intake Lambda,
 # lambda.tf), isolated so PostHog latency never consumes api concurrency, and
@@ -184,13 +184,23 @@ locals {
     "GET /v1/311-media",
   ]
 
-  # Admin analytics (ADR 0013): served by aws_lambda_function.analytics_query,
+  # Admin Insights (ADR 0013): served by aws_lambda_function.analytics_query,
   # never the app api function — DuckDB + a 2 GB footprint stay out of the
-  # operational path. Mirrors backend/src/lambda/analytics-query.js.
+  # operational path. analytics-query.test.js fails if this list and
+  # reportingRoutes in backend/src/handlers/admin-reporting.js differ.
   analytics_routes = [
-    "GET /admin/v1/analytics/queries",
-    "POST /admin/v1/analytics/queries/{queryId}",
-    "POST /admin/v1/analytics/query",
+    "GET /admin/v1/reporting/overview",
+    "GET /admin/v1/reporting/sites/{siteId}",
+    "GET /admin/v1/reporting/issues",
+    "GET /admin/v1/reporting/issues/{issueId}",
+    "GET /admin/v1/reporting/checks",
+    "GET /admin/v1/reporting/checks/{checkId}",
+    "GET /admin/v1/reporting/scope-options",
+    "POST /admin/v1/reporting/trends",
+    "POST /admin/v1/reporting/exports",
+    "POST /admin/v1/reports/insights",
+    "GET /admin/v1/reports/{jobId}",
+    "DELETE /admin/v1/reports/{jobId}",
   ]
 
   # Best-effort public intakes, served by the intake Lambda (lambda.tf) and
@@ -319,7 +329,7 @@ resource "aws_apigatewayv2_route" "routes" {
   }
 }
 
-# Admin analytics routes: always the admin JWT authorizer, always the
+# Admin Insights routes: always the admin JWT authorizer, always the
 # analytics-query integration. Kept as a separate resource so the app route
 # set above stays a plain list.
 resource "aws_apigatewayv2_route" "analytics" {

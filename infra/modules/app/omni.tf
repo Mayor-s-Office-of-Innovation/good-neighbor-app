@@ -41,6 +41,8 @@ locals {
       aws_cloudwatch_log_group.analytics_convert.arn,
       aws_cloudwatch_log_group.analytics_report.arn,
       aws_cloudwatch_log_group.analytics_query.arn,
+      aws_cloudwatch_log_group.analytics_projection.arn,
+      aws_cloudwatch_log_group.insights_jobs.arn,
     ],
     values(aws_cloudwatch_log_group.duplicates)[*].arn,
     aws_cloudwatch_log_group.cognito_email_sender[*].arn,

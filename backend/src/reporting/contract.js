@@ -1,5 +1,13 @@
 // Every table, CSV and report carries both versions, so old exports stay explainable.
 
+export const LATEST_PROJECTION_KEY = "projections/latest.json";
+
+// Every Insights S3 client uses these, so a hung request fails and the next try can run.
+export const S3_TIMEOUTS = Object.freeze({
+  connectionTimeout: 5_000,
+  socketTimeout: 30_000,
+});
+
 /** Bump when a projection table gains, loses or renames a column. */
 export const CONTRACT_VERSION = "insights-v4";
 

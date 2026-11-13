@@ -634,13 +634,15 @@ components from the original design are **retired**. See
 An incremental DynamoDB export to S3 runs every 6 hours. It needs point-in-time recovery,
 which is on. The export is converted to Parquet files split by entity, and DuckDB runs SQL
 over them for any set of sites or time grain. The pipeline lives in
-`infra/modules/app/analytics.tf`:
+`infra/modules/app/analytics.tf` and `infra/modules/app/insights.tf`:
 
 | Lambda | Trigger | Role |
 |---|---|---|
 | `analytics-export` | EventBridge `rate(6 hours)` | incremental export, starting from the `ANALYTICS#EXPORT` / `#WATERMARK` cursor, into the analytics lake bucket |
 | `analytics-convert` | export completion | rewrites the export as Parquet, split by entity |
-| `analytics-query` | Insights admin routes, behind the admin JWT authorizer, and the Insights job queue (both wired by a later infrastructure change) | runs DuckDB over the Parquet lake for Insights reads, CSV exports and PDF reports |
+| `analytics-projection` | each successful `analytics-convert` run | builds the Insights snapshot from the Parquet lake and publishes it under `projections/` |
+| `analytics-query` | Insights admin routes, behind the admin JWT authorizer | serves Insights reads and starts CSV exports and PDF reports from the snapshot |
+| `insights-jobs` | the Insights job queue | same bundle as `analytics-query`, with a longer timeout: builds CSV exports and PDF reports |
 | `analytics-report` | EventBridge `cron(0 14 * * ? *)`, 14:00 UTC (06:00 Pacific standard time, 07:00 Pacific daylight time) | builds the daily citywide report |
 
 ADR 0013 replaced the Glue and Athena tooling we first sketched. Athena could still be
@@ -653,11 +655,10 @@ needs. The 6-hour export is the design.
 All of it is Terraform. Nothing is set up by hand.
 
 - **Built:** DynamoDB Streams on the table (shared outbox/System Status mapping and a feature-gated duplicate mapping), the S3 analytics lake bucket
-  (KMS, lifecycle rules), the four Lambdas, and the two EventBridge schedules above.
+  (KMS, lifecycle rules), the six Lambdas, the two EventBridge schedules above, and the Insights job queue and jobs bucket.
 - **Not built:** the Tier-1 Streams aggregator and the `#STATS#` counter items. No
-  Firehose (see T2b above). The gateway routes, job queue and jobs bucket that let Insights read the lake
-  through `analytics-query` come with a later infrastructure change. System Status uses its
-  separate operational projections, not the lake or the proposed Tier-1 counters.
+  Firehose (see T2b above). System Status uses its separate operational projections,
+  not the lake or the proposed Tier-1 counters.
 
 Tier-1 buildout is post-MVP and tracked on the issue tracker.
 
@@ -990,9 +991,10 @@ resumes on the next export. The new version is recorded only once the full expor
 converted and no re-conversion failed; if the full export fails, or completes but
 `raw/` expires its files before they convert, a later run logs an error and starts
 another. Converters that run at once write the state file with `IfMatch` and merge
-each other's progress, so a recorded version never goes back. The backfill runs only when `ANALYTICS_BACKFILL_ENABLED=true`, which waits on
-the converter role being allowed to list `raw/`, read the state file, and start and
-describe table exports.
+each other's progress, so a recorded version never goes back. The backfill runs only
+when `ANALYTICS_BACKFILL_ENABLED=true`, which `analytics.tf` sets on the converter with
+the grants it needs: list the lake, read the state file, and start, describe and write
+table exports.
 Current ART keys and legacy ART keys
 with a place segment remain supported. Assessment/condition and device shapes are
 also matched explicitly; identifiers need not be UUIDs.

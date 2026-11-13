@@ -383,10 +383,11 @@ log the assessment text. `sizeRejected: false` means only that the size check pa
 not that evaluation succeeded.
 
 In Terraform (`infra/modules/app/main.tf`), only the Common Rule Set's
-`SizeRestrictions_BODY` action is changed to Count. A subsequent label rule restores
-its block except for exact `POST /v1/assessments:evaluate` and
-`POST /admin/v1/site-imports/preview` requests. The CSV handler enforces a decoded
-1 MiB file limit and 500 rows; JSON encoding adds transport bytes. Other managed
+`SizeRestrictions_BODY` and `SizeRestrictions_QUERYSTRING` actions are changed to Count.
+A label rule restores the body block except for exact `POST /v1/assessments:evaluate`,
+`POST /admin/v1/site-imports/preview` and Insights report and trends POSTs. Another
+restores the 2 KB query-string block except for Insights `GET /admin/v1/reporting/*`
+reads. The CSV handler enforces a decoded 1 MiB file limit and 500 rows; JSON encoding adds transport bytes. Other managed
 rules and rate limits remain active. CloudFront's WAF inspection window is 64 KiB:
 it covers the evaluation body and only the first 64 KiB of larger CSV import
 requests. Inspection above the default 16 KiB incurs additional WAF charges.
@@ -420,8 +421,9 @@ fields @timestamp, httpRequest.httpMethod, httpRequest.uri,
 ```
 
 For managed-rule blocks, expand `ruleGroupList` to find the inner terminating rule.
-For size blocks outside the two exempt POST routes, the top-level rule remains
-`BodySizeRestrictionsOutsideAssessmentEvaluation`. WAF's CloudFront request ID is
+For size blocks outside the exempt routes, the top-level rule is
+`BodySizeRestrictionsOutsideAssessmentEvaluation` for bodies and
+`QueryStringSizeRestrictionsOutsideInsightsReads` for query strings. WAF's CloudFront request ID is
 not the API Gateway request ID; correlate with time, route, and available identifiers.
 
 In the API Lambda log group (app region), measure assessment sizes:

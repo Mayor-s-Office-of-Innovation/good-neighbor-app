@@ -6,9 +6,10 @@ import { isRequestError, queryHash, requestError } from "./requests.js";
 
 export const JOB_LIMITS = Object.freeze({
   ttlMs: 24 * 3_600_000,
-  // Past the Lambda timeout a job has surely died; the queue's visibility timeout must be longer still.
-  stallMs: 2 * 60_000,
-  // Exports share the query Lambda's few slots, so a busy queue can be slow.
+  // Past the insights-jobs Lambda's 5 minutes a job has surely died; the queue's
+  // visibility timeout must be longer still. jobs.test.js reads both from insights.tf.
+  stallMs: 6 * 60_000,
+  // The insights-jobs Lambda runs two at a time, so a busy queue can be slow.
   queueWaitMs: 15 * 60_000,
   downloadSeconds: 300,
 });
@@ -29,6 +30,7 @@ export const JOB_LIMITS = Object.freeze({
  * @property {string} expiresAt
  * @property {number} attempts
  * @property {string | null} error
+ * @property {"queued" | "running" | null} [timedOutIn] the state a status poll timed it out from
  * @property {{ filename: string, contentType: string, rows: number, bytes: number } | null} result
  * @property {Record<string, any> | null} dataQuality
  */
@@ -114,7 +116,7 @@ export function memoryJobStore() {
 /**
  * @param {{
  *   store: JobStore,
- *   snapshots: { current: () => Promise<import("./snapshot.js").Snapshot>, byPrefix: (prefix: string) => Promise<import("./snapshot.js").Snapshot> },
+ *   snapshots: { current: () => Promise<import("./snapshot.js").Snapshot>, byPrefix: (prefix: string, snapshotId: string) => Promise<import("./snapshot.js").Snapshot> },
  *   render: (kind: JobRecord["kind"], params: Record<string, any>, snap: import("./snapshot.js").Snapshot) => Promise<JobOutput>,
  *   starter: (ref: { ownerKey: string, jobId: string }) => Promise<void>,
  *   now?: () => number,
@@ -235,7 +237,13 @@ export function createJobs({
       throw requestError("job_expired", 410);
     return update(ownerKey, read, (r) =>
       isStalled(r)
-        ? { ...r, state: "failed", error: "job_timed_out", updatedAt: iso() }
+        ? {
+            ...r,
+            state: "failed",
+            error: "job_timed_out",
+            timedOutIn: /** @type {"queued" | "running"} */ (r.state),
+            updatedAt: iso(),
+          }
         : null,
     );
   };
@@ -276,6 +284,7 @@ export function createJobs({
         params: retryParams,
         state: /** @type {JobState} */ ("queued"),
         error: null,
+        timedOutIn: null,
         attempts: existing.attempts + 1,
         snapshotId: fresh.snapshotId,
         snapshotPrefix: fresh.prefix,
@@ -338,8 +347,18 @@ export function createJobs({
         await load(ownerKey, jobId),
         (r) => {
           if (r.state === "succeeded") throw requestError("job_finished", 409);
-          if (r.state === "failed" || r.state === "cancelled") return null;
-          return { ...r, state: "cancelled", updatedAt: iso() };
+          // One that timed out is rerun on redelivery, so the cancel must stick.
+          const rerunnable = Boolean(r.timedOutIn);
+          if ((r.state === "failed" && !rerunnable) || r.state === "cancelled")
+            return null;
+          // Cleared so the page shows a cancel, not the timeout it replaced.
+          return {
+            ...r,
+            state: "cancelled",
+            error: null,
+            timedOutIn: null,
+            updatedAt: iso(),
+          };
         },
       );
       return view(ownerKey, record);
@@ -349,10 +368,20 @@ export function createJobs({
     async run({ ownerKey, jobId }) {
       const read = await store.read(ownerKey, jobId);
       if (!read) return;
-      // SQS delivers at least once; a live run or a cancel ends it here.
+      // SQS delivers at least once; a live run or a cancel ends it here. A timeout
+      // means the last delivery died or is late; rerun it so a job that always dies
+      // reaches the DLQ, and a late one still makes its file.
       const claim = await update(ownerKey, read, (r) =>
-        r.state === "queued" || (r.state === "running" && isStalled(r))
-          ? { ...r, state: "running", updatedAt: iso() }
+        r.state === "queued" ||
+        (r.state === "running" && isStalled(r)) ||
+        (r.state === "failed" && Boolean(r.timedOutIn))
+          ? {
+              ...r,
+              state: "running",
+              error: null,
+              timedOutIn: null,
+              updatedAt: iso(),
+            }
           : null,
       );
       if (!claim.changed) return;
@@ -360,7 +389,10 @@ export function createJobs({
       /** @type {VersionedJob} */
       let latest = claim;
       try {
-        const snap = await snapshots.byPrefix(record.snapshotPrefix);
+        const snap = await snapshots.byPrefix(
+          record.snapshotPrefix,
+          record.snapshotId,
+        );
         const out = await render(record.kind, record.params, snap);
         await store.putResult(ownerKey, jobId, out.body, out.contentType);
         latest = await update(ownerKey, claim, (r) =>

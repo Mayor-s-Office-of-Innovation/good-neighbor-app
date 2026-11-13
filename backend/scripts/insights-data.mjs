@@ -21,15 +21,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { connect } from "node:net";
 import { existsSync } from "node:fs";
-import {
-  mkdir,
-  mkdtemp,
-  open,
-  readdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, open, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -118,6 +110,9 @@ const { compareWithAnswers } = await import(
 );
 const { createLocalViews } = await import("../src/reporting/local-lake.js");
 const { buildProjection } = await import("../src/reporting/projection.js");
+const { publishProjection, snapshotIdFor } = await import(
+  "../src/reporting/publish-projection.js"
+);
 
 /** @type {import("node:child_process").ChildProcess[]} */
 const children = [];
@@ -482,7 +477,7 @@ try {
   );
   const conn = await (await DuckDBInstance.create(":memory:")).connect();
   await createLocalViews(conn, lakeDir);
-  const snapshotId = generated.evaluatedAt.replace(/[:.]/g, "-");
+  const snapshotId = snapshotIdFor(generated.evaluatedAt);
   const projectionDir = join(outDir, "projection");
   const { manifest, written } = await step(
     "built the Insights projection",
@@ -492,23 +487,13 @@ try {
         snapshotId,
       }),
   );
-  // Same layout the build job will use in the lake bucket; latest.json goes last.
-  const prefix = `projections/${manifest.contractVersion}/${snapshotId}`;
-  for (const name of written)
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: BUCKET,
-        Key: `${prefix}/${name}`,
-        Body: await readFile(join(projectionDir, name)),
-      }),
-    );
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: "projections/latest.json",
-      Body: JSON.stringify({ prefix, snapshotId }),
-    }),
-  );
+  await publishProjection({
+    s3,
+    bucket: BUCKET,
+    dir: projectionDir,
+    manifest,
+    written,
+  });
   // Check the written files, not the in-memory rows, so a Parquet bug shows.
   /** @type {Record<string, Record<string, any>[]>} */
   const extracts = {};

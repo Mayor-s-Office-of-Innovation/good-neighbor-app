@@ -1,0 +1,135 @@
+name: Plan dev
+
+# Shows what a deploy of a branch would change in dev; deploy.yml applies in the same job.
+# Needs the `dev-plan` Environment with required reviewers, as infra/README.md describes.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # By branch, so a plan for one branch can't cancel another's.
+  group: plan-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # No id-token here: a package script could otherwise mint its own OIDC token
+  # and assume the plan role, whatever step the credentials come in at.
+  build:
+    name: Build Lambda bundles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Rewrite git protocol for npm git deps
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # data.archive_file hashes these folders, so the plan shows which Lambdas change.
+      - name: Build Lambda bundles
+        run: npm run build:lambdas -w @good-neighbor/backend
+
+      # A tarball keeps file modes, which the bundle hashes depend on.
+      - name: Pack Lambda bundles
+        run: tar -czf lambda-dist.tgz backend/dist
+
+      - name: Upload Lambda bundles
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lambda-dist
+          path: lambda-dist.tgz
+          retention-days: 1
+          if-no-files-found: error
+
+  terraform-plan:
+    name: Terraform plan (dev)
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev-plan
+    # Only this job gets a token. A branch can still edit this file or its Terraform to
+    # run code here, so a maintainer approving each run on dev-plan is the gate.
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: infra/environments/dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate plan configuration
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          if [ -z "$EXPECTED_ACCOUNT_ID" ]; then
+            echo "AWS_ACCOUNT_ID is not configured for this GitHub Environment" >&2
+            exit 1
+          fi
+
+      # npm code shaped this artifact, so it lands outside the checkout, and the
+      # script copies in only regular files under backend/dist.
+      - name: Download Lambda bundles
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lambda-dist
+          path: ${{ runner.temp }}/lambda-dist
+
+      - name: Unpack Lambda bundles
+        run: bash "$GITHUB_WORKSPACE/infra/scripts/unpack-lambda-dist.sh" "$RUNNER_TEMP/lambda-dist/lambda-dist.tgz" "$GITHUB_WORKSPACE"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
+
+      # run-filtered.sh keeps Terraform's text off this public log, since errors can quote state; infra/README.md lists what prints.
+      # One attempt: a maintainer starts each run, so a network blip costs a re-run, not a guess at which errors to retry.
+      - name: Init
+        run: bash "$GITHUB_WORKSPACE/infra/scripts/run-filtered.sh" "$RUNNER_TEMP/init.log" terraform init -input=false -json
+
+      # No lock: it would fail a deploy that starts meanwhile, and the role can't write it.
+      - name: Plan
+        run: bash "$GITHUB_WORKSPACE/infra/scripts/run-filtered.sh" "$RUNNER_TEMP/plan.log" terraform plan -input=false -lock=false -out=tfplan -json
+
+      # This repo is public, so the summary names changed attributes but never their values.
+      - name: Summarize plan
+        run: |
+          set -euo pipefail
+          failed_line='Could not summarize the plan; its errors are kept off this public log.'
+          {
+            echo '## Terraform plan (dev)'
+            echo
+            echo "Ref: \`$GITHUB_REF_NAME\`. Only actions, addresses and the names of changed attributes are shown, because this repo is public."
+            echo
+            echo '```text'
+            # terraform show and jq errors can quote plan values, so they go to files.
+            if ! terraform show -json tfplan 2> "$RUNNER_TEMP/show.err" \
+              | jq -r -f "$GITHUB_WORKSPACE/infra/scripts/plan-summary.jq" 2> "$RUNNER_TEMP/summary.err"; then
+              echo "$failed_line"
+              summary_failed=1
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${summary_failed:-}" ]; then
+            echo "$failed_line" >&2
+            exit 1
+          fi

@@ -14,7 +14,7 @@ import {
 } from "./lib/site-admin-seed.mjs";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../src/db.js";
 import {
@@ -41,10 +41,10 @@ import {
 
 import { handler as supportHandler } from "../src/support/handler.js";
 import { createServer } from "node:http";
-import { fileURLToPath } from "node:url";
 import {
-  LOCAL_INSIGHTS_JOBS_BUCKET,
+  applyLocalInsightsEnv,
   ensureLocalInfra,
+  insightsSeedDir,
 } from "./lib/ensure-infra.mjs";
 import { resolveDeviceClaims } from "./lib/local-device-auth.mjs";
 import { buildProxyEvent } from "./lib/proxy-event.mjs";
@@ -255,12 +255,7 @@ import { reportingRoutes } from "../src/handlers/admin-reporting.js";
 import { get311Media } from "../src/integrations/sf311-media.js";
 
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
-// Insights reads the synthetic year `npm run insights:data` writes, and keeps
-// its jobs in a local MinIO bucket that ensure-infra creates.
-process.env.INSIGHTS_PROJECTION_DIR ??= fileURLToPath(
-  new URL("../.local/insights-data/projection", import.meta.url),
-);
-process.env.INSIGHTS_JOBS_BUCKET ||= LOCAL_INSIGHTS_JOBS_BUCKET;
+applyLocalInsightsEnv();
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
 // Stub-only requests (no Bearer token) always carry a site claim: the
 // principal fails closed when an authorizer is present without one.
@@ -848,11 +843,9 @@ const server = createServer(async (req, res) => {
 });
 
 // Insights takes names from Manage's lists, so the synthetic ones must be there.
-async function seedInsightsNames() {
-  const file = join(
-    dirname(/** @type {string} */ (process.env.INSIGHTS_PROJECTION_DIR)),
-    "names.json",
-  );
+/** @param {string} seedDir */
+async function seedInsightsNames(seedDir) {
+  const file = join(seedDir, "names.json");
   if (!existsSync(file)) return;
   assertLocalSeedTarget();
   const items = JSON.parse(await readFile(file, "utf8"));
@@ -866,14 +859,12 @@ async function seedInsightsNames() {
 async function main() {
   await ensureLocalInfra();
   if (process.env.LOCAL_SITE_ADMIN_SEED === "true") await seedLocalSiteAdmin();
-  await seedInsightsNames();
-  // The record panels read photos and notes from the table, not the snapshot.
-  await seedInsightsRecords(
-    join(
-      dirname(/** @type {string} */ (process.env.INSIGHTS_PROJECTION_DIR)),
-      "records.jsonl",
-    ),
-  );
+  const seedDir = insightsSeedDir(process.env);
+  if (seedDir) {
+    await seedInsightsNames(seedDir);
+    // The record panels read photos and notes from the table, not the snapshot.
+    await seedInsightsRecords(join(seedDir, "records.jsonl"));
+  }
   server.listen(PORT, "127.0.0.1", () => {
     console.log(`[api] listening on http://localhost:${PORT}`);
     console.log(

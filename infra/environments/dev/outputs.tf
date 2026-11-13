@@ -100,3 +100,8 @@ output "cloudwatch_omni_sign_in_url" {
   description = "CloudWatch Omni sign-in URL for dev; null until enabled."
   value       = module.app.cloudwatch_omni_sign_in_url
 }
+
+output "terraform_plan_role_arn" {
+  description = "Read-only role for plan-dev.yml; set it as AWS_PLAN_ROLE_ARN in the dev-plan GitHub Environment."
+  value       = module.app.terraform_plan_role_arn
+}

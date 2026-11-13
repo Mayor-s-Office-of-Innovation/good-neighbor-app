@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { JOB_LIMITS, createJobs, memoryJobStore } from "./jobs.js";
 import { requestError } from "./requests.js";
@@ -17,11 +18,12 @@ function setup(opts = {}) {
     snapshotId: "snap1",
     manifest: { evaluatedAt: "2026-11-04T19:00:00.000Z" },
   };
+  const byPrefix = vi.fn(async () => /** @type {any} */ (snapshot));
   const jobs = createJobs({
     store,
     snapshots: {
       current: opts.current ?? (async () => /** @type {any} */ (snapshot)),
-      byPrefix: async () => /** @type {any} */ (snapshot),
+      byPrefix,
     },
     render:
       opts.render ??
@@ -46,7 +48,7 @@ function setup(opts = {}) {
     kind: /** @type {const} */ ("export"),
     params: { dataset: "issues" },
   };
-  return { clock, store, jobs, started, request };
+  return { clock, store, jobs, started, request, byPrefix };
 }
 
 describe("createJobs", () => {
@@ -109,7 +111,7 @@ describe("createJobs", () => {
   });
 
   it("runs a job to a file the requester gets a short-lived link to", async () => {
-    const { jobs, request } = setup();
+    const { jobs, request, byPrefix } = setup();
     const { job } = await jobs.create("owner1", {
       ...request,
       idempotencyKey: "k1",
@@ -122,6 +124,8 @@ describe("createJobs", () => {
     });
     expect(done.downloadUrl).toMatch(/^memory:\/\//);
     expect(done.downloadSeconds).toBe(JOB_LIMITS.downloadSeconds);
+    // With the ID, so a rebuilt folder at the same path isn't mistaken for it.
+    expect(byPrefix).toHaveBeenCalledWith("p1", "snap1");
   });
 
   it("marks a job failed with a reason, and offers no file", async () => {
@@ -379,6 +383,125 @@ describe("createJobs", () => {
     clock.now = T0 + JOB_LIMITS.stallMs + 1;
     await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
     expect((await jobs.get("owner1", job.jobId)).state).toBe("succeeded");
+  });
+
+  it("reruns a job a status poll timed out, so a job that always dies still reaches the DLQ", async () => {
+    const { jobs, store, clock, request } = setup();
+    const { job } = await jobs.create("owner1", {
+      ...request,
+      idempotencyKey: "k1",
+    });
+    const record = /** @type {any} */ (await store.get("owner1", job.jobId));
+    await store.put("owner1", job.jobId, { ...record, state: "running" });
+    clock.now = T0 + JOB_LIMITS.stallMs + 1;
+    await jobs.get("owner1", job.jobId);
+    await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
+    expect(await jobs.get("owner1", job.jobId)).toMatchObject({
+      state: "succeeded",
+      error: null,
+    });
+  });
+
+  it("reruns a job that timed out in the queue when its failed first delivery comes back", async () => {
+    const { jobs, store, clock, request } = setup();
+    const { job } = await jobs.create("owner1", {
+      ...request,
+      idempotencyKey: "k1",
+    });
+    const put = store.put;
+    store.put = async () => {
+      throw new Error("S3 is down");
+    };
+    await expect(
+      jobs.run({ ownerKey: "owner1", jobId: job.jobId }),
+    ).rejects.toThrow("S3 is down");
+    store.put = put;
+    clock.now = T0 + JOB_LIMITS.queueWaitMs + 1;
+    expect((await jobs.get("owner1", job.jobId)).error).toBe("job_timed_out");
+    await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
+    expect(await jobs.get("owner1", job.jobId)).toMatchObject({
+      state: "succeeded",
+      error: null,
+    });
+  });
+
+  it("keeps a job cancelled after it timed out in the queue", async () => {
+    let renders = 0;
+    const { jobs, clock, request } = setup({
+      render: async () => {
+        renders += 1;
+        return { body: "x", contentType: "text/csv", filename: "f", rows: 1 };
+      },
+    });
+    const { job } = await jobs.create("owner1", {
+      ...request,
+      idempotencyKey: "k1",
+    });
+    clock.now = T0 + JOB_LIMITS.queueWaitMs + 1;
+    expect(await jobs.cancel("owner1", job.jobId)).toMatchObject({
+      state: "cancelled",
+      error: null,
+    });
+    await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
+    expect(renders).toBe(0);
+  });
+
+  it("keeps a timed-out run cancelled, so its redelivery doesn't rerun it", async () => {
+    let renders = 0;
+    const { jobs, store, clock, request } = setup({
+      render: async () => {
+        renders += 1;
+        return { body: "x", contentType: "text/csv", filename: "f", rows: 1 };
+      },
+    });
+    const { job } = await jobs.create("owner1", {
+      ...request,
+      idempotencyKey: "k1",
+    });
+    const record = /** @type {any} */ (await store.get("owner1", job.jobId));
+    await store.put("owner1", job.jobId, { ...record, state: "running" });
+    clock.now = T0 + JOB_LIMITS.stallMs + 1;
+    expect(await jobs.cancel("owner1", job.jobId)).toMatchObject({
+      state: "cancelled",
+      error: null,
+    });
+    await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
+    expect(renders).toBe(0);
+    expect((await jobs.get("owner1", job.jobId)).state).toBe("cancelled");
+  });
+
+  it("doesn't rerun a job that failed with its own error", async () => {
+    let renders = 0;
+    const { jobs, request } = setup({
+      render: async () => {
+        renders += 1;
+        throw new Error("render broke");
+      },
+    });
+    const { job } = await jobs.create("owner1", {
+      ...request,
+      idempotencyKey: "k1",
+    });
+    await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
+    await jobs.run({ ownerKey: "owner1", jobId: job.jobId });
+    expect(renders).toBe(1);
+  });
+
+  it("gives up on a run only after the jobs Lambda's timeout, and before SQS redelivers it", () => {
+    const terraform = readFileSync(
+      new URL("../../../../infra/modules/app/insights.tf", import.meta.url),
+      "utf8",
+    );
+    const seconds = (/** @type {RegExp} */ pattern) =>
+      Number(pattern.exec(terraform)?.[1]) * 1000;
+    const lambda = seconds(
+      /"aws_lambda_function" "insights_jobs"[\s\S]*?\n {2}timeout\s*=\s*(\d+)/,
+    );
+    const visibility = seconds(
+      /"aws_sqs_queue" "insights_jobs" \{[\s\S]*?\n {2}visibility_timeout_seconds\s*=\s*(\d+)/,
+    );
+    expect(lambda).toBeLessThan(JOB_LIMITS.stallMs);
+    expect(JOB_LIMITS.stallMs).toBeLessThan(visibility);
   });
 
   it("keeps a job cancelled when its build then fails", async () => {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
@@ -14,10 +14,16 @@ const { ddbSend, logServerError } = vi.hoisted(() => ({
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../lib/log-server-error.js", () => ({ logServerError }));
 
-const { createReportingHandlers } = await import("./admin-reporting.js");
+const {
+  MAX_REPORT_BODY_BYTES,
+  MAX_TRENDS_BODY_BYTES,
+  createReportingHandlers,
+} = await import("./admin-reporting.js");
 const { createSnapshotStore } = await import("../reporting/api/snapshot.js");
 const { memoryJobStore } = await import("../reporting/api/jobs.js");
-const { LIMITS } = await import("../reporting/api/requests.js");
+const { LIMITS, SITE_DIMENSIONS, requestError } = await import(
+  "../reporting/api/requests.js"
+);
 
 const { syntheticProjection, writeSyntheticProjection } = await import(
   "../reporting/api/test-projection.js"
@@ -50,6 +56,10 @@ function event({
 
 /** @param {any} res */
 const json = (res) => JSON.parse(res.body);
+
+// The widest a client can write a character: a \u20ac escape is 6 bytes.
+/** @param {unknown} body */
+const escapedJson = (body) => JSON.stringify(body).replaceAll("€", "\\u20ac");
 
 /** @param {{ source?: any, maxExportRows?: number, jobStore?: any }} [opts] */
 function setup(opts = {}) {
@@ -161,7 +171,7 @@ describe("reads", () => {
     expect([res.statusCode, json(res).error]).toEqual([400, "invalid_period"]);
   });
 
-  it("answers 503 with no snapshot, so the page shows unavailable, not zero", async () => {
+  it("answers 503 with no snapshot, so the page shows unavailable, not zero, and logs nothing per request", async () => {
     const { h } = setup({
       source: { latest: async () => null, load: async () => ({}) },
     });
@@ -170,7 +180,63 @@ describe("reads", () => {
       503,
       "snapshot_unavailable",
     ]);
-    // Ours to fix, so it reaches the logs, not only the page.
+    // Every page load before the first build would otherwise trip the error alarm.
+    expect(logServerError).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 without a log line per request when a snapshot file has expired", async () => {
+    const { h } = setup({
+      source: {
+        latest: async () => ({ prefix: "p1", snapshotId: "snap1" }),
+        load: async () => {
+          throw Object.assign(requestError("snapshot_unavailable", 503), {
+            expiredKey: "p1/issues.parquet",
+          });
+        },
+      },
+    });
+    const res = await h.getOverview(event());
+    expect([res.statusCode, json(res).error]).toEqual([
+      503,
+      "snapshot_unavailable",
+    ]);
+    expect(logServerError).not.toHaveBeenCalled();
+  });
+
+  it("logs a snapshot that is unavailable for any reason but a missing latest.json", async () => {
+    const { h } = setup({
+      source: {
+        latest: async () => ({ prefix: "p1", snapshotId: "snap1" }),
+        load: async () => {
+          throw requestError("snapshot_unavailable", 503);
+        },
+      },
+    });
+    const res = await h.getOverview(event());
+    expect([res.statusCode, json(res).error]).toEqual([
+      503,
+      "snapshot_unavailable",
+    ]);
+    expect(logServerError).toHaveBeenCalledOnce();
+  });
+
+  it("logs a 503 that is ours to fix, such as a snapshot of another contract", async () => {
+    const { projection } = setup();
+    const { h } = setup({
+      source: {
+        latest: async () => ({ prefix: "p1", snapshotId: "snap1" }),
+        load: async (/** @type {string} */ prefix) => ({
+          prefix,
+          manifest: { ...projection.manifest, contractVersion: "old" },
+          tables: projection.tables,
+        }),
+      },
+    });
+    const res = await h.getOverview(event());
+    expect([res.statusCode, json(res).error]).toEqual([
+      503,
+      "snapshot_contract_mismatch",
+    ]);
     expect(logServerError).toHaveBeenCalledOnce();
   });
 
@@ -281,6 +347,77 @@ describe("reads", () => {
     expect(json(res).error).toBe("invalid_group");
   });
 
+  it("refuses a Trends body over its byte limit before parsing it, since the WAF lets it through", async () => {
+    const { h } = setup();
+    const res = await h.postTrends({
+      ...event(),
+      body: `{${" ".repeat(MAX_TRENDS_BODY_BYTES)}`,
+    });
+    expect([res.statusCode, json(res).error]).toEqual([
+      413,
+      "request_too_large",
+    ]);
+    expect(logServerError).not.toHaveBeenCalled();
+  });
+
+  it("measures a base64 Trends body once decoded, as the assessment route does", async () => {
+    const { h } = setup();
+    const res = await h.postTrends({
+      ...event(),
+      isBase64Encoded: true,
+      body: Buffer.from("{}".padEnd(MAX_TRENDS_BODY_BYTES + 1, " ")).toString(
+        "base64",
+      ),
+    });
+    expect(res.statusCode).toBe(413);
+  });
+
+  it.each([
+    [MAX_TRENDS_BODY_BYTES - 1, 200],
+    [MAX_TRENDS_BODY_BYTES, 200],
+    [MAX_TRENDS_BODY_BYTES + 1, 413],
+  ])(
+    "counts a base64 body of %i bytes exactly, whatever its padding",
+    async (bytes, status) => {
+      const { h } = setup();
+      const res = await h.postTrends({
+        ...event(),
+        isBase64Encoded: true,
+        body: Buffer.from(
+          '{"period":"month","month":"2026-10"}'.padEnd(bytes, " "),
+        ).toString("base64"),
+      });
+      expect(res.statusCode).toBe(status);
+    },
+  );
+
+  it("takes the largest Trends body LIMITS allow, in six-byte JSON escapes", async () => {
+    const { h } = setup();
+    const value = (/** @type {number} */ i) =>
+      `${i}`.padEnd(LIMITS.maxFilterLength, "€");
+    const values = Array.from({ length: LIMITS.maxGroupValues }, (_, i) =>
+      value(i),
+    );
+    const body = {
+      period: "custom",
+      from: "2026-10-01",
+      to: "2026-10-31",
+      breakdown: "providerId",
+      scope: {
+        siteIds: Array.from({ length: LIMITS.maxTrendSites }, (_, i) =>
+          value(i),
+        ),
+        groups: Object.fromEntries(SITE_DIMENSIONS.map((dim) => [dim, values])),
+      },
+    };
+    const res = await h.postTrends({
+      ...event(),
+      body: escapedJson(body),
+    });
+    // Past the byte limit and JSON.parse, to the check that the Sites exist.
+    expect(json(res).error).toBe("unknown_site");
+  });
+
   it("refuses a body that isn't JSON", async () => {
     const { h } = setup();
     const res = await h.postTrends({ ...event(), body: "{" });
@@ -337,6 +474,34 @@ describe("reads", () => {
     expect([res.statusCode, json(res).error]).toEqual([400, code]);
   });
 });
+
+/**
+ * reportingHandlers over a fresh projection folder, as the local API runs it.
+ * @param {NodeJS.ProcessEnv} env
+ */
+async function handlersOverFolder(env) {
+  const dir = mkdtempSync(join(tmpdir(), "insights-wiring-"));
+  const conn = await (await DuckDBInstance.create(":memory:")).connect();
+  await writeSyntheticProjection(conn, dir);
+  conn.closeSync();
+  vi.resetModules();
+  const fresh = await import("./admin-reporting.js");
+  const h = fresh.reportingHandlers({ INSIGHTS_PROJECTION_DIR: dir, ...env });
+  const manifestPath = join(dir, "manifest.json");
+  return {
+    snapshotId: async () => json(await h.getOverview(event())).meta.snapshotId,
+    // `npm run insights:data` rebuilds in place: same folder, new snapshot ID.
+    rebuild: () =>
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({
+          ...JSON.parse(readFileSync(manifestPath, "utf8")),
+          snapshotId: "snap2",
+        }),
+      ),
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
 
 describe("export and report jobs", () => {
   const key = { "idempotency-key": "click-0001" };
@@ -505,6 +670,31 @@ describe("export and report jobs", () => {
     ]);
   });
 
+  it("refuses a report body over its byte limit before parsing it, since the WAF lets it through", async () => {
+    const { h } = setup();
+    const res = await h.postReport({
+      ...event({ headers: key }),
+      body: `{${" ".repeat(MAX_REPORT_BODY_BYTES)}`,
+    });
+    expect([res.statusCode, json(res).error]).toEqual([
+      413,
+      "request_too_large",
+    ]);
+  });
+
+  it("takes the largest report body LIMITS allow, in six-byte JSON escapes", async () => {
+    const { h } = setup();
+    const siteIds = Array.from({ length: LIMITS.maxReportSites }, (_, i) =>
+      `${i}`.padEnd(LIMITS.maxFilterLength, "€"),
+    );
+    const res = await h.postReport({
+      ...event({ headers: key }),
+      body: escapedJson({ siteIds, period: "quarter", year: 2026, quarter: 4 }),
+    });
+    // Past the byte limit and JSON.parse, to the check that the Sites exist.
+    expect(json(res).error).toBe("unknown_site");
+  });
+
   it("refuses a report for a Site the snapshot doesn't have", async () => {
     const { h } = setup();
     const res = await h.postReport(
@@ -616,6 +806,158 @@ describe("export and report jobs", () => {
     expect(json(res).error).toBe(
       on ? "idempotency_key_required" : "jobs_unavailable",
     );
+  });
+
+  it.each([
+    ["queues a job when a queue is set", "https://sqs.example.org/q", 1],
+    ["runs a job in-process with no queue", undefined, 0],
+  ])("%s", async (_, queueUrl, messages) => {
+    vi.resetModules();
+    const { SQSClient } = await import("@aws-sdk/client-sqs");
+    const { S3Client } = await import("@aws-sdk/client-s3");
+    const sent = vi.spyOn(SQSClient.prototype, "send");
+    sent.mockImplementation(async () => ({}));
+    const objects = new Map();
+    vi.spyOn(S3Client.prototype, "send").mockImplementation(async (command) => {
+      const { Key, Body } = /** @type {any} */ (command).input;
+      if (Body !== undefined) return objects.set(Key, Body);
+      if (objects.has(Key))
+        return { Body: { transformToString: async () => objects.get(Key) } };
+      throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+    });
+    const dir = mkdtempSync(join(tmpdir(), "insights-handler-"));
+    const conn = await (await DuckDBInstance.create(":memory:")).connect();
+    try {
+      await writeSyntheticProjection(conn, dir);
+      const fresh = await import("./admin-reporting.js");
+      const h = fresh.reportingHandlers({
+        INSIGHTS_PROJECTION_DIR: dir,
+        INSIGHTS_JOBS_BUCKET: "j",
+        INSIGHTS_JOBS_QUEUE_URL: queueUrl,
+      });
+      const res = await h.postExport(
+        event({ headers: key, body: { dataset: "issues" } }),
+      );
+      expect(res.statusCode).toBe(202);
+      expect(sent).toHaveBeenCalledTimes(messages);
+      if (messages)
+        expect(
+          JSON.parse(
+            /** @type {any} */ (sent.mock.calls[0][0]).input.MessageBody,
+          ).insightsJob.jobId,
+        ).toBe(json(res).job.jobId);
+      // The job runs after the reply, so it must finish before the S3 mock and folder go.
+      else
+        await vi.waitFor(() => {
+          const record = [...objects].find(([k]) =>
+            k.endsWith(`${json(res).job.jobId}.json`),
+          )?.[1];
+          expect(JSON.parse(String(record)).state).toBe("succeeded");
+        });
+    } finally {
+      vi.restoreAllMocks();
+      conn.closeSync();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      "shows a rebuilt projection on the next request with INSIGHTS_REFRESH_MS=0",
+      "0",
+      "snap2",
+    ],
+    [
+      "keeps serving the loaded projection between checks without it",
+      undefined,
+      "snap1",
+    ],
+    ["ignores an INSIGHTS_REFRESH_MS that isn't a number", "soon", "snap1"],
+  ])("%s", async (_, setting, expected) => {
+    const folder = await handlersOverFolder({ INSIGHTS_REFRESH_MS: setting });
+    try {
+      expect(await folder.snapshotId()).toBe("snap1");
+      folder.rebuild();
+      expect(await folder.snapshotId()).toBe(expected);
+    } finally {
+      folder.cleanup();
+    }
+  });
+
+  it.each([
+    [
+      "waits for a due refresh in a Lambda, which freezes after replying",
+      "analytics-query",
+      "snap2",
+    ],
+    [
+      "answers a due refresh at once locally, where the refresh carries on",
+      undefined,
+      "snap1",
+    ],
+  ])("%s", async (_, lambda, expected) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const folder = await handlersOverFolder({
+      AWS_LAMBDA_FUNCTION_NAME: lambda,
+    });
+    try {
+      expect(await folder.snapshotId()).toBe("snap1");
+      folder.rebuild();
+      // Past the store's 5-minute check interval.
+      vi.setSystemTime(Date.now() + 6 * 60_000);
+      expect(await folder.snapshotId()).toBe(expected);
+      // A refresh still loading when cleanup deletes the folder would log into a later test.
+      await vi.waitFor(
+        async () => expect(await folder.snapshotId()).toBe("snap2"),
+        { timeout: 10_000 },
+      );
+    } finally {
+      vi.useRealTimers();
+      folder.cleanup();
+    }
+  });
+
+  it("gives up on a hung S3 request, so a frozen refresh can't stall the snapshot", async () => {
+    vi.resetModules();
+    const { S3Client } = await import("@aws-sdk/client-s3");
+    /** @type {any[]} */
+    const clients = [];
+    vi.spyOn(S3Client.prototype, "send").mockImplementation(
+      /** @this {any} */
+      async function () {
+        clients.push(this);
+        throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+      },
+    );
+    try {
+      const fresh = await import("./admin-reporting.js");
+      const h = fresh.reportingHandlers({ LAKE_BUCKET: "lake" });
+      await h.getOverview(event());
+      const config = await clients[0].config.requestHandler.configProvider;
+      const { S3_TIMEOUTS } = await import("../reporting/contract.js");
+      expect(config).toMatchObject(S3_TIMEOUTS);
+      expect(S3_TIMEOUTS.socketTimeout).toBeGreaterThan(0);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it.each([
+    [
+      "caps a Lambda's first load inside the gateway's 29 s, so it ends as a 503",
+      { AWS_LAMBDA_FUNCTION_NAME: "analytics-query" },
+      { refreshWaitMs: 3000, firstLoadWaitMs: 20_000 },
+    ],
+    [
+      "leaves a local first load uncapped, since no gateway times it out",
+      {},
+      { refreshWaitMs: 0, firstLoadWaitMs: 0 },
+    ],
+  ])("%s", async (_, env, expected) => {
+    const { snapshotTimings } = await import("./admin-reporting.js");
+    const timings = snapshotTimings(env);
+    expect(timings).toMatchObject(expected);
+    expect(timings.firstLoadWaitMs).toBeLessThan(29_000);
   });
 
   it("keeps the first build, whatever env a later call passes", async () => {

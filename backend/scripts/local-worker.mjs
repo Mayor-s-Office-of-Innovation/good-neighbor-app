@@ -2,6 +2,8 @@ import { handler as updateMediaThumbnail } from "../src/workers/update-media-thu
 import { handler as sf311Job } from "../src/workers/sf311-job.js";
 import { projectStatus, statusRecords } from "../src/domain/system-status.js";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { expireComplianceTerms } from "../src/workers/expire-compliance-terms.js";
 // SQS → worker pump — the local stand-in for the Lambda event source mapping.
 // Long-polls ElasticMQ, wraps each message in an SQSEvent, invokes the SAME
@@ -9,13 +11,17 @@ import { expireComplianceTerms } from "../src/workers/expire-compliance-terms.js
 // handler succeeds (so a throw leaves it for redelivery, like real SQS).
 
 import {
+  ChangeMessageVisibilityCommand,
   DeleteMessageCommand,
   ReceiveMessageCommand,
   SQSClient,
 } from "@aws-sdk/client-sqs";
 import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { marshall } from "@aws-sdk/util-dynamodb";
-import { ensureLocalInfra } from "./lib/ensure-infra.mjs";
+import {
+  applyLocalInsightsEnv,
+  ensureLocalInfra,
+} from "./lib/ensure-infra.mjs";
 import { getConfig } from "../src/config.js";
 import { ddb } from "../src/db.js";
 import { handler as processSubmission } from "../src/workers/process-submission.js";
@@ -29,6 +35,48 @@ import { TRANSLATE_MESSAGE_TYPE } from "../src/analysis/translate-enqueue.js";
 
 const sqs = new SQSClient({});
 let running = true;
+
+// Loads DuckDB on the first job, so a worker that never sees one doesn't carry it.
+/** @type {import("aws-lambda").SQSHandler} */
+const runInsightsJob = async (event) => {
+  const { runJobs } = await import("../src/lambda/analytics-query.js");
+  return runJobs(event);
+};
+
+/**
+ * Runs a few jobs at a time, without holding up the caller. Holds no queue: a
+ * message waiting in memory would reach its visibility timeout and run twice.
+ * @param {number} limit
+ */
+export function createJobRunner(limit) {
+  /** @type {Set<Promise<void>>} */
+  const running = new Set();
+  return {
+    /**
+     * @param {() => Promise<void>} task
+     * @returns {boolean} false when full, so the caller can hand the message back
+     */
+    tryRun(task) {
+      if (running.size >= limit) return false;
+      const run = task()
+        .catch(() => {})
+        .finally(() => running.delete(run));
+      running.add(run);
+      return true;
+    },
+    async drain() {
+      await Promise.allSettled([...running]);
+    },
+  };
+}
+
+// Two at a time, like the insights-jobs Lambda's queue trigger.
+const insightsJobs = createJobRunner(2);
+// A job runs for minutes, so a sooner retry would just be handed back again many times.
+const INSIGHTS_RETRY_SECONDS = 30;
+// The shared local queue hides a message for 30 s; past that a running job would be
+// received twice. 900 s outlasts the jobs Lambda's 5 minutes, as insights.tf's queue does.
+const INSIGHTS_RUN_SECONDS = 900;
 
 /**
  * Reduce a thrown error to compact, non-sensitive fields for logging. The worker
@@ -62,9 +110,10 @@ function summarizeError(err) {
  * @param {string | undefined} body
  * @returns {import("aws-lambda").SQSHandler}
  */
-function pickHandler(body) {
+export function pickHandler(body) {
   try {
     const msg = JSON.parse(body ?? "");
+    if (msg?.insightsJob) return runInsightsJob;
     if (msg?.type === "update_media_thumbnail") return updateMediaThumbnail;
     if (msg?.type === "sf311_job") return sf311Job;
     if (msg?.type === "reconcile_site_revocation") {
@@ -251,50 +300,96 @@ async function poll(queueUrl) {
       continue;
     }
 
-    // Process the whole received batch CONCURRENTLY, mirroring the deployed
-    // Lambda (src/lambda/worker.js). Each artifact's latency is almost entirely
-    // its independent remote analyzer call, so a serial `for … await` here made
-    // an N-photo check pay ~N× one call (visible as analyses landing one at a
-    // time). Each message is still its own single-record event, so delete /
-    // redelivery semantics per message are unchanged.
-    await Promise.allSettled(
-      (received.Messages ?? []).map(async (msg) => {
-        try {
-          const handler = pickHandler(msg.Body);
-          const result = await handler(
-            toSqsEvent(msg),
-            /** @type {any} */ ({}),
-            () => {},
-          );
-          const failed = result?.batchItemFailures?.some(
-            (failure) => failure.itemIdentifier === msg.MessageId,
-          );
-          if (failed) {
-            console.error(
-              `[worker] handler reported failure for ${msg.MessageId}; leaving message for redelivery`,
-            );
-            return;
-          }
-          // Delete with THIS receive's ReceiptHandle, only on success.
-          await sqs.send(
-            new DeleteMessageCommand({
-              QueueUrl: queueUrl,
-              ReceiptHandle: msg.ReceiptHandle,
-            }),
-          );
-          console.log(`[worker] processed & deleted ${msg.MessageId}`);
-        } catch (err) {
-          // Leave the message for redelivery (visibility timeout) — matches prod.
-          console.error(
-            `[worker] handler threw for ${msg.MessageId}: ${summarizeError(err)}`,
-          );
-        }
+    await handleBatch(queueUrl, received.Messages ?? []);
+  }
+}
+
+/**
+ * Runs the batch at once, like the deployed worker Lambda, so a check with N
+ * photos waits about one analyzer call, not N.
+ * @param {string} queueUrl
+ * @param {import("@aws-sdk/client-sqs").Message[]} messages
+ * @param {ReturnType<typeof createJobRunner>} [insights]
+ */
+export async function handleBatch(queueUrl, messages, insights = insightsJobs) {
+  /** @type {Promise<unknown>[]} */
+  const others = [];
+  for (const msg of messages) {
+    const handler = pickHandler(msg.Body);
+    const task = () => handleMessage(queueUrl, msg, handler);
+    // Insights jobs can run for minutes; photo analysis shouldn't wait behind them.
+    if (handler !== runInsightsJob) others.push(task());
+    // Like the Lambda trigger's maximum concurrency, which leaves extra jobs in the queue.
+    else if (
+      !insights.tryRun(() =>
+        hide(queueUrl, msg, INSIGHTS_RUN_SECONDS).then(task),
+      )
+    )
+      others.push(hide(queueUrl, msg, INSIGHTS_RETRY_SECONDS));
+  }
+  await Promise.allSettled(others);
+}
+
+/**
+ * @param {string} queueUrl
+ * @param {import("@aws-sdk/client-sqs").Message} msg
+ * @param {number} seconds
+ */
+async function hide(queueUrl, msg, seconds) {
+  try {
+    await sqs.send(
+      new ChangeMessageVisibilityCommand({
+        QueueUrl: queueUrl,
+        ReceiptHandle: msg.ReceiptHandle,
+        VisibilityTimeout: seconds,
       }),
+    );
+  } catch (err) {
+    console.error(
+      `[worker] couldn't set ${msg.MessageId}'s visibility: ${summarizeError(err)}`,
+    );
+  }
+}
+
+/**
+ * @param {string} queueUrl
+ * @param {import("@aws-sdk/client-sqs").Message} msg
+ * @param {import("aws-lambda").SQSHandler} handler
+ */
+export async function handleMessage(queueUrl, msg, handler) {
+  try {
+    const result = await handler(
+      toSqsEvent(msg),
+      /** @type {any} */ ({}),
+      () => {},
+    );
+    const failed = result?.batchItemFailures?.some(
+      (failure) => failure.itemIdentifier === msg.MessageId,
+    );
+    if (failed) {
+      console.error(
+        `[worker] handler reported failure for ${msg.MessageId}; leaving message for redelivery`,
+      );
+      return;
+    }
+    // Delete with THIS receive's ReceiptHandle, only on success.
+    await sqs.send(
+      new DeleteMessageCommand({
+        QueueUrl: queueUrl,
+        ReceiptHandle: msg.ReceiptHandle,
+      }),
+    );
+    console.log(`[worker] processed & deleted ${msg.MessageId}`);
+  } catch (err) {
+    // Leave the message for redelivery (visibility timeout) — matches prod.
+    console.error(
+      `[worker] handler threw for ${msg.MessageId}: ${summarizeError(err)}`,
     );
   }
 }
 
 async function main() {
+  applyLocalInsightsEnv();
   const { queueUrl } = await ensureLocalInfra();
   console.log(`[worker] polling ${queueUrl}`);
 
@@ -306,10 +401,20 @@ async function main() {
   process.on("SIGTERM", () => stop("SIGTERM"));
 
   await poll(queueUrl);
+  // A job cut off mid-run would sit as running until its stall timeout.
+  console.log("[worker] waiting for running Insights jobs…");
+  await insightsJobs.drain();
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error("[worker] failed to start:", err);
-  process.exit(1);
-});
+// Only when run as a script, so a test can import pickHandler without starting the poller.
+// `node -e` and a REPL leave argv[1] unset.
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  main().catch((err) => {
+    console.error("[worker] failed to start:", err);
+    process.exit(1);
+  });
+}
