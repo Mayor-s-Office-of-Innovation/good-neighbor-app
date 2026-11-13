@@ -21,6 +21,7 @@ import {
   GetObjectCommand,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { createGunzip } from "node:zlib";
@@ -29,10 +30,17 @@ import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyItem } from "./entity-keys.js";
+import { backfillIfFormatChanged } from "./backfill.js";
+import { logServerError } from "../lib/log-server-error.js";
 
 export { classifyItem } from "./entity-keys.js";
 
-const s3 = new S3Client({});
+// MinIO in the local pipeline only speaks path-style; real S3 is unchanged.
+const s3 = new S3Client(
+  process.env.AWS_ENDPOINT_URL_S3 ? { forcePathStyle: true } : {},
+);
+// Only the backfill uses it, to start a full table export after a format change.
+const dynamo = new DynamoDBClient({});
 
 // Grade score mapping (ADR 0013 §6): Excellent=5 … Very Poor=1, null when
 // absent. Mirrors GRADE_ORDER in synthesize-check.js (worst-first there,
@@ -45,6 +53,9 @@ const GRADE_SCORE = {
   Poor: 2,
   "Very Poor": 1,
 };
+
+// Bump when toRow, ENTITY_COLUMNS or key shapes change, so raw exports re-convert.
+export const FORMAT_VERSION = 3;
 
 // Entities recognized by key shape; see classifyItem(). Anything unrecognized
 // (receipts, counters, pointers, PROVIDER_SEARCH, setup-code items) is
@@ -63,7 +74,13 @@ export function toRow(entity, item, exportedAt) {
     siteId: str(item.siteId) ?? siteIdFromPk(item.pk),
     gradeScore: gradeScore(item.grade),
     exportedAt,
-    raw: JSON.stringify(item),
+    raw: JSON.stringify(
+      entity === "task_updates"
+        ? updateOnly(item)
+        : entity === "programs"
+          ? programOnly(item)
+          : item,
+    ),
   };
   switch (entity) {
     case "checks": {
@@ -180,8 +197,84 @@ export function toRow(entity, item, exportedAt) {
       });
       break;
     }
+    case "task_updates": {
+      Object.assign(row, {
+        taskId: str(item.taskId),
+        updateId: str(item.updateId),
+        updateType: str(item.type),
+        occurredAt: str(item.occurredAt),
+        date: dateFromTimestamp(str(item.occurredAt)),
+      });
+      break;
+    }
+    case "duplicate_links":
+    case "duplicate_overrides": {
+      Object.assign(row, {
+        taskId: str(item.taskId),
+        originalTaskId: str(item.originalTaskId),
+        occurredAt: str(item.occurredAt),
+        date: dateFromTimestamp(str(item.occurredAt)),
+      });
+      break;
+    }
+    case "programs": {
+      Object.assign(row, {
+        programId: str(item.programId),
+        name: str(item.name),
+        updatedAt: str(item.updatedAt),
+        date: dateFromTimestamp(str(item.updatedAt)),
+      });
+      break;
+    }
   }
   return row;
+}
+
+// Local lake folders may hold an apostrophe.
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+export function sqlString(value) {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+// Staff text, photos and who acted stay out; the lake keeps rows forever.
+const TASK_UPDATE_FIELDS = [
+  "pk",
+  "sk",
+  "siteId",
+  "entityType",
+  "taskId",
+  "updateId",
+  "type",
+  "label",
+  "occurredAt",
+  "documentationState",
+  "presencePeriod",
+];
+
+/**
+ * @param {Record<string, unknown>} item
+ * @returns {Record<string, unknown>}
+ */
+function updateOnly(item) {
+  return Object.fromEntries(
+    Object.entries(item).filter(([k]) => TASK_UPDATE_FIELDS.includes(k)),
+  );
+}
+
+// The program contact's name, email and phone stay out; the lake keeps rows forever.
+const PROGRAM_FIELDS = ["pk", "sk", "programId", "name", "updatedAt"];
+
+/**
+ * @param {Record<string, unknown>} item
+ * @returns {Record<string, unknown>}
+ */
+function programOnly(item) {
+  return Object.fromEntries(
+    Object.entries(item).filter(([k]) => PROGRAM_FIELDS.includes(k)),
+  );
 }
 
 /**
@@ -310,6 +403,32 @@ export const ENTITY_COLUMNS = {
   sites: ["siteId", "name", "updatedAt", "exportedAt", "raw"],
   providers: ["siteId", "name", "updatedAt", "exportedAt", "raw"],
   devices: ["siteId", "label", "updatedAt", "exportedAt", "raw"],
+  task_updates: [
+    "siteId",
+    "taskId",
+    "updateId",
+    "updateType",
+    "occurredAt",
+    "exportedAt",
+    "raw",
+  ],
+  duplicate_links: [
+    "siteId",
+    "taskId",
+    "originalTaskId",
+    "occurredAt",
+    "exportedAt",
+    "raw",
+  ],
+  duplicate_overrides: [
+    "siteId",
+    "taskId",
+    "originalTaskId",
+    "occurredAt",
+    "exportedAt",
+    "raw",
+  ],
+  programs: ["siteId", "programId", "name", "updatedAt", "exportedAt", "raw"],
 };
 
 /**
@@ -372,6 +491,38 @@ export async function parseExportFile(body, exportedAt) {
   return byEntity;
 }
 
+// Exported so the local Insights lake matches what exports write.
+/**
+ * @param {any} conn
+ * @param {string} entity
+ * @param {Record<string, unknown>[]} rows
+ * @param {string} parquetPath
+ * @returns {Promise<void>}
+ */
+export async function writeEntityParquet(conn, entity, rows, parquetPath) {
+  const columns = ENTITY_COLUMNS[entity];
+  if (!columns) throw new Error(`unknown lake entity: ${entity}`);
+  // read_json infers JSON for a column null in every sampled row, which breaks the view
+  // once a later export writes VARCHAR there, so every entity pins its schema.
+  const ndjsonPath = `${parquetPath}.ndjson`;
+  await writeFile(ndjsonPath, rows.map((r) => JSON.stringify(r)).join("\n"));
+  try {
+    await conn.run(
+      `COPY (
+        SELECT ${columns
+          .map((c) => (c === "raw" ? "CAST(raw AS VARCHAR) AS raw" : c))
+          .join(", ")}
+        FROM read_json(${sqlString(ndjsonPath)}, format = 'newline_delimited', columns = ${JSON.stringify(
+          columnSchema(columns),
+        )})
+        ORDER BY ${columns[0]}
+      ) TO ${sqlString(parquetPath)} (FORMAT PARQUET, COMPRESSION ZSTD)`,
+    );
+  } finally {
+    await rm(ndjsonPath, { force: true });
+  }
+}
+
 /**
  * Convert one export: read its manifest, parse all data files, write one
  * Parquet file per (entity, date). Files are staged in tmp (DuckDB COPY writes
@@ -379,11 +530,12 @@ export async function parseExportFile(body, exportedAt) {
  * write path simpler), then uploaded.
  * @param {string} bucket
  * @param {string} manifestSummaryKey full key of manifest-summary.json
- * @param {string} exportedAt ISO stamp (the export's own timestamp)
+ * @param {string} fallbackAt ISO stamp for a summary without an export time
  * @returns {Promise<{ files: string[], rows: number }>}
  */
-export async function convertExport(bucket, manifestSummaryKey, exportedAt) {
+export async function convertExport(bucket, manifestSummaryKey, fallbackAt) {
   const summary = await getJson(bucket, manifestSummaryKey);
+  const exportedAt = exportStamp(summary, fallbackAt);
   const manifestKey = summary.manifestFilesS3Key;
   if (!manifestKey)
     throw new Error("manifest-summary.json missing manifestFilesS3Key");
@@ -397,6 +549,10 @@ export async function convertExport(bucket, manifestSummaryKey, exportedAt) {
   /** @type {string[]} */
   const written = [];
   let totalRows = 0;
+  /** @type {import("@duckdb/node-api").DuckDBInstance | undefined} */
+  let db;
+  /** @type {import("@duckdb/node-api").DuckDBConnection | undefined} */
+  let conn;
 
   try {
     /** @type {Map<string, Record<string, unknown>[]>} */
@@ -423,37 +579,16 @@ export async function convertExport(bucket, manifestSummaryKey, exportedAt) {
       }
     }
 
-    const db = await DuckDBInstance.create(":memory:");
-    const conn = await db.connect();
+    db = await DuckDBInstance.create(":memory:");
+    conn = await db.connect();
 
     for (const [entityDate, rows] of rowsByEntityDate) {
       const [entity, date] = entityDate.split("|");
       const columns = ENTITY_COLUMNS[entity];
       if (!columns) continue;
-      // Stage rows as NDJSON, pin the column types explicitly, and COPY out as
-      // ZSTD Parquet. read_json samples rows to infer types; a promoted column
-      // that is null in every sampled row infers JSON, which poisons the view
-      // when a later export writes a plain VARCHAR into the same column — so
-      // every entity pins its schema via columnSchema(). File name carries the
-      // export ID so re-running the same export overwrites in place (ADR 0013
-      // §Decision 2).
-      const ndjsonPath = join(tmpDir, `${entity}-${date}.ndjson`);
-      await writeFile(
-        ndjsonPath,
-        rows.map((r) => JSON.stringify(r)).join("\n"),
-      );
+      // The export ID in the name makes a rerun overwrite in place (ADR 0013 §Decision 2).
       const parquetPath = join(tmpDir, `${entity}-${date}.parquet`);
-      await conn.run(
-        `COPY (
-          SELECT ${columns
-            .map((c) => (c === "raw" ? "CAST(raw AS VARCHAR) AS raw" : c))
-            .join(", ")}
-          FROM read_json('${ndjsonPath}', format = 'newline_delimited', columns = ${JSON.stringify(
-            columnSchema(columns),
-          )})
-          ORDER BY ${columns[0]}
-        ) TO '${parquetPath}' (FORMAT PARQUET, COMPRESSION ZSTD)`,
-      );
+      await writeEntityParquet(conn, entity, rows, parquetPath);
       const parquet = await readFile(parquetPath);
       const s3Key = `readings/${entity}/date=${date}/part-${exportId}.parquet`;
       await s3.send(
@@ -468,14 +603,27 @@ export async function convertExport(bucket, manifestSummaryKey, exportedAt) {
       written.push(s3Key);
       totalRows += rows.length;
       await rm(parquetPath, { force: true });
-      await rm(ndjsonPath, { force: true });
     }
-    await conn.closeSync();
   } finally {
+    // A backfill converts many exports in one invocation, so free each instance.
+    conn?.closeSync();
+    db?.closeSync();
     await rm(tmpDir, { recursive: true, force: true });
   }
 
   return { files: written, rows: totalRows };
+}
+
+// The trigger and the backfill both stamp from the summary, so a re-converted
+// row orders against newer rows the same way its first conversion did.
+/**
+ * @param {Record<string, unknown>} summary manifest-summary.json
+ * @param {string} fallback
+ * @returns {string}
+ */
+export function exportStamp(summary, fallback) {
+  const at = Date.parse(String(summary.exportToTime ?? summary.exportTime));
+  return Number.isNaN(at) ? fallback : new Date(at).toISOString();
 }
 
 /**
@@ -527,29 +675,58 @@ export async function listManifestDataFiles(bucket, key) {
  * Lambda entrypoint body: parse the S3 event, convert each triggered export
  * manifest. Exported for unit tests; the lambda entrypoint wraps error logging.
  * @param {any} event S3 event (one or more manifest-summary.json records)
- * @returns {Promise<{ converted: number, files: number, rows: number }>}
+ * @param {{ getRemainingTimeInMillis?: () => number }} [context] Lambda context
+ * @returns {Promise<{ converted: number, files: number, rows: number, backfilled: number }>}
  */
-export async function convertS3Event(event) {
+export async function convertS3Event(event, context) {
   const bucket = process.env.LAKE_BUCKET;
   if (!bucket) throw new Error("Missing LAKE_BUCKET");
   let converted = 0;
   let files = 0;
   let rows = 0;
+  const seen = new Set();
   for (const record of event.Records ?? []) {
     const key = decodeURIComponent(
       record?.s3?.object?.key?.replace(/\+/g, " ") ?? "",
     );
     if (!key.endsWith("manifest-summary.json")) continue;
-    // Exported-at stamp: the manifest summary's lastModified, not the
-    // conversion time, so ordering is stable across converter retries.
-    const exportedAt = new Date(record?.eventTime ?? Date.now()).toISOString();
-    const result = await convertExport(bucket, key, exportedAt);
+    // Only for a summary without an export time; the conversion time would reorder retries.
+    const fallbackAt = new Date(record?.eventTime ?? Date.now()).toISOString();
+    const result = await convertExport(bucket, key, fallbackAt);
+    seen.add(key);
     converted += 1;
     files += result.files.length;
     rows += result.rows;
   }
+  let backfilled = 0;
+  // Off where the converter role can't list raw/, read its state or start an export, or every export logs AccessDenied.
+  if (converted && process.env.ANALYTICS_BACKFILL_ENABLED === "true")
+    try {
+      ({ backfilled } = await backfillIfFormatChanged({
+        send: (command) => s3.send(command),
+        ddbSend: (command) => dynamo.send(command),
+        tableArn: process.env.DYNAMO_TABLE_ARN,
+        convert: convertExport,
+        bucket,
+        prefix: process.env.EXPORT_PREFIX || "raw",
+        formatVersion: FORMAT_VERSION,
+        skip: seen,
+        timeLeftMs: context?.getRemainingTimeInMillis
+          ? () => /** @type {any} */ (context).getRemainingTimeInMillis()
+          : undefined,
+      }));
+    } catch (err) {
+      // This export is already converted; the next one retries the backfill.
+      logServerError("analytics-convert backfill", err);
+    }
   console.log(
-    JSON.stringify({ marker: "AnalyticsConvertDone", converted, files, rows }),
+    JSON.stringify({
+      marker: "AnalyticsConvertDone",
+      converted,
+      files,
+      rows,
+      backfilled,
+    }),
   );
-  return { converted, files, rows };
+  return { converted, files, rows, backfilled };
 }

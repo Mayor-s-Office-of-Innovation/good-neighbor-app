@@ -166,6 +166,14 @@ export const updateSiteAdmin = async (event) => {
     )
       return jsonResponse(400, { error: "invalid_phone" });
     const assignment = assigned.assignment;
+    // Insights reads the Site's primaryContact copy, which only roster changes otherwise refresh.
+    const isPrimary =
+      Boolean(site.primaryContact) &&
+      (site.primaryContactUserId
+        ? assigned.userIds.includes(site.primaryContactUserId)
+        : Boolean(site.primaryContact.email) &&
+          String(site.primaryContact.email).toLowerCase() ===
+            String(assigned.person.email || "").toLowerCase());
     try {
       await updatePersonRecord(
         assigned.person,
@@ -195,9 +203,32 @@ export const updateSiteAdmin = async (event) => {
             TableName: getConfig().dynamoTable,
             Key: siteMetaKey(siteId),
             ConditionExpression:
-              "attribute_exists(pk) AND (attribute_not_exists(#siteStatus) OR #siteStatus <> :inactiveSite)",
+              "attribute_exists(pk) AND (attribute_not_exists(#siteStatus) OR #siteStatus <> :inactiveSite)" +
+              (!isPrimary
+                ? ""
+                : site.updatedAt === undefined
+                  ? " AND attribute_not_exists(updatedAt)"
+                  : " AND updatedAt = :siteUpdatedAt"),
             ExpressionAttributeNames: { "#siteStatus": "status" },
-            ExpressionAttributeValues: { ":inactiveSite": "inactive" },
+            ExpressionAttributeValues: {
+              ":inactiveSite": "inactive",
+              ...(isPrimary
+                ? {
+                    ":phone": phone,
+                    ":now": now,
+                    ...(site.updatedAt === undefined
+                      ? {}
+                      : { ":siteUpdatedAt": site.updatedAt }),
+                  }
+                : {}),
+            },
+            // Bumping updatedAt makes a concurrent roster change retry instead of writing the old phone.
+            ...(isPrimary
+              ? {
+                  UpdateExpression:
+                    "SET primaryContact.phone = :phone, updatedAt = :now",
+                }
+              : {}),
           },
         ],
       );

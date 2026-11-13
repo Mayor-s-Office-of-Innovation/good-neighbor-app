@@ -964,8 +964,33 @@ refresh, and discovery compare it with the canonical Site value (missing means z
 
 `backend/src/analytics/entity-keys.js` defines the reporting allowlist by complete
 partition and sort-key shape. Task/check headers must have bare `TASK#<id>` or
-`CHECK#<id>` keys. Update events, update-ID pointers, task media, check update-media
-pointers and unknown children are excluded. Current ART keys and legacy ART keys
+`CHECK#<id>` keys. Update-ID pointers, task media, check update-media pointers and
+unknown children are excluded. Task update events are their own `task_updates`
+entity, so Insights can read first-response times; `DUP_LINK#` and `DUP_OVERRIDE#`
+rows are `duplicate_links` and `duplicate_overrides`, and `PROGRAM#…/#META` is
+`programs`. Site and compliance manager assignments stay out: they are removed by
+deleting the row, which an incremental export can't see. A `DUP_LINK#` row is deleted
+only in the same transaction that supersedes its task, so a stale link in the lake
+never merges a live Issue. `task_updates.raw` and `programs.raw` keep only
+listed fields, so update text, notes, photo keys, the actor and Program contacts
+stay out of the lake. The converter records its format version in
+`readings/_converter/state.json` (`FORMAT_VERSION` in `convert.js`). The first
+conversion after the version changes starts one full DynamoDB export into `raw/`,
+which converts like any other export, so items unchanged since before the 30-day
+`raw/` window reach the lake in the new format. It also re-converts every `raw/`
+export still kept (30 days), once, oldest first and at each export's own time, which
+covers items deleted in those 30 days that the full export no longer holds. An export
+that fails is logged and passed, so later exports still convert; the old version stays
+until a later run converts it or it expires. A run stops when the next export's
+estimated time, from its data files' size, plus two minutes passes the time left, and
+resumes on the next export. The new version is recorded only once the full export has
+converted and no re-conversion failed; if the full export fails, or completes but
+`raw/` expires its files before they convert, a later run logs an error and starts
+another. Converters that run at once write the state file with `IfMatch` and merge
+each other's progress, so a recorded version never goes back. The backfill runs only when `ANALYTICS_BACKFILL_ENABLED=true`, which waits on
+the converter role being allowed to list `raw/`, read the state file, and start and
+describe table exports.
+Current ART keys and legacy ART keys
 with a place segment remain supported. Assessment/condition and device shapes are
 also matched explicitly; identifiers need not be UUIDs.
 

@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // S3 seam for the manifest test: one GetObject per call, body via
 // transformToString (the shape listManifestDataFiles consumes).
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, ddbSend } = vi.hoisted(() => ({
+  send: vi.fn(),
+  ddbSend: vi.fn(),
+}));
 vi.mock("@aws-sdk/client-s3", () => ({
   S3Client: class {
     send = send;
@@ -12,7 +15,33 @@ vi.mock("@aws-sdk/client-s3", () => ({
       this.input = input;
     }
   },
-  PutObjectCommand: class {},
+  PutObjectCommand: class {
+    constructor(/** @type {any} */ input) {
+      this.input = input;
+    }
+  },
+  ListObjectsV2Command: class {
+    constructor(/** @type {any} */ input) {
+      this.input = input;
+    }
+  },
+}));
+
+// DynamoDB seam for the backfill's full export.
+vi.mock("@aws-sdk/client-dynamodb", () => ({
+  DynamoDBClient: class {
+    send = ddbSend;
+  },
+  ExportTableToPointInTimeCommand: class {
+    constructor(/** @type {any} */ input) {
+      this.input = input;
+    }
+  },
+  DescribeExportCommand: class {
+    constructor(/** @type {any} */ input) {
+      this.input = input;
+    }
+  },
 }));
 
 const {
@@ -23,6 +52,9 @@ const {
   ENTITY_COLUMNS,
   columnSchema,
   listManifestDataFiles,
+  convertS3Event,
+  exportStamp,
+  FORMAT_VERSION,
 } = await import("./convert.js");
 
 // ---- key classification ------------------------------------------------------
@@ -73,6 +105,140 @@ describe("classifyItem", () => {
 // ---- promoted columns --------------------------------------------------------
 
 describe("toRow", () => {
+  it("dates a task update by when it happened, keeping its type", () => {
+    expect(
+      toRow(
+        "task_updates",
+        {
+          pk: "SITE#s1",
+          taskId: "t1",
+          updateId: "u1",
+          type: "task_completed",
+          occurredAt: "2026-10-28T06:30:00.000Z",
+        },
+        "t",
+      ),
+    ).toMatchObject({
+      siteId: "s1",
+      taskId: "t1",
+      updateType: "task_completed",
+      date: "2026-10-28",
+    });
+  });
+
+  it("leaves staff note text out of a task update's raw copy", () => {
+    const row = toRow(
+      "task_updates",
+      {
+        pk: "SITE#s1",
+        taskId: "t1",
+        type: "311_ticket_filed",
+        notes: ["Synthetic note"],
+        cityNotePayload: "Synthetic City note",
+        occurredAt: "2026-10-28T06:30:00.000Z",
+      },
+      "t",
+    );
+    expect(JSON.parse(String(row.raw))).toEqual({
+      pk: "SITE#s1",
+      taskId: "t1",
+      type: "311_ticket_filed",
+      occurredAt: "2026-10-28T06:30:00.000Z",
+    });
+  });
+
+  it("keeps an action's text, photos and actor out of the lake", () => {
+    const row = toRow(
+      "task_updates",
+      {
+        pk: "SITE#s1",
+        sk: "TASK#t1#UPDATE#2026-10-28T06:30:00.000Z#u1",
+        entityType: "task_update",
+        taskId: "t1",
+        updateId: "u1",
+        type: "additional_action",
+        label: "Additional action taken",
+        occurredAt: "2026-10-28T06:30:00.000Z",
+        actorId: "synthetic-device",
+        documentationState: "closed",
+        text: "SYNTHETIC: spoke with resident",
+        photoKeys: ["art-1"],
+        addedLater: "any new field",
+      },
+      "t",
+    );
+    const raw = JSON.parse(String(row.raw));
+    expect(raw).toMatchObject({ taskId: "t1", type: "additional_action" });
+    for (const field of ["text", "actorId", "photoKeys", "addedLater"])
+      expect(raw).not.toHaveProperty(field);
+  });
+
+  it("keeps a Program's contact out of the lake", () => {
+    const row = toRow(
+      "programs",
+      {
+        pk: "PROGRAM#p1",
+        sk: "#META",
+        programId: "p1",
+        name: "Synthetic Program",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+        primaryContactUserId: "u1",
+        contact: {
+          name: "Synthetic Person",
+          email: "synthetic@example.test",
+          phone: "415-555-0100",
+        },
+      },
+      "t",
+    );
+    expect(JSON.parse(String(row.raw))).toEqual({
+      pk: "PROGRAM#p1",
+      sk: "#META",
+      programId: "p1",
+      name: "Synthetic Program",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    });
+  });
+
+  it("keeps both ends of a duplicate link and of a separation", () => {
+    for (const entity of ["duplicate_links", "duplicate_overrides"])
+      expect(
+        toRow(
+          entity,
+          {
+            pk: "SITE#s1",
+            taskId: "t2",
+            originalTaskId: "t1",
+            occurredAt: "2026-10-28T00:00:00.000Z",
+          },
+          "t",
+        ),
+      ).toMatchObject({
+        taskId: "t2",
+        originalTaskId: "t1",
+        date: "2026-10-28",
+      });
+  });
+
+  it("builds a Program row with no Site", () => {
+    expect(
+      toRow(
+        "programs",
+        {
+          pk: "PROGRAM#p1",
+          programId: "p1",
+          name: "Synthetic Program",
+          updatedAt: "2026-10-01T00:00:00.000Z",
+        },
+        "t",
+      ),
+    ).toMatchObject({
+      siteId: null,
+      programId: "p1",
+      name: "Synthetic Program",
+    });
+  });
+
   it("maps grade to grade_score (Excellent=5 … Very Poor=1, unknown/absent null)", () => {
     expect(toRow("checks", { grade: "Excellent" }, "t").gradeScore).toBe(5);
     expect(toRow("checks", { grade: "Very Poor" }, "t").gradeScore).toBe(1);
@@ -215,6 +381,7 @@ describe("parseExportFile", () => {
         ),
       ).toEqual({
         tasks: ["TASK#t1"],
+        task_updates: ["TASK#t1#UPDATE#2026-10-28T00:00:00.000Z#u1"],
         checks: ["CHECK#c1"],
         artifacts: ["CHECK#c1#ART#a1", "CHECK#c1#ART#legacy-place#a2"],
         analyses: ["CHECK#c1#ANALYSIS#a1"],
@@ -504,5 +671,132 @@ describe("dateFromTimestamp calendar validity", () => {
     expect(dateFromTimestamp("")).toBeNull();
     expect(dateFromTimestamp("yesterday")).toBeNull();
     expect(dateFromTimestamp(null)).toBeNull();
+  });
+});
+
+describe("exportStamp", () => {
+  const fallback = "2026-10-02T06:04:31.000Z";
+
+  it.each([
+    [
+      "an incremental export's end time",
+      { exportToTime: "2026-10-02T05:30:00Z" },
+      "2026-10-02T05:30:00.000Z",
+    ],
+    [
+      "a full export's time",
+      { exportTime: "2026-10-02T05:00:00.123Z" },
+      "2026-10-02T05:00:00.123Z",
+    ],
+    ["the fallback when the summary has no time", {}, fallback],
+    ["the fallback for an unreadable time", { exportTime: "soon" }, fallback],
+  ])("uses %s", (_name, summary, expected) => {
+    expect(exportStamp(summary, fallback)).toBe(expected);
+  });
+});
+
+// ---- S3 event wiring ---------------------------------------------------------
+
+describe("convertS3Event backfill", () => {
+  const SUMMARY = "raw/AWSDynamoDB/e2/manifest-summary.json";
+  const event = {
+    Records: [
+      {
+        eventTime: "2026-10-02T06:00:00.000Z",
+        s3: { object: { key: SUMMARY } },
+      },
+    ],
+  };
+  /** @type {string[]} */
+  let calls;
+  /** @type {any} */
+  let stateWritten;
+
+  /** @param {{ listFails?: boolean }} [opts] */
+  function lake(opts = {}) {
+    calls = [];
+    stateWritten = null;
+    send.mockReset();
+    send.mockImplementation(async (/** @type {any} */ command) => {
+      const name = command.constructor.name;
+      const key = command.input?.Key ?? command.input?.Prefix;
+      calls.push(`${name} ${key}`);
+      if (name === "ListObjectsV2Command") {
+        if (opts.listFails)
+          throw Object.assign(new Error("denied"), { name: "AccessDenied" });
+        return {
+          Contents: [{ Key: SUMMARY, LastModified: new Date() }],
+          IsTruncated: false,
+        };
+      }
+      if (name === "PutObjectCommand") {
+        stateWritten = JSON.parse(command.input.Body);
+        return {};
+      }
+      if (key === SUMMARY)
+        return json({ manifestFilesS3Key: "raw/AWSDynamoDB/e2/files.json" });
+      if (key === "raw/AWSDynamoDB/e2/files.json")
+        return json({ dataFileS3Key: "raw/AWSDynamoDB/e2/data/1.json.gz" });
+      if (key?.endsWith("state.json"))
+        throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+      // An empty data file: nothing to write, so no Parquet upload.
+      return {};
+    });
+  }
+  /** @param {object} body */
+  const json = (body) => ({
+    Body: { transformToString: async () => JSON.stringify(body) },
+  });
+
+  beforeEach(() => {
+    process.env.LAKE_BUCKET = "lake";
+    process.env.DYNAMO_TABLE_ARN = "arn:aws:dynamodb:us-west-2:1:table/app";
+    delete process.env.ANALYTICS_BACKFILL_ENABLED;
+    ddbSend.mockReset();
+    ddbSend.mockResolvedValue({
+      ExportDescription: {
+        ExportArn: "arn:aws:dynamodb:us-west-2:1:table/app/export/full1",
+      },
+    });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  it("leaves the lake alone until the backfill is turned on", async () => {
+    lake();
+    const result = await convertS3Event(event);
+    expect(result).toMatchObject({ converted: 1, backfilled: 0 });
+    expect(calls.some((c) => c.startsWith("ListObjectsV2Command"))).toBe(false);
+    expect(ddbSend).not.toHaveBeenCalled();
+  });
+
+  it("starts a full export of the table without re-converting the trigger export", async () => {
+    process.env.ANALYTICS_BACKFILL_ENABLED = "true";
+    lake();
+    const result = await convertS3Event(event);
+    expect(result).toMatchObject({ converted: 1, backfilled: 0 });
+    expect(calls).toContain("ListObjectsV2Command raw/");
+    expect(calls.filter((c) => c.endsWith(SUMMARY))).toHaveLength(1);
+    expect(ddbSend).toHaveBeenCalledTimes(1);
+    expect(ddbSend.mock.calls[0][0].input).toMatchObject({
+      TableArn: "arn:aws:dynamodb:us-west-2:1:table/app",
+      S3Bucket: "lake",
+      S3Prefix: "raw",
+      ExportType: "FULL_EXPORT",
+    });
+    // The version waits for the full export to convert.
+    expect(stateWritten).toMatchObject({
+      formatVersion: null,
+      backfill: { formatVersion: FORMAT_VERSION },
+    });
+  });
+
+  it("keeps the trigger export converted when the backfill fails", async () => {
+    process.env.ANALYTICS_BACKFILL_ENABLED = "true";
+    lake({ listFails: true });
+    const result = await convertS3Event(event);
+    expect(result).toMatchObject({ converted: 1, backfilled: 0 });
+    expect(console.error).toHaveBeenCalled();
+    expect(stateWritten?.formatVersion).toBeNull();
   });
 });

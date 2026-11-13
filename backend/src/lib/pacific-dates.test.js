@@ -7,6 +7,7 @@ import {
   isDayKey,
   pacificDateKey,
   pacificDayStartIso,
+  pacificWallTimeIso,
   periodContaining,
   previousPeriod,
   weekdayIndex,
@@ -71,6 +72,32 @@ describe("pacificDayStartIso", () => {
     expect(pacificDayStartIso("2026-03-09")).toBe("2026-03-09T07:00:00.000Z");
     expect(pacificDayStartIso("2026-11-01")).toBe("2026-11-01T07:00:00.000Z");
     expect(pacificDayStartIso("2026-11-02")).toBe("2026-11-02T08:00:00.000Z");
+  });
+});
+
+describe("pacificWallTimeIso", () => {
+  it("converts local noon on the fall-back day to the standard-time instant", () => {
+    expect(pacificWallTimeIso("2026-11-01", 12 * 3_600_000)).toBe(
+      "2026-11-01T20:00:00.000Z",
+    );
+  });
+
+  it("converts a summer afternoon using daylight time", () => {
+    expect(pacificWallTimeIso("2026-07-01", 12 * 3_600_000)).toBe(
+      "2026-07-01T19:00:00.000Z",
+    );
+  });
+
+  it("moves a time the spring-forward skips an hour later, as clocks do", () => {
+    expect(pacificWallTimeIso("2026-03-08", 2.5 * 3_600_000)).toBe(
+      "2026-03-08T10:30:00.000Z",
+    );
+  });
+
+  it("takes the second 1:30 on the fall-back day", () => {
+    expect(pacificWallTimeIso("2026-11-01", 1.5 * 3_600_000)).toBe(
+      "2026-11-01T09:30:00.000Z",
+    );
   });
 });
 

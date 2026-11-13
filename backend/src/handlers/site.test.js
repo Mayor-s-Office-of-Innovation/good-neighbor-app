@@ -425,6 +425,146 @@ describe("site admin", () => {
     });
   });
 
+  it.each([
+    ["is", "u1", { phone: "(415) 555-0148" }],
+    ["is not", "u2", undefined],
+  ])(
+    "refreshes the Site's contact copy when the edited manager %s its contact",
+    async (_name, primaryUserId, expected) => {
+      const person = {
+        personId: "p1",
+        firstName: "Synthetic",
+        lastName: "Manager",
+        email: "manager@example.test",
+        phone: "",
+        status: "active",
+        revision: "r1",
+      };
+      send.mockImplementation(async (/** @type {any} */ command) => {
+        const { Key, ExpressionAttributeValues } = command.input;
+        if (command instanceof GetCommand && Key.sk === "#META")
+          return {
+            Item: {
+              siteId: "site-1",
+              status: "active",
+              primaryContactUserId: primaryUserId,
+              primaryContact: { ...person, phone: "" },
+            },
+          };
+        if (command instanceof GetCommand && Key.sk === "PERSON#p1")
+          return { Item: person };
+        if (
+          command instanceof QueryCommand &&
+          ExpressionAttributeValues[":prefix"] === "ASSIGNED_USER#"
+        )
+          return {
+            Items: [
+              {
+                pk: "SITE#site-1",
+                sk: "ASSIGNED_USER#prog-1#u1",
+                programId: "prog-1",
+                userId: "u1",
+                personId: "p1",
+                status: "active",
+              },
+            ],
+          };
+        return {};
+      });
+      const request = accessEvent("site-1", "admin");
+      request.body = JSON.stringify({
+        section: "siteManagerPhone",
+        values: { personId: "p1", phone: "(415) 555-0148" },
+      });
+      const response = await /** @type {any} */ (updateSiteAdmin)(request);
+      expect(response.statusCode).toBe(200);
+      const tx = /** @type {any} */ (
+        send.mock.calls
+          .map(([command]) => command)
+          .find((command) => command instanceof TransactWriteCommand)
+      );
+      const siteWrite = tx.input.TransactItems.find(
+        (/** @type {any} */ item) =>
+          (item.Update ?? item.ConditionCheck)?.Key?.sk === "#META",
+      );
+      expect(siteWrite.Update?.ExpressionAttributeValues?.[":phone"]).toBe(
+        expected?.phone,
+      );
+    },
+  );
+
+  it("refreshes the contact copy when the manager's membership row has no userId", async () => {
+    const person = {
+      personId: "p1",
+      firstName: "Synthetic",
+      lastName: "Manager",
+      email: "manager@example.test",
+      phone: "",
+      status: "active",
+      revision: "r1",
+    };
+    send.mockImplementation(async (/** @type {any} */ command) => {
+      const { Key, ExpressionAttributeValues } = command.input;
+      if (command instanceof GetCommand && Key.sk === "#META")
+        return {
+          Item: {
+            siteId: "site-1",
+            status: "active",
+            primaryContactUserId: "u1",
+            primaryContact: { ...person, phone: "" },
+          },
+        };
+      if (command instanceof GetCommand && Key.sk === "PERSON#p1")
+        return { Item: person };
+      const prefix = ExpressionAttributeValues?.[":prefix"];
+      if (command instanceof QueryCommand && prefix === "MANAGER_MEMBERSHIP#")
+        return {
+          Items: [
+            {
+              pk: "SITE#site-1",
+              sk: "MANAGER_MEMBERSHIP#m1",
+              membershipId: "m1",
+              personId: "p1",
+              status: "active",
+            },
+          ],
+        };
+      if (command instanceof QueryCommand && prefix === "ASSIGNED_USER#")
+        return {
+          Items: [
+            {
+              pk: "SITE#site-1",
+              sk: "ASSIGNED_USER#prog-1#u1",
+              programId: "prog-1",
+              userId: "u1",
+              personId: "p1",
+              status: "active",
+            },
+          ],
+        };
+      return {};
+    });
+    const request = accessEvent("site-1", "admin");
+    request.body = JSON.stringify({
+      section: "siteManagerPhone",
+      values: { personId: "p1", phone: "(415) 555-0148" },
+    });
+    const response = await /** @type {any} */ (updateSiteAdmin)(request);
+    expect(response.statusCode).toBe(200);
+    const tx = /** @type {any} */ (
+      send.mock.calls
+        .map(([command]) => command)
+        .find((command) => command instanceof TransactWriteCommand)
+    );
+    const siteWrite = tx.input.TransactItems.find(
+      (/** @type {any} */ item) =>
+        (item.Update ?? item.ConditionCheck)?.Key?.sk === "#META",
+    );
+    expect(siteWrite.Update?.ExpressionAttributeValues?.[":phone"]).toBe(
+      "(415) 555-0148",
+    );
+  });
+
   it("atomically reindexes and geocodes edited site details", async () => {
     send
       .mockResolvedValueOnce({

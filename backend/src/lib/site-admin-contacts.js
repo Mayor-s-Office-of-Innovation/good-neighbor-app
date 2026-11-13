@@ -55,16 +55,19 @@ export async function siteManagerProfiles(siteId) {
     ...(await assignments(siteId, "ASSIGNED_USER#")),
   ];
   const resolved = await boundedReads(rows, assignedProfile);
-  const seen = new Set();
-  return resolved.filter((entry) => {
-    if (!entry) return false;
+  /** @type {Map<string, NonNullable<(typeof resolved)[number]> & { userIds: string[] }>} */
+  const byId = new Map();
+  for (const entry of resolved) {
+    if (!entry) continue;
     const id =
       entry.person?.personId ||
       `${entry.assignment.programId}:${entry.assignment.userId || entry.assignment.membershipId}`;
-    if (seen.has(id)) return false;
-    seen.add(id);
-    return true;
-  });
+    const kept = byId.get(id) ?? { ...entry, userIds: [] };
+    // Membership rows may lack the userId the person's roster row carries.
+    if (entry.assignment.userId) kept.userIds.push(entry.assignment.userId);
+    byId.set(id, kept);
+  }
+  return [...byId.values()];
 }
 
 /** Public shape deliberately excludes membership authority and person source references.

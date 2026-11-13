@@ -13,6 +13,9 @@ describe("reporting key shapes", () => {
     ["ASSESSMENT#as1#COND##", "conditions"],
     ["ASSESSMENT#as1#COND#c1\n#extra", "conditions"],
     ["TASK#t1", "tasks"],
+    ["TASK#t1#UPDATE#2026-10-28T00:00:00.000Z#u1", "task_updates"],
+    ["DUP_LINK#t2", "duplicate_links"],
+    ['DUP_OVERRIDE#["c1","a1","k1"]', "duplicate_overrides"],
     ["DEVICE#d1", "devices"],
     ["#META", "sites"],
   ])("recognizes %s without requiring UUID IDs", (sk, entity) => {
@@ -20,8 +23,12 @@ describe("reporting key shapes", () => {
   });
 
   it.each([
-    "TASK#t1#UPDATE#2026-10-28T00:00:00.000Z#u1",
+    "TASK#t1#UPDATE#2026-10-28T00:00:00.000Z",
+    "TASK#t1#UPDATE#2026-10-28T00:00:00.000Z#u1#extra",
     "TASK#t1#UPDATE_ID#u1",
+    "DUP_LINK#",
+    "DUP_LINK#t1#extra",
+    "DUP_OVERRIDE#",
     "TASK#t1#MEDIA#a1",
     "TASK#t1#FUTURE#x",
     "CHECK#c1#UPDATE_MEDIA#a1",
@@ -47,6 +54,8 @@ describe("reporting key shapes", () => {
 
   it("requires the correct complete partition and string keys", () => {
     expect(classifyItem({ pk: "PROVIDER#p1", sk: "#META" })).toBe("providers");
+    expect(classifyItem({ pk: "PROGRAM#p1", sk: "#META" })).toBe("programs");
+    expect(classifyItem({ pk: "PROGRAM#p1", sk: "USER#u1" })).toBeNull();
     for (const pk of [
       "SITE#",
       "SITE#s1#CHILD",
