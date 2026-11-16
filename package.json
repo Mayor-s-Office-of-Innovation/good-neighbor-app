@@ -36,7 +36,7 @@
     "test:recovery:ui": "playwright test -c e2e/recovery.config.js"
   },
   "devDependencies": {
-    "js-yaml": "4.3.2",
+    "js-yaml": "5.5.0",
     "prettier": "3.3.3"
   },
   "overrides": {
