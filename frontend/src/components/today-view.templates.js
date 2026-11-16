@@ -719,7 +719,9 @@ export function homeResults({
       ${historyGroups.length
         ? html`
             <div class="home-results__cards">
-              ${historyGroups.map((group) => historyTray(group)).join("")}
+              ${historyGroups
+                .map((group, index) => historyTray(group, index + 1))
+                .join("")}
             </div>
           `
         : ""}
@@ -798,28 +800,27 @@ export function clearCheckTray(check, recent = false) {
 }
 
 /**
- * One past check's tray: its task cards, or the clear-check card when the
- * check found nothing.
+ * A check or compact History group's tray. Its position distinguishes regions
+ * whose visible titles coincide (same day/minute, translated types, no date).
  * @param {{ checkTime: string | Date, cards: string, title?: string, compact?: boolean, counts?: any }} group
+ * @param {number} groupNumber one-based position in the displayed group list
  */
-export function historyTray({
-  checkTime,
-  cards,
-  title = "",
-  compact = false,
-  counts = null,
-}) {
+export function historyTray(
+  { checkTime, cards, title = "", compact = false, counts = null },
+  groupNumber,
+) {
+  const heading = title || historicalCheckTitle(checkTime);
   return html`
     <section
       class="analysis-tray analysis-tray--history ${compact
         ? "analysis-tray--compact"
         : ""}"
-      aria-label="${escapeAttr(title || historicalCheckTitle(checkTime))}"
+      aria-label="${escapeAttr(
+        t("today.resultsGroup.aria", { number: groupNumber, title: heading }),
+      )}"
     >
       <div class="analysis-tray__cards">
-        <h2 class="analysis-tray__check-title">
-          ${escapeHtml(title || historicalCheckTitle(checkTime))}
-        </h2>
+        <h2 class="analysis-tray__check-title">${escapeHtml(heading)}</h2>
         ${counts ? duplicateCountLabel(counts) : ""}
         ${compact
           ? html`<div class="history-card-list">${cards}</div>`

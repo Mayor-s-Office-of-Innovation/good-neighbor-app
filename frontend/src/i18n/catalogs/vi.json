@@ -1711,6 +1711,7 @@
   "today.questions.error": "Không thể cập nhật các câu hỏi tiếp theo. Các công việc của bạn vẫn khả dụng. Vui lòng thử lại.",
   "today.remaining.error": "Không tải được một số nhiệm vụ.",
   "today.results.aria": "Kết quả nhiệm vụ",
+  "today.resultsGroup.aria": "Nhóm kết quả {number}: {title}",
   "today.settings.aria": "Cài đặt",
   "today.settings.attributions": "Giới thiệu & ghi công",
   "today.settings.feedback": "Gửi góp ý",

@@ -1711,6 +1711,7 @@
   "today.questions.error": "無法更新後續問題。您的待辦事項仍可使用。請重試。",
   "today.remaining.error": "無法載入部分任務。",
   "today.results.aria": "任務結果",
+  "today.resultsGroup.aria": "第 {number} 組結果：{title}",
   "today.settings.aria": "設定",
   "today.settings.attributions": "關於與版權聲明",
   "today.settings.feedback": "提供意見",
