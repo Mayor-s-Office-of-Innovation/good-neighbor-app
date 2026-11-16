@@ -1711,6 +1711,7 @@
   "today.questions.error": "Hindi namin ma-refresh ang mga follow-up na tanong. Available pa rin ang iyong mga gawain. Subukang muli.",
   "today.remaining.error": "Hindi ma-load ang ilang gawain.",
   "today.results.aria": "Mga resulta ng gawain",
+  "today.resultsGroup.aria": "Pangkat ng mga resulta {number}: {title}",
   "today.settings.aria": "Mga setting",
   "today.settings.attributions": "Tungkol at mga atribusyon",
   "today.settings.feedback": "Magpadala ng feedback",

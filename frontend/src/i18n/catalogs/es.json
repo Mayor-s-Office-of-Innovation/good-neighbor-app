@@ -1711,6 +1711,7 @@
   "today.questions.error": "No pudimos actualizar las preguntas de seguimiento. Sus tareas siguen disponibles. Inténtelo de nuevo.",
   "today.remaining.error": "No se pudieron cargar algunas tareas.",
   "today.results.aria": "Resultados de tareas",
+  "today.resultsGroup.aria": "Grupo de resultados {number}: {title}",
   "today.settings.aria": "Configuración",
   "today.settings.attributions": "Información y atribuciones",
   "today.settings.feedback": "Enviar comentarios",

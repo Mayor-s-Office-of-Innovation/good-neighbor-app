@@ -1711,6 +1711,7 @@
   "today.questions.error": "We couldn’t refresh follow-up questions. Your tasks are still available. Try again.",
   "today.remaining.error": "Some tasks could not be loaded.",
   "today.results.aria": "Task results",
+  "today.resultsGroup.aria": "Results group {number}: {title}",
   "today.settings.aria": "Settings",
   "today.settings.attributions": "About & attributions",
   "today.settings.feedback": "Send feedback",

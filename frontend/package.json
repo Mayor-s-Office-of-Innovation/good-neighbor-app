@@ -21,7 +21,7 @@
     {
       "name": "main js",
       "path": "dist/assets/index-*.js",
-      "limit": "77.3 kB"
+      "limit": "77.4 kB"
     },
     {
       "name": "site admin js",
