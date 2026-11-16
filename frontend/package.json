@@ -144,7 +144,7 @@
     "@size-limit/file": "^14.3.0",
     "@types/node": "^26.6.5",
     "eslint": "9.9.1",
-    "eslint-plugin-jsdoc": "^64.5.4",
+    "eslint-plugin-jsdoc": "^65.3.11",
     "globals": "17.13.0",
     "size-limit": "^14.3.0",
     "speed-check": "github:Mayor-s-Office-of-Innovation/speed-check#d472e8682b2e76504627f446e6881275bddfefd9",
