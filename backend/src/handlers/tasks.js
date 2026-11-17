@@ -11,6 +11,7 @@ import { getConfig } from "../config.js";
 import { jsonResponse, parseLimit, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
 import { GSI2_NAME, artifactKey, taskKey, taskWorklistPk } from "./keys.js";
+import { mediaPathsFor } from "../lib/media-cookie.js";
 import {
   createSf311Client,
   GOOD_NEIGHBOR_AGENCY,
@@ -170,6 +171,9 @@ async function withEvidenceKinds(tableName, siteId, tasks) {
         text: artifact.text || "",
         placeName: artifact.placeName || "",
         georeferencedAddress: artifact.georeferencedAddress || "",
+        // Plain viewer paths when media rides signed cookies (lib/media-cookie.js);
+        // absent otherwise, and the card falls back to the presign route.
+        ...mediaPathsFor(artifact, { siteId, checkId: task.checkId }),
       },
     };
   });

@@ -1,4 +1,5 @@
 import { currentManagerOversight } from "../lib/site-manager-name.js";
+import { mediaCookiesEnabled } from "../lib/media-cookie.js";
 import {
   readCompliancePeriods,
   projectSiteCompliance,
@@ -99,6 +100,10 @@ export const getSite = async (event) => {
     // matching remains independently controlled by the deployed
     // `enable_duplicate_detection` infrastructure flag.
     duplicateDetection: storedFeatureFlags.duplicateDetection !== false,
+    // Deployment-level: photos are plain /media paths behind a signed cookie
+    // (lib/media-cookie.js). The client uses the paths the lists carry only
+    // when this is on, and the presign route otherwise.
+    mediaCookies: mediaCookiesEnabled(),
   };
   return jsonResponse(200, { site: publicSite });
 };

@@ -1030,6 +1030,48 @@ describe("getCheckEvidenceBatch", () => {
       { checkId: "c", status: 500 },
     ]);
   });
+
+  it("adds viewer media paths for photos when media cookies are on", async () => {
+    vi.stubEnv("MEDIA_KEY_PAIR_ID", "K2EXAMPLE");
+    vi.stubEnv("MEDIA_SIGNING_KEY_SECRET_ARN", "arn:secret");
+    vi.stubEnv("PROVIDER_APP_URL", "https://app.example.org/");
+    try {
+      send.mockResolvedValueOnce({
+        Items: [
+          { sk: "CHECK#a" },
+          {
+            sk: "CHECK#a#ART#p",
+            artifactId: "p",
+            contentType: "image/jpeg",
+            s3Key: "checks/site-1/a/p",
+            thumbS3Key: "checks/site-1/a/p.thumb.webp",
+          },
+          {
+            sk: "CHECK#a#ART#t",
+            artifactId: "t",
+            contentType: "text/plain",
+            text: "note",
+          },
+        ],
+      });
+      const response = await read(["a"]);
+      expect(send.mock.calls[0][0].input.ProjectionExpression).toContain(
+        "thumbS3Key",
+      );
+      expect(JSON.parse(response.body).results[0].artifacts).toEqual([
+        {
+          artifactId: "p",
+          contentType: "image/jpeg",
+          s3Key: "checks/site-1/a/p",
+          mediaPath: "/checks/site-1/a/p",
+          thumbnailPath: "/checks/site-1/a/p.thumb.webp",
+        },
+        { artifactId: "t", contentType: "text/plain", text: "note" },
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe("getCaptureGuidance", () => {

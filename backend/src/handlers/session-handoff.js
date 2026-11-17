@@ -21,6 +21,7 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
+import { clearMediaCookies, withMediaCookies } from "../lib/media-cookie.js";
 import { URLSearchParams } from "node:url";
 import {
   GetCommand,
@@ -448,7 +449,8 @@ export const redeemSessionHandoff = async (event) => {
       : {}),
   });
   response.headers = { ...response.headers, "set-cookie": handoffCookie() };
-  return response;
+  // The Home Screen app has its own cookie jar; give it a media cookie too.
+  return withMediaCookies(response, siteId);
 };
 
 /**
@@ -681,7 +683,7 @@ function issuedResponse(grantId, token, expiresAt) {
 function retiredResponse(retired) {
   const response = jsonResponse(200, { retired });
   response.headers = { ...response.headers, "set-cookie": handoffCookie() };
-  return response;
+  return { ...response, cookies: clearMediaCookies() };
 }
 
 /**

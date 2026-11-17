@@ -203,7 +203,7 @@ resource "aws_lambda_function" "api" {
       PROVIDER_APP_URL                = var.provider_app_url
       # Business metrics (lib/metrics.js, EMF): CheckStarted / CheckCompleted.
       METRICS_NAMESPACE = local.metrics_namespace
-    }, local.sf311_lambda_environment, local.email_lambda_environment)
+    }, local.sf311_lambda_environment, local.email_lambda_environment, local.media_lambda_environment)
   }
 
   # The source limiter trusts the viewer header only after the edge has

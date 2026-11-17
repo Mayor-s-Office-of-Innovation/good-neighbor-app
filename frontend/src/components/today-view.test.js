@@ -4,6 +4,9 @@ import { formatTime, formatWeekday } from "../i18n/dates.js";
 import { t } from "../i18n/i18n.js";
 import { escapeHtml } from "../lib/html.js";
 
+// Component registrations outlive mock call history between tests.
+const components = new Map();
+
 beforeAll(() => {
   vi.stubGlobal("cancelAnimationFrame", vi.fn());
   vi.stubGlobal("requestAnimationFrame", vi.fn());
@@ -16,7 +19,7 @@ beforeAll(() => {
   vi.stubGlobal("document", { addEventListener: vi.fn() });
   vi.stubGlobal("history", { pushState: vi.fn() });
   vi.stubGlobal("customElements", {
-    define: vi.fn(),
+    define: (name, constructor) => components.set(name, constructor),
   });
 });
 
@@ -558,10 +561,8 @@ describe("card deletion events", () => {
     "handles child-originated deletion: %s",
     async (fromChild) => {
       await import("./today-view.js");
-      const registration = vi
-        .mocked(customElements.define)
-        .mock.calls.find(([name]) => name === "today-view");
-      const View = /** @type {any} */ (registration[1]);
+      const registration = components.get("today-view");
+      const View = /** @type {any} */ (registration);
       const view = new View();
       view._deferredDeletionRender = true;
       view.connectedCallback = vi.fn();
@@ -583,10 +584,8 @@ describe("in-progress card actions", () => {
     async (status) => {
       await import("./today-view.js");
       const { getToasts } = await import("../state/toasts.js");
-      const registration = vi
-        .mocked(customElements.define)
-        .mock.calls.find(([name]) => name === "today-view");
-      const View = /** @type {any} */ (registration[1]);
+      const registration = components.get("today-view");
+      const View = /** @type {any} */ (registration);
       const view = new View();
       const button = { disabled: false };
       const card = {
@@ -617,10 +616,8 @@ describe("in-progress card actions", () => {
 
   it("merges a completion response over the list record without a reload", async () => {
     await import("./today-view.js");
-    const registration = vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "today-view");
-    const View = /** @type {any} */ (registration[1]);
+    const registration = components.get("today-view");
+    const View = /** @type {any} */ (registration);
     const view = new View();
     view._homeModel = {
       tasks: [
@@ -652,10 +649,8 @@ describe("in-progress card actions", () => {
 
   it("holds a home paint while a native dialog is open and flushes on close", async () => {
     await import("./today-view.js");
-    const registration = vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "today-view");
-    const View = /** @type {any} */ (registration[1]);
+    const registration = components.get("today-view");
+    const View = /** @type {any} */ (registration);
     const view = new View();
     const model = { tasks: [] };
     view.querySelector = () => ({ open: true });
@@ -676,10 +671,8 @@ describe("in-progress card actions", () => {
 
   it("labels in-progress cards as View or add updates", async () => {
     await import("./today-view.js");
-    const registration = vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "today-view");
-    const View = /** @type {any} */ (registration[1]);
+    const registration = components.get("today-view");
+    const View = /** @type {any} */ (registration);
     const view = new View();
     view._site = { name: "Test site", address: "1 Test St" };
 
@@ -707,10 +700,8 @@ describe("in-progress card actions", () => {
 describe("live ticker refresh", () => {
   it("refreshes saved ticket statuses on return without disturbing an open dialog", async () => {
     await import("./today-view.js");
-    const registration = /** @type {any} */ (
-      customElements.define
-    ).mock.calls.find(([name]) => name === "today-view");
-    const view = new registration[1]();
+    const View = components.get("today-view");
+    const view = new View();
     view.isConnected = true;
     view._homeModel = { tasks: [{ taskId: "129" }] };
     const refresh = vi.fn();
@@ -734,11 +725,7 @@ describe("live ticker refresh", () => {
 
 it("retains confirmed resolution through delayed and missing index results", async () => {
   await import("./today-view.js");
-  const View = /** @type {any} */ (
-    vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "today-view")[1]
-  );
+  const View = /** @type {any} */ (components.get("today-view"));
   const view = new View();
   const task = {
     taskId: "a",
@@ -768,11 +755,7 @@ it("retains confirmed resolution through delayed and missing index results", asy
 
 it("reconciles TaskSheets updates before reloading, including after dismissal", async () => {
   await import("./today-view.js");
-  const View = /** @type {any} */ (
-    vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "today-view")[1]
-  );
+  const View = /** @type {any} */ (components.get("today-view"));
   const view = new View();
   view._homeModel = { tasks: [{ taskId: "a", status: "in_progress" }] };
   // Hold rendering at the model update; the open sheet normally remains mounted.
@@ -822,11 +805,7 @@ it("reconciles TaskSheets updates before reloading, including after dismissal", 
 
 it("retains hydrated evidence on refresh without retaining stale task status", async () => {
   await import("./today-view.js");
-  const View = /** @type {any} */ (
-    vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "today-view")[1]
-  );
+  const View = /** @type {any} */ (components.get("today-view"));
   const view = new View();
   view._homeModel = {
     tasks: [
@@ -857,11 +836,7 @@ it("retains hydrated evidence on refresh without retaining stale task status", a
 
 it("keeps the existing DOM when a background update does not change the rendered worklist", async () => {
   await import("./today-view.js");
-  const View = /** @type {any} */ (
-    vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "today-view")[1]
-  );
+  const View = /** @type {any} */ (components.get("today-view"));
   const view = new View();
   view._homeMarkup = "same content";
   view._render = () => "same content";
@@ -877,11 +852,7 @@ it("keeps the existing DOM when a background update does not change the rendered
 describe("return-to-app task freshness", () => {
   async function fixture() {
     await import("./today-view.js");
-    const View = /** @type {any} */ (
-      vi
-        .mocked(customElements.define)
-        .mock.calls.find(([name]) => name === "today-view")[1]
-    );
+    const View = /** @type {any} */ (components.get("today-view"));
     const view = new View();
     view.isConnected = true;
     view._siteId = "site";
@@ -1478,11 +1449,7 @@ it("keeps a shared filing override on the returned original and repairs separate
   const { readTaskStatusOverrides, writeTaskStatusOverrides } = await import(
     "../state/task-status-overrides.js"
   );
-  const View = /** @type {any} */ (
-    vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "today-view")[1]
-  );
+  const View = /** @type {any} */ (components.get("today-view"));
   let stored = "{}";
   const previousStorage = globalThis.localStorage;
   vi.stubGlobal("localStorage", {
@@ -1560,11 +1527,7 @@ it("keeps a shared filing override on the returned original and repairs separate
 
 it("does not turn bucket overrides or pending filing states into resolve permission", async () => {
   await import("./today-view.js");
-  const View = /** @type {any} */ (
-    vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "today-view")[1]
-  );
+  const View = /** @type {any} */ (components.get("today-view"));
   const view = new View();
   view._taskWith311CardStatus = (task) => task;
   view._taskStatusMeta = () => "";
@@ -1598,11 +1561,7 @@ it.each(["in_progress", "completed"])(
   "keeps checklist result %s through stale post-animation refreshes",
   async (status) => {
     await import("./today-view.js");
-    const View = /** @type {any} */ (
-      vi
-        .mocked(customElements.define)
-        .mock.calls.find(([name]) => name === "today-view")[1]
-    );
+    const View = /** @type {any} */ (components.get("today-view"));
     const view = new View();
     const open = {
       taskId: "a",

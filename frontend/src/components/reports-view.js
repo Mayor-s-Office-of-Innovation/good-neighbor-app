@@ -782,13 +782,16 @@ class ReportsDayView extends ReportsScreen {
         ...task,
         siteAddress: task.siteAddress || this._site?.address || "",
       }));
+    // Registers every artifact path synchronously, before photo-strip reads
+    // can start unnecessary presign requests (including checks with no tasks).
+    const hydration = hydrateTaskEvidenceFromCheck(checkTasks, detail);
     const [urls, hydratedTasks] = await Promise.all([
       Promise.all(
         photos.map((a) =>
           cachedMediaUrls(checkId, a.artifactId).catch(() => null),
         ),
       ),
-      hydrateTaskEvidenceFromCheck(checkTasks, detail),
+      hydration,
     ]);
     const evidence = [
       ...photos.map((a, i) => ({

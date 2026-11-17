@@ -422,7 +422,7 @@ describe("app action execution", () => {
 
   it.each([
     ["Run graffiti analysis", "1.5.1.1.18.0"],
-    ["Run bulky item analysis", "1.1.4.7.7.0"],
+    ["Run bulky item analysis", "1.1.4.7.21.0"],
   ])(
     "files %s with its default when classification cannot route",
     async (command, fallback) => {
@@ -577,6 +577,28 @@ describe("app action execution", () => {
         reason: "attachments_pending",
         payload: { tickets: [{ srNum: "2000008106" }] },
       });
+      const legacyPending = globalThis.structuredClone(checkpoints[0]);
+      legacyPending.payload = {
+        ...legacyPending.payload,
+        tickets: [
+          {
+            serviceCode: "1.1.4.7.20.0",
+            responsibleAgency: "76",
+            sourceRequestId: "task-1147200",
+            creationState: "pending",
+          },
+        ],
+      };
+      const beforeLegacyRetry = globalThis.structuredClone(legacyPending);
+      const legacyResult = await executeAppActions(actions, {
+        ...options,
+        priorResults: [legacyPending],
+      });
+      expect(legacyResult[0]).toMatchObject({
+        status: "failed",
+        reason: "sf311_creation_uncertain_requires_reconciliation",
+      });
+      expect(legacyPending).toEqual(beforeLegacyRetry);
       const uncertain = await executeAppActions(actions, {
         ...options,
         priorResults: [checkpoints[0]],
@@ -1210,7 +1232,7 @@ describe("app action execution", () => {
             code: "4001",
             request: {
               SourceAgency: "76",
-              SourceRequestID: "task-1-1147200",
+              SourceRequestID: "d6582cbe7a261acae34e",
               SourceOperator: "Good Neighbor App",
               ResponsibleAgency: "",
               ResponsibleAgencyRequestID: "",
@@ -1508,7 +1530,7 @@ describe("app action execution", () => {
               resolvedServiceCodes: [
                 command === "Run graffiti analysis"
                   ? "1.5.1.1.18.0"
-                  : "1.1.4.7.7.0",
+                  : "1.1.4.7.21.0",
               ],
             },
             recordedAt: "2026-08-18T12:00:00.000Z",
@@ -1857,7 +1879,7 @@ describe("app action execution", () => {
               {
                 serviceCode: "1.1.4.7.10.0",
                 responsibleAgency: "76",
-                sourceRequestId: "task-1-1147100",
+                sourceRequestId: "c12def3fe33c85c95cac",
                 srNum: "2000008106",
                 attachments: [],
               },
@@ -1983,7 +2005,7 @@ describe("app action execution", () => {
               {
                 serviceCode: "1.1.4.7.20.0",
                 responsibleAgency: "76",
-                sourceRequestId: "task-1-1147200",
+                sourceRequestId: "d6582cbe7a261acae34e",
                 srNum: "2000008106",
                 attachments: [
                   {
@@ -2118,7 +2140,7 @@ describe("app action execution", () => {
               {
                 serviceCode: "1.1.4.7.20.0",
                 responsibleAgency: "76",
-                sourceRequestId: "task-1-1147200",
+                sourceRequestId: "d6582cbe7a261acae34e",
                 srNum: "2000008106",
                 attachments: [
                   {
@@ -2358,6 +2380,7 @@ describe("app action execution", () => {
             tickets: [
               {
                 serviceCode: "1.1.4.7.20.0",
+                sourceRequestId: "task-1-1147200",
                 srNum: "2000008106",
                 attachments: [
                   {
@@ -2471,53 +2494,57 @@ describe("311 ticket closure", () => {
     expect(eligibleTicketsForClosure(results).size).toBe(1);
   });
 
-  it("closes eligible agency-76 tickets with UpdateType 11", async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          UpdateID: 4321,
-          error_description: "",
-          return_code: 0,
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
-    );
-    vi.stubGlobal("fetch", fetchImpl);
+  it.each(["1", "3"])(
+    "closes eligible agency-76 tickets with reason %s",
+    async (closedReasonCode) => {
+      const fetchImpl = vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            UpdateID: 4321,
+            error_description: "",
+            return_code: 0,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+      vi.stubGlobal("fetch", fetchImpl);
 
-    const results = await executeAppActions(
-      [{ code: "close_311_ticket", payload: {} }],
-      { env: ENV, now, priorResults: [SUBMITTED_311_RESULT] },
-    );
-    expect(results).toEqual([
-      {
-        code: "close_311_ticket",
-        status: "submitted",
-        payload: {
-          closures: [
-            {
-              serviceCode: "1.1.4.7.20.0",
-              srNum: "2000008106",
-              closedReasonCode: "1",
-              status: "closed",
-              updateId: "4321",
-            },
-          ],
+      const results = await executeAppActions(
+        [{ code: "close_311_ticket", payload: { closedReasonCode } }],
+        { env: ENV, now, priorResults: [SUBMITTED_311_RESULT] },
+      );
+      expect(results).toEqual([
+        {
+          code: "close_311_ticket",
+          status: "submitted",
+          payload: {
+            closedReasonCode,
+            closures: [
+              {
+                serviceCode: "1.1.4.7.20.0",
+                srNum: "2000008106",
+                closedReasonCode,
+                status: "closed",
+                updateId: "4321",
+              },
+            ],
+          },
+          recordedAt: "2026-08-18T12:00:00.000Z",
         },
-        recordedAt: "2026-08-18T12:00:00.000Z",
-      },
-    ]);
-    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
-      SRnum: "2000008106",
-      UpdateType: "11",
-      SendingAgency: "76",
-      SourceOperator: "Good Neighbor App",
-      NumericSubType: "1",
-      TextSubType: "",
-      EffectiveDate: "2026-08-18 12:00:00",
-      ToAgencyDate: "",
-      Notes: "",
-    });
-  });
+      ]);
+      expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+        SRnum: "2000008106",
+        UpdateType: "11",
+        SendingAgency: "76",
+        SourceOperator: "Good Neighbor App",
+        NumericSubType: closedReasonCode,
+        TextSubType: "",
+        EffectiveDate: "2026-08-18 12:00:00",
+        ToAgencyDate: "",
+        Notes: "",
+      });
+    },
+  );
 
   it.each(["sf311_closure_state_unknown", "sf311_timeout"])(
     "retries a saved %s closure directly without consulting the updates feed",
@@ -3116,7 +3143,7 @@ it("files a separate deliberate ticket after silent filing and preserves both th
   expect(merged[0]).toMatchObject({
     payload: {
       tickets: [
-        { srNum: "2000009999", sourceRequestId: expect.stringMatching(/^u-/) },
+        { srNum: "2000009999", sourceRequestId: "e3759633525536c48306" },
       ],
     },
   });
@@ -3182,7 +3209,7 @@ it("files a changed silent service after silent filing and preserves both throug
       tickets: [
         {
           srNum: "2000009999",
-          sourceRequestId: expect.stringMatching(/^task-1-/),
+          sourceRequestId: "6d3a174297d05e7f8156",
         },
       ],
     },

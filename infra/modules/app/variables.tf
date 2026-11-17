@@ -251,6 +251,17 @@ variable "provider_app_url" {
   }
 }
 
+variable "media_signing_public_key_pem" {
+  description = "PEM-encoded RSA public key for CloudFront signed media cookies (media.tf). Empty disables the /checks/* media behaviour and the feature; the private key is set out-of-band in Secrets Manager."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.media_signing_public_key_pem) == "" || startswith(trimspace(var.media_signing_public_key_pem), "-----BEGIN PUBLIC KEY-----")
+    error_message = "media_signing_public_key_pem must be a PEM public key (-----BEGIN PUBLIC KEY-----) or empty."
+  }
+}
+
 variable "sf311_media_domain_name" {
   description = "Dedicated HTTPS hostname for 311 bearer links, separate from logged SPA traffic."
   type        = string

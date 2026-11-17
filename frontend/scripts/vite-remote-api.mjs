@@ -3,7 +3,7 @@
 // harness, with no backend, JVM, MinIO, or analyzer key on the laptop.
 //
 // The API calls themselves need nothing beyond `server.proxy` (vite.config.js
-// points /v1, /app/v1, /site-code and /health at API_PROXY_TARGET with
+// points /v1, /app/v1, /site-code, /health and /checks at API_PROXY_TARGET with
 // changeOrigin so CloudFront sees the right Host). The one request that does
 // NOT go to the API is the presigned media PUT: the backend hands the browser
 // an absolute S3 URL and the browser PUTs there directly. From a localhost
@@ -82,7 +82,7 @@ export function remoteApiPlugin({ target }) {
     configureServer(server) {
       const { logger } = server.config;
       logger.info(
-        `\n  [remote api] proxying /v1, /app/v1, /site-code, /health → ${target}` +
+        `\n  [remote api] proxying /v1, /app/v1, /site-code, /health, /checks → ${target}` +
           `\n  [remote api] presigned S3 uploads routed via ${S3_UPLOAD_PROXY_PREFIX}<bucket-host>/… (no CORS change)\n`,
       );
 

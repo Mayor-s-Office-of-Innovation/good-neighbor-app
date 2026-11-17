@@ -22,20 +22,23 @@ vi.mock("../services/api.js", () => ({
 }));
 vi.mock("../state/toasts.js", () => toasts);
 
+// Component registrations outlive mock call history between tests.
+const components = new Map();
+
 beforeAll(() => {
   vi.stubGlobal("HTMLElement", class {});
   vi.stubGlobal("requestAnimationFrame", (callback) => setTimeout(callback, 0));
   vi.stubGlobal("cancelAnimationFrame", (id) => clearTimeout(id));
-  vi.stubGlobal("customElements", { define: vi.fn() });
+  vi.stubGlobal("customElements", {
+    define: (name, constructor) => components.set(name, constructor),
+  });
 });
 
 describe("task-update-dialog controller", () => {
   it("registers a controller whose draft detection delegates to domain state", async () => {
     await import("./task-update-dialog.js");
-    const registration = vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "task-update-dialog");
-    const Dialog = /** @type {any} */ (registration[1]);
+    const registration = components.get("task-update-dialog");
+    const Dialog = /** @type {any} */ (registration);
     const dialog = new Dialog();
 
     dialog._mode = "action";
@@ -47,10 +50,8 @@ describe("task-update-dialog controller", () => {
 
   it("keeps a dirty editor open until discard is confirmed", async () => {
     await import("./task-update-dialog.js");
-    const registration = vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "task-update-dialog");
-    const Dialog = /** @type {any} */ (registration[1]);
+    const registration = components.get("task-update-dialog");
+    const Dialog = /** @type {any} */ (registration);
     const dialog = new Dialog();
     dialog._mode = "action";
     dialog._actionText = "Draft action";
@@ -71,10 +72,8 @@ describe("task-update-dialog controller", () => {
 
   it("emits the host refresh event through one controller method", async () => {
     await import("./task-update-dialog.js");
-    const registration = vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "task-update-dialog");
-    const Dialog = /** @type {any} */ (registration[1]);
+    const registration = components.get("task-update-dialog");
+    const Dialog = /** @type {any} */ (registration);
     const dialog = new Dialog();
     dialog.dispatchEvent = vi.fn();
 
@@ -86,10 +85,8 @@ describe("task-update-dialog controller", () => {
 
   it("restores controls and shows a failure toast after a failed mutation", async () => {
     await import("./task-update-dialog.js");
-    const registration = vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "task-update-dialog");
-    const Dialog = /** @type {any} */ (registration[1]);
+    const registration = components.get("task-update-dialog");
+    const Dialog = /** @type {any} */ (registration);
     const dialog = new Dialog();
     const button = { disabled: false };
     const error = { hidden: true, textContent: "" };
@@ -114,10 +111,8 @@ describe("task-update-dialog controller", () => {
 
   it("reuses a successful per-file upload throughout the draft", async () => {
     await import("./task-update-dialog.js");
-    const registration = vi
-      .mocked(customElements.define)
-      .mock.calls.find(([name]) => name === "task-update-dialog");
-    const Dialog = /** @type {any} */ (registration[1]);
+    const registration = components.get("task-update-dialog");
+    const Dialog = /** @type {any} */ (registration);
     const dialog = new Dialog();
     const file = /** @type {File} */ ({});
     dialog._task = { taskId: "task-1", checkId: "check-1" };
@@ -490,11 +485,7 @@ it("resets workflow state when reusing a 311 editor for completion results and b
 describe("City status in issue timeline", () => {
   it("loads current closure and City events, without duplicate events on pagination", async () => {
     await import("./task-update-dialog.js");
-    const Dialog = /** @type {any} */ (
-      vi
-        .mocked(customElements.define)
-        .mock.calls.find(([name]) => name === "task-update-dialog")[1]
-    );
+    const Dialog = /** @type {any} */ (components.get("task-update-dialog"));
     const dialog = new Dialog();
     dialog._render = vi.fn();
     const task = {
@@ -547,11 +538,7 @@ describe("City status in issue timeline", () => {
   });
   it("keeps app activity and the last known ticker if the City feed is unavailable", async () => {
     await import("./task-update-dialog.js");
-    const Dialog = /** @type {any} */ (
-      vi
-        .mocked(customElements.define)
-        .mock.calls.find(([name]) => name === "task-update-dialog")[1]
-    );
+    const Dialog = /** @type {any} */ (components.get("task-update-dialog"));
     const dialog = new Dialog();
     dialog._render = vi.fn();
     const task = {
@@ -592,9 +579,13 @@ it("resolves immediately without opening documentation", async () => {
   dialog.dispatchEvent ||= vi.fn();
   dialog.markResolved(task);
   dialog.markResolved(task);
-  expect(api.createTaskUpdate).toHaveBeenLastCalledWith("resolve-now", {
-    type: "issue_resolved",
-  });
+  expect(api.createTaskUpdate).toHaveBeenLastCalledWith(
+    "resolve-now",
+    {
+      type: "issue_resolved",
+    },
+    expect.any(String),
+  );
   expect(dialog.openResults).not.toHaveBeenCalled();
   dialog._dismiss = vi.fn();
   expect(dialog._notifyUpdated).not.toHaveBeenCalled();
@@ -604,6 +595,31 @@ it("resolves immediately without opening documentation", async () => {
   });
   await vi.waitFor(() => expect(dialog._dismiss).toHaveBeenCalledOnce());
   expect(dialog._notifyUpdated).toHaveBeenCalledOnce();
+});
+
+it("retries an unconfirmed standalone resolution with its original identity", async () => {
+  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+  const dialog = new TaskUpdateDialog();
+  dialog.dispatchEvent = vi.fn();
+  dialog._notifyUpdated = vi.fn();
+  dialog._dismiss = vi.fn();
+  api.createTaskUpdate
+    .mockReset()
+    .mockRejectedValueOnce(
+      Object.assign(new Error("City update not confirmed"), { status: 502 }),
+    )
+    .mockResolvedValueOnce({
+      task: { status: "completed" },
+      update: { updateId: "same-resolution" },
+    });
+  const task = { taskId: "standalone-retry", status: "in_progress" };
+  dialog.markResolved(task);
+  await vi.waitFor(() => expect(dialog._resolving).toBe(false));
+  dialog.markResolved(task);
+  await vi.waitFor(() => expect(dialog._dismiss).toHaveBeenCalledOnce());
+  expect(api.createTaskUpdate.mock.calls[1][2]).toBe(
+    api.createTaskUpdate.mock.calls[0][2],
+  );
 });
 
 it("identifies a dismissed resolution prompt so its controller is not reused during background saves", async () => {
@@ -654,11 +670,7 @@ it("lets the worklist own timeline resolution and its card exit lifecycle", asyn
 describe("timeline loading resilience", () => {
   async function makeDialog() {
     await import("./task-update-dialog.js");
-    const Dialog = /** @type {any} */ (
-      vi
-        .mocked(customElements.define)
-        .mock.calls.find(([name]) => name === "task-update-dialog")[1]
-    );
+    const Dialog = /** @type {any} */ (components.get("task-update-dialog"));
     const dialog = new Dialog();
     dialog._render = vi.fn();
     return dialog;
@@ -1012,4 +1024,163 @@ it("allows local updates without a City-help choice when the API reports only cl
   expect(dialog._content()).not.toContain("data-city-help");
   dialog._resetDraft();
   expect(dialog._cityHelpNeeded).toBeUndefined();
+});
+
+describe("City note status polling", () => {
+  async function makeDialog() {
+    await import("./task-update-dialog.js");
+    const Dialog = /** @type {any} */ (components.get("task-update-dialog"));
+    const dialog = new Dialog();
+    dialog._render = vi.fn();
+    return dialog;
+  }
+  const task = { taskId: "note-poll" };
+  /** @param {string} status */
+  const page = (status) => ({
+    task,
+    updates: [
+      { updateId: "note", cityHelpNeeded: false, cityNoteStatus: status },
+      { updateId: "older", text: "Earlier activity" },
+    ],
+  });
+
+  it("re-checks a sending note while open and stops once it settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const { CITY_NOTE_POLL_MS } = await import("./task-update-dialog.js");
+      const dialog = await makeDialog();
+      api.getTaskUpdates.mockReset();
+      api.getTaskUpdates.mockResolvedValueOnce(page("pending"));
+      await dialog.open(task);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(1);
+
+      api.getTaskUpdates.mockResolvedValueOnce(page("sending"));
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(2);
+      expect(dialog._detail.updates[0].cityNoteStatus).toBe("sending");
+
+      api.getTaskUpdates.mockResolvedValueOnce(page("sent"));
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS);
+      expect(dialog._detail.updates[0].cityNoteStatus).toBe("sent");
+      expect(dialog._detail.updates[1].text).toBe("Earlier activity");
+      expect(dialog._state).toBe("ready");
+
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS * 3);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("polls nested resolution checkpoints until mixed outcomes settle without dropping older updates", async () => {
+    vi.useFakeTimers();
+    try {
+      const { CITY_NOTE_POLL_MS } = await import("./task-update-dialog.js");
+      const dialog = await makeDialog();
+      const nested = (status) => ({
+        task,
+        updates: [
+          {
+            updateId: "note",
+            cityNotes: [
+              { cityNoteStatus: "failed" },
+              { cityNoteStatus: status },
+            ],
+          },
+        ],
+      });
+      api.getTaskUpdates.mockReset();
+      api.getTaskUpdates.mockResolvedValueOnce(nested("pending"));
+      await dialog.open(task);
+      dialog._detail.updates.push({
+        updateId: "older",
+        text: "Earlier activity",
+      });
+      api.getTaskUpdates.mockResolvedValueOnce(nested("sent"));
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS);
+      expect(
+        dialog._detail.updates[0].cityNotes.map((note) => note.cityNoteStatus),
+      ).toEqual(["failed", "sent"]);
+      expect(dialog._detail.updates[1].text).toBe("Earlier activity");
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS * 2);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("doesn't poll when no note is in flight, and stops after the limit", async () => {
+    vi.useFakeTimers();
+    try {
+      const { CITY_NOTE_POLL_MS, CITY_NOTE_POLL_LIMIT } = await import(
+        "./task-update-dialog.js"
+      );
+      const dialog = await makeDialog();
+      api.getTaskUpdates.mockReset();
+      api.getTaskUpdates.mockResolvedValue(page("failed"));
+      await dialog.open(task);
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS * 2);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(1);
+
+      api.getTaskUpdates.mockResolvedValue(page("unknown"));
+      await dialog._load();
+      await vi.advanceTimersByTimeAsync(
+        CITY_NOTE_POLL_MS * (CITY_NOTE_POLL_LIMIT + 3),
+      );
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(
+        2 + CITY_NOTE_POLL_LIMIT,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops polling when the dialog closes", async () => {
+    vi.useFakeTimers();
+    try {
+      const { CITY_NOTE_POLL_MS } = await import("./task-update-dialog.js");
+      const dialog = await makeDialog();
+      dialog.querySelector = vi.fn(() => null);
+      dialog.dispatchEvent = vi.fn();
+      api.getTaskUpdates.mockReset();
+      api.getTaskUpdates.mockResolvedValue(page("pending"));
+      await dialog.open(task);
+      dialog._dismiss();
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS * 3);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("City note polling and older pages", () => {
+  it("doesn't poll for an in-flight note that only appears on an older page", async () => {
+    vi.useFakeTimers();
+    try {
+      const { CITY_NOTE_POLL_MS } = await import("./task-update-dialog.js");
+      await import("./task-update-dialog.js");
+      const Dialog = /** @type {any} */ (components.get("task-update-dialog"));
+      const dialog = new Dialog();
+      dialog._render = vi.fn();
+      const task = { taskId: "older-note" };
+      api.getTaskUpdates.mockReset();
+      api.getTaskUpdates.mockResolvedValueOnce({
+        task,
+        updates: [{ updateId: "newest", text: "Latest" }],
+        nextToken: "older",
+      });
+      await dialog.open(task);
+      api.getTaskUpdates.mockResolvedValueOnce({
+        task,
+        updates: [{ updateId: "old-note", cityNoteStatus: "unknown" }],
+      });
+      await dialog._load("older");
+      expect(dialog._detail.updates).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS * 3);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

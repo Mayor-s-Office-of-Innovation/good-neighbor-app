@@ -84,6 +84,12 @@ variable "alarm_emails" {
   default     = ["aaron.hans@sf.gov"]
 }
 
+variable "media_signing_public_key_pem" {
+  type        = string
+  default     = ""
+  description = "PEM public key for CloudFront signed media cookies; see the module variable of the same name and docs/runbooks/media-safeguards.md."
+}
+
 variable "enable_cloudwatch_omni" {
   type        = bool
   default     = false

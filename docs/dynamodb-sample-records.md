@@ -430,6 +430,7 @@ entire integration history.
   written together without analyzer work. They do not reuse ART records.
 - `SF311_JOB#<taskId>#<phase>` and `SF311_LOCK#<taskId>`: background integration
   jobs and durable worker checkpoints when the applicable integration is enabled.
+  A queued City note's job (`#note-<updateId>`) points to its task update.
 
 See the [data model](dynamodb-data-model.md) for full record definitions and
 [architecture](architecture.md#guidance-workflow-rule-driven-tasks) for task transitions.

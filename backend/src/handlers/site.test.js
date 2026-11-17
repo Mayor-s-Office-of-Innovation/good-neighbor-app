@@ -271,7 +271,7 @@ describe("site admin", () => {
     expect(body(response).site).toEqual({
       siteId: "site-1",
       name: "Mission",
-      featureFlags: { duplicateDetection: true },
+      featureFlags: { duplicateDetection: true, mediaCookies: false },
     });
   });
 

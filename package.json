@@ -36,12 +36,11 @@
     "test:recovery:ui": "playwright test -c e2e/recovery.config.js"
   },
   "devDependencies": {
-    "js-yaml": "4.3.2",
+    "js-yaml": "5.5.0",
     "prettier": "3.3.3"
   },
   "overrides": {
-    "esbuild": "0.27.2",
-    "vite": "8.2.1"
+    "esbuild": "0.27.2"
   },
   "engines": {
     "node": ">=24"
