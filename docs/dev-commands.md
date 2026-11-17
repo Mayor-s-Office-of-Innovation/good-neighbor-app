@@ -506,6 +506,20 @@ API with real browser storage and recovery services):
 npm run test:recovery:ui
 ```
 
+This suite starts only Vite on port 5182 and runs two workers. Each test uses
+`e2e/helpers/recovery-test.js`: telemetry is disabled with the app's existing
+opt-outs, and any API request without an explicit mock fails the test with its
+method and path.
+Use the managed `page` / `context` fixtures (and `test.use` for browser options)
+so new pages and unload requests remain inside the mocks. Do not start a backend
+to make this suite pass.
+
+The recovery scenarios advance Playwright's browser clock through the health
+backoff while retaining real probes, queue recovery, uploads and IndexedDB writes.
+The console lists each test and its duration; the JSON timing report is saved to
+`e2e/test-results/recovery-results.json` and included in CI's `playwright-ui-results`
+artifact. Run with `-- --workers=1` to diagnose ordering or resource contention.
+
 
 ### Real-device testing through ngrok (local harness only)
 

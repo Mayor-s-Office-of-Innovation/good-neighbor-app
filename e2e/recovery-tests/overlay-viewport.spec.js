@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../helpers/recovery-test.js";
 
 for (const viewport of [
   { width: 320, height: 568 },
