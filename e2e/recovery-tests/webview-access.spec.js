@@ -1,13 +1,48 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../helpers/recovery-test.js";
 
 /** @typedef {Window & { __beforeRecovery?: boolean }} TestWindow */
 
-test.beforeEach(async ({ page }) => {
-  await page.route("**/health", (route) =>
+test.beforeEach(async ({ context }) => {
+  await context.route("**/health", (route) =>
     route.fulfill({ json: { ok: true } }),
   );
-  await page.route("**/v1/**", (route) =>
-    route.fulfill({ json: { bindings: [], tasks: [], checks: [], sites: [] } }),
+  await context.route("**/app/v1/device-bindings", (route) =>
+    route.fulfill({ json: { bindings: [] } }),
+  );
+  await context.route("**/v1/site", (route) =>
+    route.fulfill({
+      json: { site: { siteId: "synthetic-site", name: "Synthetic site" } },
+    }),
+  );
+  await context.route("**/v1/provider-sites", (route) =>
+    route.fulfill({ json: { sites: [] } }),
+  );
+  await context.route("**/v1/guidance/pending", (route) =>
+    route.fulfill({ json: { guidance: [] } }),
+  );
+  await context.route("**/app/v1/session-handoff", (route) =>
+    route.fulfill({
+      json: {
+        grantId: "synthetic-handoff",
+        expiresAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+        startUrl:
+          "/#handoff_grant=synthetic-handoff&handoff_token=synthetic-token",
+      },
+    }),
+  );
+  await context.route("**/v1/home?**", (route) =>
+    route.fulfill({
+      json: {
+        checks: { ok: true, items: [] },
+        tasks: Object.fromEntries(
+          ["open", "in_progress", "completing", "completed"].map((status) => [
+            status,
+            { ok: true, items: [] },
+          ]),
+        ),
+        loadedAt: new Date().toISOString(),
+      },
+    }),
   );
 });
 
@@ -59,36 +94,26 @@ for (const agent of [
   safari.replace("Version/17.5", "CriOS/126.0.0.0"),
   "Mozilla/5.0 (Linux; Android 14; Test Device) AppleWebKit/537.36 Chrome/126.0.0.0 Mobile Safari/537.36",
 ]) {
-  test(`normal browser retains invitation confirmation: ${agent}`, async ({
-    browser,
-    baseURL,
-  }) => {
-    const context = await browser.newContext({ userAgent: agent });
-    const page = await context.newPage();
-    await page.goto(`${baseURL}${invitation}`);
-    await expect(page.locator("#enrollment-form")).toBeVisible();
-    await expect(page.locator(".webview-banner")).toHaveCount(0);
-    await context.close();
+  test.describe(`normal browser: ${agent}`, () => {
+    // Use the managed context so API mocks and device emulation also apply.
+    test.use({ userAgent: agent });
+    test("retains invitation confirmation", async ({ page }) => {
+      await page.goto(invitation);
+      await expect(page.locator("#enrollment-form")).toBeVisible();
+      await expect(page.locator(".webview-banner")).toHaveCount(0);
+    });
   });
 }
 
 test("used invitation recovery reloads and enters the saved browser session", async ({
   page,
 }) => {
-  await page.route("**/health", (route) =>
-    route.fulfill({ json: { ok: true } }),
+  await page.route("**/app/v1/enrollment/redeem", (route) =>
+    route.fulfill({
+      status: 409,
+      json: { error: "enrollment_already_used" },
+    }),
   );
-  await page.route("**/app/v1/**", (route) => {
-    if (route.request().url().endsWith("/enrollment/redeem")) {
-      return route.fulfill({
-        status: 409,
-        json: { error: "enrollment_already_used" },
-      });
-    }
-    return route.fulfill({
-      json: { bindings: [], tasks: [], checks: [], sites: [] },
-    });
-  });
   await page.goto(invitation);
   await expect(page.locator("#enrollment-form")).toBeVisible();
   await page.evaluate(async () => {
@@ -103,7 +128,9 @@ test("used invitation recovery reloads and enters the saved browser session", as
   });
   await page.locator("#confirm-enrollment").click();
   await expect(page.locator("#enrollment-form [role=alert]")).toBeVisible();
+  const homeLoaded = page.waitForResponse("**/v1/home?**");
   await page.locator("#enrollment-open-app").click();
+  expect((await homeLoaded).ok()).toBe(true);
   await expect(page.locator("today-view")).toBeVisible();
   expect(
     await page.evaluate(

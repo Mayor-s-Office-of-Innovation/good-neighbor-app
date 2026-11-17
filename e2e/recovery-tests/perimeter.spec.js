@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../helpers/recovery-test.js";
 import AxeBuilder from "@axe-core/playwright";
 import { t } from "../helpers/i18n.js";
 
@@ -70,7 +70,16 @@ async function setup(page) {
   await page.route("**/v1/**", async (route) => {
     const request = route.request(),
       path = new URL(request.url()).pathname;
+    if (["/v1/client-errors", "/v1/client-events"].includes(path))
+      return route.fallback();
     if (server.interrupted) return route.abort("internetdisconnected");
+    if (request.method() === "POST" && path === "/v1/checks")
+      return route.fulfill({ json: {} });
+    if (
+      request.method() === "POST" &&
+      /^\/v1\/checks\/[^/]+\/complete$/.test(path)
+    )
+      return route.fulfill({ json: {} });
     if (path.endsWith("artifacts:presign")) {
       const body = request.postDataJSON();
       if (!server.reservations.has(body.uploadRequestId))
@@ -106,7 +115,7 @@ async function setup(page) {
       return route.fulfill({
         json: { assessment: {}, conditions: [], tasks: [] },
       });
-    if (request.method() === "GET" && path.startsWith("/v1/checks/"))
+    if (request.method() === "GET" && /^\/v1\/checks\/[^/]+$/.test(path))
       return route.fulfill({
         json: {
           check: {},
@@ -120,7 +129,7 @@ async function setup(page) {
             })),
         },
       });
-    return route.fulfill({ json: {} });
+    return route.fallback();
   });
   await page.goto("/__recovery_test");
   await page.waitForFunction(() => /** @type {any} */ (window).ready);
@@ -139,13 +148,15 @@ async function statuses(page) {
 test("a stored photo with a lost PUT reply is verified without retransmitting bytes", async ({
   page,
 }) => {
+  await page.clock.install();
   const server = await setup(page);
   server.complete = true;
   server.loseNextUploadReply = true;
   await page.locator("#capture").click();
-  await expect
-    .poll(() => statuses(page), { timeout: 75_000 })
-    .toEqual(["analyzed"]);
+  await expect.poll(() => statuses(page)).toEqual(["waiting"]);
+  // Exercise the real scheduled health probe without sleeping for its backoff.
+  await page.clock.fastForward(30_001);
+  await expect.poll(() => statuses(page)).toEqual(["analyzed"]);
   expect(server.uploads).toBe(1);
   expect(server.stored.size).toBe(1);
   expect(server.registrations).toBe(1);
@@ -155,7 +166,7 @@ test("Wi-Fi to shaky cellular to offline recovers photos without manual retries"
   page,
   context,
 }) => {
-  test.setTimeout(90_000);
+  await page.clock.install();
   const server = await setup(page);
   for (let i = 0; i < 4; i++) await page.locator("#capture").click();
   await expect.poll(() => statuses(page)).toContain("analyzed");
@@ -170,13 +181,23 @@ test("Wi-Fi to shaky cellular to offline recovers photos without manual retries"
     )
     .toBeGreaterThan(0);
   await expect(page.locator('[data-analysis-action="retry"]')).toHaveCount(0);
+  // Let every interrupted upload/poll record its failure before restoring the
+  // mock network and advancing time. Otherwise a late failure can arrive after
+  // the recovery probe and require another backoff, especially in WebKit.
+  await expect
+    .poll(async () =>
+      (await statuses(page)).every((/** @type {string} */ status) =>
+        ["analyzed", "waiting"].includes(status),
+      ),
+    )
+    .toBe(true);
+  await expect.poll(() => server.active).toBe(0);
   server.interrupted = false;
   server.complete = true;
-  // Recovery is driven by the real health probe and connectionretry event;
-  // no manual retry or direct queue invocation announces reconnection here.
-  await expect
-    .poll(() => statuses(page), { timeout: 75_000 })
-    .toEqual(Array(6).fill("analyzed"));
+  // Advance the backoff, retaining the real health probe and connectionretry
+  // event. No manual retry or direct queue invocation announces reconnection.
+  await page.clock.fastForward(30_001);
+  await expect.poll(() => statuses(page)).toEqual(Array(6).fill("analyzed"));
   expect(server.uploads).toBe(6);
   expect(server.peak).toBeLessThanOrEqual(2);
   await context.setOffline(true);
