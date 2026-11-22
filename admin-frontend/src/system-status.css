@@ -1,6 +1,10 @@
 .status-page {
   max-width: 52rem;
   margin-inline: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px;
 }
 .status-list {
   border-block-start: 1px solid var(--line);

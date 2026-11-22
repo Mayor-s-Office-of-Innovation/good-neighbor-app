@@ -5673,20 +5673,19 @@ class AdminApp extends HTMLElement {
         ? "details"
         : requestedSection);
     this.innerHTML = `
+      <div class="admin-shell">
+        ${this.state.hasToken ? shellNav(this.state) : ""}
+        <div class="admin-shell__content">
       <main class="admin" id="main-content" tabindex="-1">
-        <header class="admin__header">
+        ${
+          this.state.hasToken
+            ? ""
+            : `<header class="admin__header">
           <div class="site-title">
             <a class="brand" href="/sites" data-route>${escapeHtml(t("admin.brand"))}</a>
           </div>
-          ${
-            this.state.hasToken
-              ? adminSettingsMenu(
-                  this.state.capabilities.manageAdminUsers,
-                  this.state.capabilities.createEntities,
-                )
-              : ""
-          }
-        </header>
+        </header>`
+        }
         ${localRoleEnabled(this.state.authConfig) ? `<div class="local-role-switch"><label for="local-role-switch">${escapeHtml(t("admin.localRole.label"))}</label><select id="local-role-switch"><option value="supervisor" ${getLocalRole() === "supervisor" ? "selected" : ""}>${escapeHtml(t("admin.localRole.supervisor"))}</option><option value="manager" ${getLocalRole() === "manager" ? "selected" : ""}>${escapeHtml(t("admin.localRole.manager"))}</option></select><p class="muted">${escapeHtml(t("admin.localRole.help"))}</p></div>` : ""}
         ${
           this.state.hasToken
@@ -5770,6 +5769,8 @@ class AdminApp extends HTMLElement {
         }
       ${!site && !program && route.name === "sites" ? discardChangesDialog() : ""}
       </main>
+        </div>
+      </div>
     `;
     this.bind();
     this.applyCapabilities();
@@ -5872,10 +5873,70 @@ function myProfileView(state) {
   </section>`;
 }
 
-function adminSettingsMenu(canManageUsers, canImportSites) {
+/** @param {string} routeName */
+function activeNavSection(routeName) {
+  if (routeName === "provider-managers" || routeName === "provider-manager")
+    return "provider-managers";
+  if (routeName.startsWith("manager")) return "managers";
+  if (routeName.startsWith("provider") || routeName.startsWith("program"))
+    return "providers";
+  if (routeName.startsWith("site")) return "sites";
+  return "";
+}
+
+/** @param {AdminState} state */
+function shellNav(state) {
+  const active = activeNavSection(currentRoute().name);
+  const item = (kind, label, icon) =>
+    `<a class="admin-nav__link" href="/${kind}" data-route ${kind === active ? 'aria-current="page"' : ""}><wa-icon name="${icon}" aria-hidden="true"></wa-icon><span>${escapeHtml(label)}</span></a>`;
+  const profile = state.profile;
+  const name = profile
+    ? [profile.firstName, profile.lastName].filter(Boolean).join(" ") ||
+      profile.email
+    : "";
+  return `<aside class="admin-nav">
+    <a class="admin-nav__brand" href="/sites" data-route aria-label="${escapeHtml(t("admin.brand"))}">
+      <img class="admin-nav__logo" src="${import.meta.env.BASE_URL}img/gn-logo.png" alt="" width="36" height="36" />
+      <span class="admin-nav__brand-text"><strong>${escapeHtml(t("app.name"))}</strong><span>${escapeHtml(t("admin.breadcrumb.admin"))}</span></span>
+    </a>
+    <nav class="admin-nav__links" aria-label="${escapeHtml(t("admin.directory.sections"))}">
+      ${item("sites", "Sites", "house")}
+      ${item("managers", "Site managers", "user")}
+      ${state.capabilities?.manageProviderManagers ? item("provider-managers", t("admin.providerManagers.title"), "users") : ""}
+      ${item("providers", "Providers & Programs", "building")}
+    </nav>
+    <div class="admin-nav__footer">${adminSettingsMenu(
+      state.capabilities.manageAdminUsers,
+      state.capabilities.createEntities,
+      name
+        ? {
+            name,
+            role: t(
+              profile.role === "compliance-supervisor"
+                ? "admin.profile.supervisor"
+                : "admin.profile.manager",
+            ),
+            initials: name
+              .split(/\s+/)
+              .slice(0, 2)
+              .map((part) => part[0].toUpperCase())
+              .join(""),
+          }
+        : null,
+    )}</div>
+  </aside>`;
+}
+
+function adminSettingsMenu(canManageUsers, canImportSites, account = null) {
   return `<div class="admin-settings-wrap">
-    <button class="admin-settings" type="button" popovertarget="admin-settings-menu" aria-label="Settings" aria-haspopup="menu">
-      <wa-icon name="gear" aria-hidden="true"></wa-icon>
+    <button class="admin-settings ${account ? "admin-settings--account" : ""}" type="button" popovertarget="admin-settings-menu" aria-label="Settings" aria-haspopup="menu">
+      ${
+        account
+          ? `<span class="admin-nav__avatar" aria-hidden="true">${escapeHtml(account.initials)}</span>
+      <span class="admin-nav__account-text" aria-hidden="true"><strong>${escapeHtml(account.name)}</strong><span>${escapeHtml(account.role)}</span></span>
+      <wa-icon name="chevron-up" aria-hidden="true"></wa-icon>`
+          : '<wa-icon name="gear" aria-hidden="true"></wa-icon>'
+      }
     </button>
     <div class="admin-settings-menu" id="admin-settings-menu" popover role="menu" aria-label="Settings">
       <a href="/profile" data-route role="menuitem"><wa-icon name="user" aria-hidden="true"></wa-icon><span>${escapeHtml(t("admin.profile.title"))}</span></a>
@@ -6446,11 +6507,16 @@ function directoryView(state, route) {
     department: params.get("department") || "",
     system: params.get("system") || "",
   };
+  const sectionTitles = {
+    sites: "Sites",
+    managers: "Site managers",
+    "provider-managers": t("admin.providerManagers.title"),
+    providers: "Providers & Programs",
+  };
   return `<section class="directory" aria-labelledby="directory-title">
     <div class="page-head">
       <div>
-        <h1 id="directory-title" tabindex="-1">${escapeHtml(t("admin.breadcrumb.admin"))}</h1>
-        <p class="muted">Manage providers, programs, sites, enrollment, and devices.</p>
+        <h1 id="directory-title" tabindex="-1">${escapeHtml(sectionTitles[section])}</h1>
       </div>
     </div>
     <form id="directory-search" class="directory-search" role="search">
@@ -6461,16 +6527,6 @@ function directoryView(state, route) {
       </div>
     </form>
     <div id="directory-results">
-    ${
-      !search
-        ? `<nav class="entity-tabs" aria-label="${escapeHtml(t("admin.directory.sections"))}">
-      ${directoryTab("sites", "Sites", section, search)}
-      ${directoryTab("managers", "Site managers", section, search)}
-      ${state.capabilities?.manageProviderManagers ? directoryTab("provider-managers", escapeHtml(t("admin.providerManagers.title")), section, search) : ""}
-      ${directoryTab("providers", "Providers & Programs", section, search)}
-    </nav>`
-        : ""
-    }
     ${search && section === "sites" && state.capabilities?.createEntities === true ? batch311Header() : ""}
     ${search && section !== "provider-managers" ? globalDirectorySearch(state, search) : ""}
     ${section === "provider-managers" ? providerManagerDirectoryView(state, search) : ""}
@@ -6479,12 +6535,6 @@ function directoryView(state, route) {
     ${!search && section === "managers" ? siteManagerDirectory(state, { program: params.get("program") || "", site: params.get("site") || "" }, search) : ""}
     </div>
   </section>`;
-}
-
-/** @param {string} kind @param {string} label @param {string} current @param {string} search */
-function directoryTab(kind, label, current, search) {
-  const query = search ? `?q=${encodeURIComponent(search)}` : "";
-  return `<a href="/${kind}${query}" data-route ${kind === current ? 'aria-current="page"' : ""}>${label}</a>`;
 }
 
 /** @param {AdminState} state @param {{ manager: string, department: string, system: string }} selected */
