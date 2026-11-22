@@ -13,6 +13,9 @@
   --on-ink: #ffffff;
   --focus: #005ea8;
   --danger: #a40000;
+  /* Sign-in journey brand (matches the Cognito hosted-page customization). */
+  --brand-blue: #2a60af;
+  --brand-blue-hover: #234f91;
 }
 
 * {
@@ -1377,6 +1380,36 @@ button,
 .btn-danger {
   border-color: #a40000;
   color: #a40000;
+}
+
+/* Signed-out card: centered and narrow, matching the hosted sign-in steps
+   that follow it, with the journey's blue on the one action. */
+.auth-panel {
+  width: min(100%, 25rem);
+  margin: 12vh auto 0;
+  padding: 24px;
+}
+
+.auth-panel h2 {
+  margin: 0;
+}
+
+.auth-panel .muted {
+  margin: 0;
+}
+
+.auth-panel__signin {
+  min-height: 48px;
+  border-radius: 12px;
+  background: var(--brand-blue);
+  border-color: var(--brand-blue);
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.auth-panel__signin:hover:not(:disabled) {
+  background: var(--brand-blue-hover);
+  border-color: var(--brand-blue-hover);
 }
 
 button:disabled,
