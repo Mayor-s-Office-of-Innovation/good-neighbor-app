@@ -36,12 +36,7 @@ function directory(url) {
         .join(""),
   });
   vm.runInContext(
-    [
-      "directoryView",
-      "directoryTab",
-      "globalDirectorySearch",
-      "searchResultList",
-    ]
+    ["directoryView", "globalDirectorySearch", "searchResultList"]
       .map(viewFunction)
       .join("\n"),
     context,
@@ -92,19 +87,17 @@ test("no matches still hides navigation and reports zero results", () => {
   assert.ok(html.includes(t("admin.directory.resultCount", { count: 0 })));
 });
 
-test("removing only q restores the original tab and its filters", () => {
-  for (const [section, filters] of [
-    ["sites", "manager=m1&department=Health&system=Care"],
-    ["managers", "program=p1&site=s1"],
-    ["providers", ""],
+test("removing only q restores the original section and its filters", () => {
+  for (const [section, title, filters] of [
+    ["sites", "Sites", "manager=m1&department=Health&system=Care"],
+    ["managers", "Site managers", "program=p1&site=s1"],
+    ["providers", "Providers &amp; Programs", ""],
   ]) {
     const url = new URL(`https://admin.example/${section}?${filters}&q=Jane`);
     assert.doesNotMatch(directory(url.href)(state), /class="entity-tabs"/);
     url.searchParams.delete("q");
     const html = directory(url.href)(state);
-    assert.ok(
-      html.includes(`href="/${section}" data-route aria-current="page"`),
-    );
+    assert.ok(html.includes(`>${title}</h1>`));
     for (const [key, value] of url.searchParams)
       assert.ok(html.includes(`"${key}":"${value}"`));
     assert.doesNotMatch(html, /id="directory-results-title"/);
