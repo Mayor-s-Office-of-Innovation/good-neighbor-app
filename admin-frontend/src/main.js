@@ -5692,11 +5692,11 @@ class AdminApp extends HTMLElement {
           this.state.hasToken
             ? ""
             : `
-              <section class="panel">
+              <section class="panel auth-panel">
                 <h2>Sign in</h2>
-                <p class="muted">Use the City-managed admin sign-in to continue.</p>
-                <button class="btn-primary" id="sign-in" type="button" ${this.state.authBusy ? "disabled" : ""}>
-                  ${this.state.authBusy ? "Opening sign in..." : "Sign in with Cognito"}
+                <p class="muted">Use your City admin account.</p>
+                <button class="btn-primary auth-panel__signin" id="sign-in" type="button" ${this.state.authBusy ? "disabled" : ""}>
+                  ${this.state.authBusy ? "Opening sign-in…" : "Sign in"}
                 </button>
                 ${
                   !this.state.authConfig.cognitoDomain ||
