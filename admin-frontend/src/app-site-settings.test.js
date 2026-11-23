@@ -1,6 +1,7 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
 import { $, click, fill, missing } from "../test-support/admin-dom.js";
+import { mountAdmin } from "../test-support/app-mount.js";
 import { openSitePage } from "../test-support/site-pages.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
