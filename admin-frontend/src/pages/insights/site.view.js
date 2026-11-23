@@ -47,7 +47,7 @@ import {
 /**
  * concern: a concern's own list, shown instead of the tiles' until a tile is picked.
  * more: "", "loading", or why the last Load more failed.
- * @typedef {{ tile: string, concern: string, issues: Record<string, any> | null, failed: string, more: string, generation: number, controller?: AbortController }} ListState
+ * @typedef {{ tile: string, concern: string, issues: Record<string, any> | null, failed: string, snapshotMismatch: boolean, more: string, generation: number, controller?: AbortController }} ListState
  */
 
 const LISTS = /** @type {SiteList[]} */ (Object.keys(SITE_LISTS));
@@ -77,12 +77,15 @@ class InsightsSite extends HTMLElement {
             concern: "",
             issues: null,
             failed: "",
+            snapshotMismatch: false,
             more: "",
             generation: 0,
           },
         ]),
       )
     );
+    /** @type {string} last snapshot that triggered a whole-page sync reload */
+    this.reloadedFromSnapshot = "";
     /** @type {SiteList} the list the open panel's Issue came from */
     this.panelList = "response";
     /** @type {Map<string, string>} */
@@ -239,7 +242,8 @@ class InsightsSite extends HTMLElement {
       });
   }
 
-  async load() {
+  /** @param {{ notice?: string }} [opts] */
+  async load({ notice = "" } = {}) {
     const { signal, current } = this.loads.start();
     for (const list of LISTS) {
       this.lists[list].generation++;
@@ -280,6 +284,7 @@ class InsightsSite extends HTMLElement {
     if (!current()) return;
     this.removeAttribute("aria-busy");
     this.reply = reply;
+    this.session.sawSnapshot(reply.meta?.snapshotId);
     const back = this.returnTo;
     this.returnTo = null;
     // Used once, so a later Back by another way starts with the default tiles.
@@ -298,7 +303,11 @@ class InsightsSite extends HTMLElement {
       this.lists[list].concern = back?.concerns[list] ?? "";
     }
     this.drawHead();
-    this.region("freshness").innerHTML = freshnessView(reply.meta);
+    const banner = notice
+      ? `<p class="muted" role="status" data-insights-snapshot-notice>${escapeHtml(notice)}</p>`
+      : "";
+    this.region("freshness").innerHTML =
+      `${freshnessView(reply.meta)}${banner}`;
     this.drawPeriod();
     showLoaded(
       this.region("top"),
@@ -354,6 +363,7 @@ class InsightsSite extends HTMLElement {
     const mine = ++state.generation;
     state.issues = null;
     state.failed = "";
+    state.snapshotMismatch = false;
     state.more = "";
     this.drawIssues(list);
     const region = this.issuesRegion(list);
@@ -365,6 +375,22 @@ class InsightsSite extends HTMLElement {
     try {
       const issues = await this.fetchIssues(list);
       if (mine !== state.generation) return;
+      const siteSnap = this.reply?.meta?.snapshotId;
+      const listSnap = issues.meta?.snapshotId;
+      if (siteSnap && listSnap && siteSnap !== listSnap) {
+        if (this.reloadedFromSnapshot !== siteSnap) {
+          this.reloadedFromSnapshot = siteSnap;
+          void this.load({ notice: t("admin.insights.snapshotUpdated") });
+          return;
+        }
+        // Counts and rows still come from different snapshots after reloading; never display mismatched rows.
+        state.issues = null;
+        state.snapshotMismatch = true;
+        state.failed = t("admin.insights.snapshotChanged");
+        this.drawIssues(list);
+        return;
+      }
+      this.reloadedFromSnapshot = "";
       state.issues = issues;
     } catch (err) {
       if (
@@ -394,6 +420,13 @@ class InsightsSite extends HTMLElement {
     try {
       const page = await this.fetchIssues(list, cursor);
       if (mine !== state.generation || !state.issues) return;
+      const siteSnap = this.reply?.meta?.snapshotId;
+      const pageSnap = page.meta?.snapshotId;
+      if (siteSnap && pageSnap && siteSnap !== pageSnap) {
+        this.reloadedFromSnapshot = siteSnap;
+        void this.load({ notice: t("admin.insights.snapshotUpdated") });
+        return;
+      }
       state.issues = {
         ...page,
         issues: [...state.issues.issues, ...page.issues],
@@ -405,6 +438,11 @@ class InsightsSite extends HTMLElement {
         /** @type {any} */ (err)?.name === "AbortError"
       )
         return;
+      if (errorCode(err) === "snapshot_changed") {
+        this.reloadedFromSnapshot = this.reply?.meta?.snapshotId ?? "";
+        void this.load({ notice: t("admin.insights.snapshotUpdated") });
+        return;
+      }
       state.more = failureText(err, t("admin.insights.issuesFailed"));
     }
     this.drawIssues(list);
@@ -579,8 +617,13 @@ class InsightsSite extends HTMLElement {
     if (!button || !this.contains(button)) return;
     if (button.id === "insights-retry") return void this.load();
     const list = this.listOf(button);
-    if (list && button.id === SITE_LISTS[list].retry)
+    if (list && button.id === SITE_LISTS[list].retry) {
+      if (this.lists[list].snapshotMismatch) {
+        this.reloadedFromSnapshot = "";
+        return void this.load();
+      }
       return void this.loadIssues(list);
+    }
     if (list && button.hasAttribute("data-load-more"))
       return void this.loadMore(list);
     const tile = button.getAttribute("data-tile");

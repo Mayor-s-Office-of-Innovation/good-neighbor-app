@@ -611,9 +611,13 @@ async function siteFactsMany(q, snap, sites, interval) {
         checksPerOwedDay < checksOwedPerDay;
       const span = spans[k];
       const issueDays = span ? dayCountBetween(span.startDay, span.endDay) : 0;
-      // Short periods count as 30 days, so a quiet week isn't flagged for 2 Issues.
+      const spanIssues = row?.spanIssues ?? 0;
       const issuesPer30Days = issueDays
-        ? oneDecimal(((row?.spanIssues ?? 0) * 30) / Math.max(issueDays, 30))
+        ? oneDecimal((spanIssues * 30) / issueDays)
+        : null;
+      // Short periods count as 30 days for the concern flag, so a quiet week isn't flagged for 2 Issues.
+      const manyIssuesRate = issueDays
+        ? oneDecimal((spanIssues * 30) / Math.max(issueDays, 30))
         : null;
       const facts = {
         totals,
@@ -626,7 +630,7 @@ async function siteFactsMany(q, snap, sites, interval) {
         longUnresolved,
       };
       const concerns = concernsOf(
-        { ...facts, underOwed },
+        { ...facts, underOwed, manyIssuesRate },
         site.status !== "inactive",
       );
       return [site.siteId, { ...facts, concerns }];
@@ -639,7 +643,7 @@ async function siteFactsMany(q, snap, sites, interval) {
  * to answer. A closed Site can't be flagged for few Checks. A missing
  * contact shows on the Site page but isn't a concern, since it isn't
  * activity in the period.
- * @param {{ totals: ReturnType<typeof split>, underOwed: boolean, longUnresolved: number, issuesPer30Days: number | null }} facts
+ * @param {{ totals: ReturnType<typeof split>, underOwed: boolean, longUnresolved: number, issuesPer30Days: number | null, manyIssuesRate?: number | null }} facts
  * @param {boolean} active
  * @returns {string[]}
  */
@@ -649,6 +653,7 @@ export function concernsOf(
     underOwed,
     longUnresolved,
     issuesPer30Days,
+    manyIssuesRate = issuesPer30Days,
   },
   active,
 ) {
@@ -656,9 +661,9 @@ export function concernsOf(
   return [
     active && underOwed && "fewChecks",
     activity.severeIssues >= rules.severeIssues && "repeatedSevere",
-    // The rounded rate, so the flag agrees with the number on screen.
-    issuesPer30Days !== null &&
-      issuesPer30Days > rules.issuesPer30Days &&
+    // The rounded rate (over at least 30 days), so a quiet short period isn't flagged for a couple of Issues.
+    manyIssuesRate !== null &&
+      manyIssuesRate > rules.issuesPer30Days &&
       "manyIssues",
     // One flag for all three, since managers read them as one problem.
     (longUnresolved > 0 || response.overdue > 0 || response.late > 0) &&

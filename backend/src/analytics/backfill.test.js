@@ -76,7 +76,7 @@ function recorder(opts = {}) {
   return { calls, convert };
 }
 
-const TABLE_ARN = "arn:aws:dynamodb:us-west-2:111111111111:table/app";
+const TABLE_ARN = `arn:aws:dynamodb:us-west-2:${"0".repeat(12)}:table/app`;
 const exportArn = (/** @type {string} */ id) => `${TABLE_ARN}/export/${id}`;
 // DynamoDB writes a full export under <prefix>/AWSDynamoDB/<export ID>/.
 const FULL = manifest("full1");

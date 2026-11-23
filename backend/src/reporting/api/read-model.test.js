@@ -373,7 +373,7 @@ describe("overview", () => {
         ["s3", 0],
       ],
       [
-        ["s2", 3],
+        ["s2", 18],
         ["s1", 2.4],
         ["s3", 0],
       ],
@@ -645,7 +645,45 @@ describe("overview", () => {
         now: NOW,
       })
     ).sites[0];
-    expect([row.issuesPer30Days, row.concerns]).toEqual([5, ["manyIssues"]]);
+    expect([row.issuesPer30Days, row.concerns]).toEqual([150, ["manyIssues"]]);
+  });
+
+  it("computes the true arithmetic Issues per 30 days rate on short periods while keeping the Many Issues floor", async () => {
+    const sevenDays = days("2026-10-01", "2026-10-08");
+    /** @param {number} count */
+    const issuesInSevenDays = (count) =>
+      edited((t) => {
+        const row = t.site_days.find(
+          (d) => d.siteId === "s1" && d.day === "2026-10-02",
+        );
+        row.issuesCreated = count;
+      });
+    const [quietRow, busyRow] = await Promise.all([
+      (async () =>
+        (
+          await overview(await issuesInSevenDays(2), {
+            interval: sevenDays,
+            filter: { siteIds: ["s1"] },
+            list: list("sites"),
+            now: NOW,
+          })
+        ).sites[0])(),
+      (async () =>
+        (
+          await overview(await issuesInSevenDays(7), {
+            interval: sevenDays,
+            filter: { siteIds: ["s1"] },
+            list: list("sites"),
+            now: NOW,
+          })
+        ).sites[0])(),
+    ]);
+    // 2 Issues in 7 days = 8.6/30d arithmetically, but under the 4-Issue floor for Many Issues.
+    expect(quietRow.issuesPer30Days).toBe(8.6);
+    expect(quietRow.concerns).not.toContain("manyIssues");
+    // 7 Issues in 7 days = 30/30d arithmetically and flags Many Issues.
+    expect(busyRow.issuesPer30Days).toBe(30);
+    expect(busyRow.concerns).toContain("manyIssues");
   });
 
   /** s1's open, answered t1, created `ms` before the snapshot was evaluated. @param {number} ms */

@@ -1391,3 +1391,81 @@ test("an Issue row without its Site opens the full record instead of the panel",
   assert.ok(missing("[data-record-panel]"));
   assert.match(url(), /^\/insights\/raw\/issues\/t2\?/);
 });
+
+test("when a Site's Issue list comes from a newer snapshot, the Site reloads so counts and rows agree", async () => {
+  let siteCalls = 0;
+  await mountAdmin("/insights/sites/s1?period=2026-10", {
+    insights: true,
+    setup: (api) => {
+      api.on("GET", /^reporting\/sites\/s1/, (/** @type {any} */ r) => {
+        siteCalls += 1;
+        const reply = api.reply(r);
+        if (siteCalls === 1) {
+          reply.json.meta.snapshotId = "snap-old";
+          reply.json.totals.severity.severe = 1;
+        } else {
+          reply.json.meta.snapshotId = "snap-new";
+          reply.json.totals.severity.severe = 2;
+        }
+        return reply;
+      });
+      api.on("GET", /^reporting\/issues\?/, (/** @type {any} */ r) => {
+        const reply = api.reply(r);
+        reply.json.meta.snapshotId = "snap-new";
+        if (new URLSearchParams(r.search).get("severityBand") === "severe") {
+          reply.json.issues = [
+            reply.json.issues[0],
+            { ...reply.json.issues[0], issueId: "t-added" },
+          ];
+          reply.json.total = 2;
+        }
+        return reply;
+      });
+    },
+  });
+  assert.equal(siteCalls, 2);
+  assert.equal(text('[data-band="severe"] [data-band-count]'), "2");
+  assert.deepEqual(listed("severity"), ["t1", "t-added"]);
+  assert.equal(
+    text("[data-insights-snapshot-notice]"),
+    t("admin.insights.snapshotUpdated"),
+  );
+});
+
+test("when Site counts and Issues stay on different snapshots, the mismatched rows are not shown beside stale tiles", async () => {
+  let split = true;
+  await mountAdmin("/insights/sites/s1?period=2026-10", {
+    insights: true,
+    setup: (api) => {
+      api.on("GET", /^reporting\/sites\/s1/, (/** @type {any} */ r) => {
+        const reply = api.reply(r);
+        reply.json.meta.snapshotId = split ? "snap-old" : "snap-new";
+        reply.json.totals.severity.severe = split ? 1 : 2;
+        return reply;
+      });
+      api.on("GET", /^reporting\/issues\?/, (/** @type {any} */ r) => {
+        const reply = api.reply(r);
+        reply.json.meta.snapshotId = "snap-new";
+        if (new URLSearchParams(r.search).get("severityBand") === "severe") {
+          reply.json.issues = [
+            reply.json.issues[0],
+            { ...reply.json.issues[0], issueId: "t-added" },
+          ];
+          reply.json.total = 2;
+        }
+        return reply;
+      });
+    },
+  });
+  assert.deepEqual(listed("severity"), []);
+  assert.equal(
+    text('[data-list="severity"] [data-insights-failed] p'),
+    t("admin.insights.snapshotChanged"),
+  );
+  // Retrying reloads the whole Site page so counts and list can reconcile.
+  split = false;
+  await click("#insights-severe-retry");
+  await settle();
+  assert.equal(text('[data-band="severe"] [data-band-count]'), "2");
+  assert.deepEqual(listed("severity"), ["t1", "t-added"]);
+});

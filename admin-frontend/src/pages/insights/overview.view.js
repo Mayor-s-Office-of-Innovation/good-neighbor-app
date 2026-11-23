@@ -111,9 +111,21 @@ class InsightsOverview extends HTMLElement {
     this.addEventListener("click", this.clicked);
     this.addEventListener("input", this.typed);
     this.addEventListener("change", this.changed);
-    this.unsubscribe = this.session.reportJobs.subscribe(() =>
-      this.drawReport(),
-    );
+    this.jobSnapshotSynced = "";
+    this.unsubscribe = this.session.reportJobs.subscribe(() => {
+      this.drawReport();
+      const jobSnap = this.session.reportJobs.current?.job?.snapshotId;
+      const screenSnap = this.reply?.meta?.snapshotId;
+      if (
+        jobSnap &&
+        screenSnap &&
+        jobSnap !== screenSnap &&
+        this.jobSnapshotSynced !== jobSnap
+      ) {
+        this.jobSnapshotSynced = jobSnap;
+        void this.load();
+      }
+    });
     this.drawPeriod();
     this.drawReport();
     void this.loadOptions();
@@ -554,11 +566,13 @@ class InsightsOverview extends HTMLElement {
     const period = periodApiParams(
       this.period ?? periodOf(this.reply.meta.interval),
     );
+    const screenSnapshotId = this.reply.meta?.snapshotId ?? "";
     confirmFirst(this, {
       id: "insights-report-dialog",
       markup: reportDialogView({ count: siteIds.length }),
       button: "insights-report",
-      confirmed: () => void this.session.reportJobs.start(siteIds, period),
+      confirmed: () =>
+        void this.session.reportJobs.start(siteIds, period, screenSnapshotId),
     });
   }
 }

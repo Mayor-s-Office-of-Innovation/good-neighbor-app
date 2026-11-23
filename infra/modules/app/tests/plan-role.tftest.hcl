@@ -12,27 +12,32 @@ mock_provider "aws" {
   # Terraform 1.9, which CI runs, checks the whole module when a test cleans up.
   mock_resource "aws_cloudfront_function" {
     defaults = {
-      arn = "arn:aws:cloudfront::111111111111:function/mock"
+      arn = "arn:aws:cloudfront::aws:function/mock"
     }
   }
   mock_resource "aws_iam_role" {
     defaults = {
-      arn = "arn:aws:iam::111111111111:role/mock"
+      arn = "arn:aws:iam::aws:role/mock"
     }
   }
   mock_resource "aws_kms_key" {
     defaults = {
-      arn = "arn:aws:kms:us-west-2:111111111111:key/mock"
+      arn = "arn:aws:kms:us-west-2:aws:key/mock"
+    }
+  }
+  mock_resource "aws_lambda_function" {
+    defaults = {
+      arn = "arn:aws:lambda:us-west-2:aws:function:mock"
     }
   }
   mock_resource "aws_sqs_queue" {
     defaults = {
-      arn = "arn:aws:sqs:us-west-2:111111111111:other-queue"
+      arn = "arn:aws:sqs:us-west-2:aws:other-queue"
     }
   }
   mock_resource "aws_sns_topic" {
     defaults = {
-      arn = "arn:aws:sns:us-west-2:111111111111:mock"
+      arn = "arn:aws:sns:us-west-2:aws:mock"
     }
   }
   mock_resource "aws_s3_bucket" {
@@ -42,7 +47,7 @@ mock_provider "aws" {
   }
   mock_resource "aws_apigatewayv2_api" {
     defaults = {
-      execution_arn = "arn:aws:execute-api:us-west-2:111111111111:mock"
+      execution_arn = "arn:aws:execute-api:us-west-2:aws:mock"
     }
   }
   mock_resource "aws_cognito_user_pool" {
@@ -56,12 +61,12 @@ mock_provider "aws" {
 
   mock_resource "aws_wafv2_web_acl" {
     defaults = {
-      arn = "arn:aws:wafv2:us-east-1:111111111111:global/webacl/mock/00000000"
+      arn = "arn:aws:wafv2:us-east-1:aws:global/webacl/mock/00000000"
     }
   }
   mock_resource "aws_acm_certificate" {
     defaults = {
-      arn = "arn:aws:acm:us-east-1:111111111111:certificate/mock"
+      arn = "arn:aws:acm:us-east-1:aws:certificate/mock"
       domain_validation_options = [
         {
           domain_name           = "media.example.org"
@@ -81,7 +86,7 @@ variables {
   data_classification           = "internal"
   tags                          = {}
   bedrock_model_id              = "test-model"
-  setup_code_email_identity_arn = "arn:aws:ses:us-west-2:111111111111:identity/example.org"
+  setup_code_email_identity_arn = "arn:aws:ses:us-west-2:aws:identity/example.org"
   provider_app_url              = "https://example.org/"
   sf311_media_domain_name       = "media.example.org"
   sf311_media_zone_id           = "Z0000000000000"
