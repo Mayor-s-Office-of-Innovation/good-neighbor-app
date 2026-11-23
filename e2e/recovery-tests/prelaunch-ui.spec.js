@@ -30,10 +30,14 @@ test("connection retry gives bounded busy feedback and recovers immediately", as
   });
   const button = page.locator("connection-banner button");
   await button.focus();
+  const started = Date.now();
   await page.keyboard.press("Enter");
   await expect(button).toBeDisabled();
   await expect(button).toHaveAttribute("aria-busy", "true");
   await expect(button).toContainText(labels.checking);
+  const holdUntil = started + 800;
+  if (Date.now() < holdUntil) await page.waitForTimeout(holdUntil - Date.now());
+  await expect(button).toBeDisabled();
   const { default: AxeBuilder } = await import("@axe-core/playwright");
   expect(
     (await new AxeBuilder({ page }).include("connection-banner").analyze())
@@ -42,9 +46,8 @@ test("connection retry gives bounded busy feedback and recovers immediately", as
   await page.screenshot({
     path: `e2e/test-results/connection-check-${test.info().project.name}.png`,
   });
-  await page.waitForTimeout(1000);
-  await expect(button).toBeDisabled();
-  await expect(button).toBeEnabled({ timeout: 2000 });
+  await expect(button).toBeEnabled({ timeout: 3000 });
+  expect(Date.now() - started).toBeGreaterThanOrEqual(1800);
   await expect(button).toHaveText(labels.retry);
   await button.click();
   await page.evaluate(async () => {
