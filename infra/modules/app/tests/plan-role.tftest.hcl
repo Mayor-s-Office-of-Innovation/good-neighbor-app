@@ -119,6 +119,21 @@ run "plan_role_needs_the_state_object" {
   expect_failures = [var.plan_role_state_object]
 }
 
+run "plan_role_rejects_wildcard_or_unscoped_subject" {
+  command = plan
+
+  variables {
+    plan_role_github_subject = "repo:example/*:environment:dev-plan"
+    plan_role_state_object   = "state-bucket/dev/terraform.tfstate"
+  }
+
+  plan_options {
+    target = [aws_iam_role.plan]
+  }
+
+  expect_failures = [var.plan_role_github_subject]
+}
+
 run "plan_role_is_read_only_and_tied_to_one_github_environment" {
   # Apply on the mock provider, which calls no AWS API, so the policies are built.
   command = apply

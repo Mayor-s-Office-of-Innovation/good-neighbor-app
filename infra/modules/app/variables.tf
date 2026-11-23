@@ -357,6 +357,11 @@ variable "plan_role_github_subject" {
   description = "OIDC subject of the GitHub Environment allowed to run read-only Terraform plans. Empty creates no plan role."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.plan_role_github_subject == "" || can(regex("^repo:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:environment:[A-Za-z0-9_.-]+$", var.plan_role_github_subject))
+    error_message = "plan_role_github_subject must be empty or match repo:<org>/<repo>:environment:<env> with no wildcards."
+  }
 }
 
 variable "plan_role_state_object" {

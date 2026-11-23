@@ -239,7 +239,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       # Keep the image version aligned with @playwright/test in e2e/package.json.
-      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
       options: --ipc=host
     steps:
       - name: Checkout
@@ -259,7 +259,7 @@ jobs:
 
       # The host runner's Java installation is not available inside the job container.
       - name: Setup Java for local harness
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: "21"

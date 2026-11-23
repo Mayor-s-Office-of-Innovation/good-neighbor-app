@@ -7,6 +7,7 @@ locals {
 }
 
 data "aws_iam_policy_document" "plan_assume" {
+  #checkov:skip=CKV_AWS_358:Module default is "" (count = 0); variables.tf validates non-empty subjects strictly match repo:<org>/<repo>:environment:<env> with StringEquals and aud = sts.amazonaws.com.
   count = local.plan_role_enabled ? 1 : 0
 
   statement {
