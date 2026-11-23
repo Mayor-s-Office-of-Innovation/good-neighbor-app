@@ -275,7 +275,7 @@ jobs:
         run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.18.4 detect --source /repo --config /repo/.gitleaks.toml --redact --verbose
 
       - name: CodeQL init
-        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           languages: javascript-typescript
 
