@@ -1,5 +1,11 @@
+// @vitest-environment node
 import assert from "node:assert/strict";
-import test from "node:test";
+import { beforeEach, test, vi } from "vitest";
+
+// A fresh admin-auth.js per test, so one test's refreshPromise can't leak into the next.
+beforeEach(() => {
+  vi.resetModules();
+});
 
 class MemoryStorage {
   values = new Map();
@@ -40,25 +46,25 @@ test("completes Cognito MFA callback when sessionStorage was replaced", async ()
       location.search = "";
     },
   };
-  globalThis.window = {
+  vi.stubGlobal("window", {
     GOOD_NEIGHBOR_ADMIN_CONFIG: {
       cognitoDomain: "https://login.example.test",
       clientId: "client-1",
       redirectUri: "https://admin.example.test/auth/callback",
       logoutUri: "https://admin.example.test/",
     },
-  };
-  globalThis.location = location;
-  globalThis.history = history;
-  globalThis.sessionStorage = session;
-  globalThis.localStorage = local;
-  globalThis.fetch = async () => ({
+  });
+  vi.stubGlobal("location", location);
+  vi.stubGlobal("history", history);
+  vi.stubGlobal("sessionStorage", session);
+  vi.stubGlobal("localStorage", local);
+  vi.stubGlobal("fetch", async () => ({
     ok: true,
     json: async () => ({ access_token: "access-1", expires_in: 3600 }),
-  });
+  }));
 
   const { completeAdminLoginFromUrl, startAdminLogin } = await import(
-    `./admin-auth.js?test=${Date.now()}`
+    "./admin-auth.js"
   );
   await startAdminLogin();
   const authorize = new URL(assignedUrl);
@@ -88,33 +94,33 @@ test("clears an expired session before creating a new login transaction", async 
       assignedUrl = String(value);
     },
   };
-  globalThis.window = {
+  vi.stubGlobal("window", {
     GOOD_NEIGHBOR_ADMIN_CONFIG: {
       cognitoDomain: "https://login.example.test",
       clientId: "client-1",
       redirectUri: "https://admin.example.test/auth/callback",
       logoutUri: "https://admin.example.test/",
     },
-  };
-  globalThis.location = location;
-  globalThis.history = {
+  });
+  vi.stubGlobal("location", location);
+  vi.stubGlobal("history", {
     replaceState(_state, _title, path) {
       location.pathname = String(path);
       location.search = "";
     },
-  };
-  globalThis.sessionStorage = session;
-  globalThis.localStorage = local;
-  globalThis.fetch = async () => ({
+  });
+  vi.stubGlobal("sessionStorage", session);
+  vi.stubGlobal("localStorage", local);
+  vi.stubGlobal("fetch", async () => ({
     ok: true,
     json: async () => ({ access_token: "access-2", expires_in: 3600 }),
-  });
+  }));
 
   session.setItem("good-neighbor-admin-access-token", "expired-access");
   session.setItem("good-neighbor-admin-expires-at", "1");
 
   const { completeAdminLoginFromUrl, hasAdminSession, startAdminLogin } =
-    await import(`./admin-auth.js?expired-session-test=${Date.now()}`);
+    await import("./admin-auth.js");
   await startAdminLogin();
   const authorize = new URL(assignedUrl);
   location.pathname = "/auth/callback";
@@ -126,14 +132,14 @@ test("clears an expired session before creating a new login transaction", async 
   assert.equal(session.getItem("good-neighbor-admin-access-token"), "access-2");
 });
 
-function callbackFixture(t) {
-  globalThis.window = {
+function callbackFixture() {
+  vi.stubGlobal("window", {
     GOOD_NEIGHBOR_ADMIN_CONFIG: {
       cognitoDomain: "https://login.example.test",
       clientId: "client-1",
       redirectUri: "https://admin.example.test/auth/callback",
     },
-  };
+  });
   const session = new MemoryStorage();
   const local = new MemoryStorage();
   const location = {
@@ -141,21 +147,21 @@ function callbackFixture(t) {
     pathname: "/auth/callback",
     search: "?code=current-code&state=current-state",
   };
-  t.mock.method(globalThis, "fetch", async (_url, options) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, options) => {
     assert.equal(options.body.get("code_verifier"), "current-verifier");
     return {
       ok: true,
       json: async () => ({ access_token: "current-access", expires_in: 3600 }),
     };
   });
-  globalThis.sessionStorage = session;
-  globalThis.localStorage = local;
-  globalThis.location = location;
-  globalThis.history = {
+  vi.stubGlobal("sessionStorage", session);
+  vi.stubGlobal("localStorage", local);
+  vi.stubGlobal("location", location);
+  vi.stubGlobal("history", {
     replaceState() {
       location.search = "";
     },
-  };
+  });
   local.setItem(
     "good-neighbor-admin-oauth-transaction",
     JSON.stringify({
@@ -167,8 +173,8 @@ function callbackFixture(t) {
   return { session, local, location };
 }
 
-test("session expiry during callback startup does not erase the pending login", async (t) => {
-  const { session } = callbackFixture(t);
+test("session expiry during callback startup does not erase the pending login", async () => {
+  const { session } = callbackFixture();
   session.setItem("good-neighbor-admin-access-token", "expired-access");
   session.setItem("good-neighbor-admin-expires-at", "1");
   const { hasAdminSession, completeAdminLoginFromUrl } = await import(
@@ -183,8 +189,8 @@ test("session expiry during callback startup does not erase the pending login", 
   );
 });
 
-test("stale tab state does not mask a matching unexpired fallback", async (t) => {
-  const { session } = callbackFixture(t);
+test("stale tab state does not mask a matching unexpired fallback", async () => {
+  const { session } = callbackFixture();
   session.setItem("good-neighbor-admin-oauth-state", "previous-state");
   session.setItem("good-neighbor-admin-pkce-verifier", "previous-verifier");
   const { completeAdminLoginFromUrl } = await import("./admin-auth.js");
@@ -196,8 +202,8 @@ test("stale tab state does not mask a matching unexpired fallback", async (t) =>
   );
 });
 
-test("mismatched callback cannot consume a pending login", async (t) => {
-  const { local, location } = callbackFixture(t);
+test("mismatched callback cannot consume a pending login", async () => {
+  const { local, location } = callbackFixture();
   location.search = "?code=old-code&state=old-state";
   const { completeAdminLoginFromUrl } = await import("./admin-auth.js");
 
@@ -205,14 +211,14 @@ test("mismatched callback cannot consume a pending login", async (t) => {
     handled: true,
     error: "invalid_login_state",
   });
-  assert.equal(globalThis.fetch.mock.callCount(), 0);
+  assert.equal(globalThis.fetch.mock.calls.length, 0);
   assert.ok(local.getItem("good-neighbor-admin-oauth-transaction"));
   location.search = "?code=current-code&state=current-state";
   assert.deepEqual(await completeAdminLoginFromUrl(), { handled: true });
 });
 
-test("expired fallback still rejects the callback without exchanging tokens", async (t) => {
-  const { local } = callbackFixture(t);
+test("expired fallback still rejects the callback without exchanging tokens", async () => {
+  const { local } = callbackFixture();
   const transaction = JSON.parse(
     local.getItem("good-neighbor-admin-oauth-transaction"),
   );
@@ -227,11 +233,11 @@ test("expired fallback still rejects the callback without exchanging tokens", as
     handled: true,
     error: "invalid_login_state",
   });
-  assert.equal(globalThis.fetch.mock.callCount(), 0);
+  assert.equal(globalThis.fetch.mock.calls.length, 0);
 });
 
-test("successful callback consumes its transaction and rejects replay", async (t) => {
-  const { location } = callbackFixture(t);
+test("successful callback consumes its transaction and rejects replay", async () => {
+  const { location } = callbackFixture();
   const callbackSearch = location.search;
   const { completeAdminLoginFromUrl } = await import("./admin-auth.js");
 
@@ -241,15 +247,15 @@ test("successful callback consumes its transaction and rejects replay", async (t
     handled: true,
     error: "invalid_login_state",
   });
-  assert.equal(globalThis.fetch.mock.callCount(), 1);
+  assert.equal(globalThis.fetch.mock.calls.length, 1);
 });
 
 const SESSION_KEY = "good-neighbor-admin-session";
 const WEEK = 7 * 24 * 60 * 60 * 1000;
 
-async function persistentFixture(t) {
-  const fixture = callbackFixture(t);
-  t.mock.method(globalThis, "fetch", async () => ({
+async function persistentFixture() {
+  const fixture = callbackFixture();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => ({
     ok: true,
     json: async () => ({
       access_token: "first-access",
@@ -262,8 +268,8 @@ async function persistentFixture(t) {
   return { ...fixture, auth };
 }
 
-test("login survives browser closure and refresh keeps the original seven-day deadline", async (t) => {
-  const { session, local, auth } = await persistentFixture(t);
+test("login survives browser closure and refresh keeps the original seven-day deadline", async () => {
+  const { session, local, auth } = await persistentFixture();
   const saved = JSON.parse(local.getItem(SESSION_KEY));
   assert.ok(Math.abs(saved.expiresAt - Date.now() - WEEK) < 1000);
   session.clear();
@@ -271,7 +277,9 @@ test("login survives browser closure and refresh keeps the original seven-day de
   assert.equal(await auth.getFreshAdminToken(), "first-access");
   saved.accessExpiresAt = Date.now() + 30000;
   local.setItem(SESSION_KEY, JSON.stringify(saved));
-  t.mock.method(globalThis, "fetch", async (url, options) => {
+  // vi.spyOn reuses the fixture's spy, so drop the login's call from the count.
+  globalThis.fetch.mockClear();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
     assert.equal(url, "https://login.example.test/oauth2/token");
     assert.equal(options.body.get("grant_type"), "refresh_token");
     assert.equal(options.body.get("refresh_token"), "refresh-1");
@@ -284,32 +292,32 @@ test("login survives browser closure and refresh keeps the original seven-day de
     await Promise.all([auth.getFreshAdminToken(), auth.getFreshAdminToken()]),
     ["renewed", "renewed"],
   );
-  assert.equal(globalThis.fetch.mock.callCount(), 1);
+  assert.equal(globalThis.fetch.mock.calls.length, 1);
   assert.equal(
     JSON.parse(local.getItem(SESSION_KEY)).expiresAt,
     saved.expiresAt,
   );
 });
 
-test("seven-day deadline clears even a still-valid access token without refreshing", async (t) => {
-  const { local, auth } = await persistentFixture(t);
+test("seven-day deadline clears even a still-valid access token without refreshing", async () => {
+  const { local, auth } = await persistentFixture();
   const saved = JSON.parse(local.getItem(SESSION_KEY));
   saved.expiresAt = Date.now();
   local.setItem(SESSION_KEY, JSON.stringify(saved));
-  const calls = globalThis.fetch.mock.callCount();
+  const calls = globalThis.fetch.mock.calls.length;
   assert.equal(auth.hasAdminSession(), false);
   assert.equal(await auth.getFreshAdminToken(), "");
   assert.equal(local.getItem(SESSION_KEY), null);
-  assert.equal(globalThis.fetch.mock.callCount(), calls);
+  assert.equal(globalThis.fetch.mock.calls.length, calls);
 });
 
 for (const failure of ["network", "server", "invalid_grant"]) {
-  test(`refresh handles ${failure} without extending the session`, async (t) => {
-    const { local, auth } = await persistentFixture(t);
+  test(`refresh handles ${failure} without extending the session`, async () => {
+    const { local, auth } = await persistentFixture();
     const saved = JSON.parse(local.getItem(SESSION_KEY));
     saved.accessExpiresAt = 1;
     local.setItem(SESSION_KEY, JSON.stringify(saved));
-    t.mock.method(globalThis, "fetch", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
       if (failure === "network") throw new TypeError("offline");
       return {
         ok: false,
@@ -324,7 +332,7 @@ for (const failure of ["network", "server", "invalid_grant"]) {
       await assert.rejects(auth.getFreshAdminToken());
       assert.equal(auth.hasAdminSession(), true);
       assert.deepEqual(JSON.parse(local.getItem(SESSION_KEY)), saved);
-      t.mock.method(globalThis, "fetch", async () => ({
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => ({
         ok: true,
         json: async () => ({ access_token: "retried", expires_in: 3600 }),
       }));
@@ -333,15 +341,15 @@ for (const failure of ["network", "server", "invalid_grant"]) {
   });
 }
 
-test("sign-out revokes refresh credentials and an in-flight refresh cannot restore them", async (t) => {
-  const { local, auth, location } = await persistentFixture(t);
+test("sign-out revokes refresh credentials and an in-flight refresh cannot restore them", async () => {
+  const { local, auth, location } = await persistentFixture();
   const saved = JSON.parse(local.getItem(SESSION_KEY));
   saved.accessExpiresAt = 1;
   local.setItem(SESSION_KEY, JSON.stringify(saved));
   let finish;
   let revoked = false;
   location.assign = () => {};
-  t.mock.method(globalThis, "fetch", async (url, options) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
     if (url.endsWith("/revoke")) {
       revoked = true;
       assert.equal(options.body.get("token"), "refresh-1");
@@ -363,11 +371,11 @@ test("sign-out revokes refresh credentials and an in-flight refresh cannot resto
   assert.equal(auth.hasAdminSession(), false);
 });
 
-test("API calls and CSV downloads refresh credentials before sending authorization", async (t) => {
-  const { local } = await persistentFixture(t);
+test("API calls and CSV downloads refresh credentials before sending authorization", async () => {
+  const { local } = await persistentFixture();
   const { adminApi } = await import("./admin-api.js");
   let refreshes = 0;
-  t.mock.method(globalThis, "fetch", async (url, options) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
     if (url.endsWith("/oauth2/token")) {
       refreshes++;
       return {
@@ -394,16 +402,16 @@ test("API calls and CSV downloads refresh credentials before sending authorizati
   assert.equal(refreshes, 2);
 });
 
-test("restricted persistent storage falls back to a refreshable tab session", async (t) => {
-  const { local, session } = callbackFixture(t);
+test("restricted persistent storage falls back to a refreshable tab session", async () => {
+  const { local, session } = callbackFixture();
   session.setItem("good-neighbor-admin-oauth-state", "current-state");
   session.setItem("good-neighbor-admin-pkce-verifier", "current-verifier");
   for (const method of ["getItem", "setItem", "removeItem"]) {
-    t.mock.method(local, method, () => {
+    vi.spyOn(local, method).mockImplementation(() => {
       throw new Error("storage blocked");
     });
   }
-  t.mock.method(globalThis, "fetch", async () => ({
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => ({
     ok: true,
     json: async () => ({
       access_token: "tab-access",
@@ -419,15 +427,13 @@ test("restricted persistent storage falls back to a refreshable tab session", as
   assert.equal(auth.hasAdminSession(), false);
 });
 
-test("a stale refresh failure cannot erase a newer login in another tab", async (t) => {
-  const { local, auth } = await persistentFixture(t);
+test("a stale refresh failure cannot erase a newer login in another tab", async () => {
+  const { local, auth } = await persistentFixture();
   const saved = JSON.parse(local.getItem(SESSION_KEY));
   saved.accessExpiresAt = 1;
   local.setItem(SESSION_KEY, JSON.stringify(saved));
   let finish;
-  t.mock.method(
-    globalThis,
-    "fetch",
+  vi.spyOn(globalThis, "fetch").mockImplementation(
     () =>
       new Promise((resolve) => {
         finish = resolve;

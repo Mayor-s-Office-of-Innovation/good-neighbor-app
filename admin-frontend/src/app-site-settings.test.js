@@ -1,0 +1,146 @@
+import { test } from "vitest";
+import assert from "node:assert/strict";
+import { $, click, fill, missing, window } from "../test-support/admin-dom.js";
+import { mountAdmin } from "../test-support/app-mount.js";
+import { t } from "../../frontend/src/i18n/i18n.js";
+
+// pages/site/record.templates.js has no catalog key for this copy, so tests match its English.
+
+const SETTINGS = "/sites/s1?section=settings";
+const form = "#site-deliberate-311-form";
+const select = `${form} wa-select[name="deliberate-311-enabled"]`;
+const save = `${form} [data-save-button]`;
+const DELIBERATE_311 = /^sites\/s1\/deliberate-311$/;
+
+/** @param {any} api */
+function serveSetting(api) {
+  api.on("PUT", DELIBERATE_311, (/** @type {any} */ request) => {
+    Object.assign(api.data.sites[0], {
+      deliberate311ProductionEnabled:
+        request.body.deliberate311ProductionEnabled,
+      updatedAt: "version-2",
+    });
+    return { json: { site: api.data.sites[0] } };
+  });
+}
+
+/** Settings returns Site metadata without assignments. @param {any} api */
+function serveSettingsMetadata(api) {
+  api.on("GET", /^sites\/s1\?view=settings$/, (request) => {
+    const reply = api.reply(request);
+    return {
+      ...reply,
+      json: {
+        ...reply.json,
+        items: reply.json.items.filter((item) => item.sk === "#META"),
+      },
+    };
+  });
+}
+
+test("Settings loads only metadata and returning to Details reuses its roster", async () => {
+  const { api } = await mountAdmin("/sites/s1", {
+    setup: serveSettingsMetadata,
+  });
+  const managerEmail = api.data.people[0].email;
+  const managerLink = `a[href="mailto:${managerEmail}"]`;
+  assert.equal($(managerLink).textContent, managerEmail);
+  const initialRequests = api.requests.length;
+
+  await click('a[href="/sites/s1?section=settings"]');
+  assert.ok(!missing(form));
+  assert.deepEqual(
+    api.requests
+      .slice(initialRequests)
+      .map(({ method, path, search }) => [method, path + search]),
+    [["GET", "sites/s1?view=settings"]],
+  );
+
+  await click('a[href="/sites/s1?section=details"]');
+  assert.ok(!missing("#site-details-form"));
+  assert.equal(api.requests.length, initialRequests + 1);
+  assert.equal($(managerLink).textContent, managerEmail);
+});
+
+test("Settings preserves assigned City program managers on the cached Oversight tab", async () => {
+  const { api } = await mountAdmin("/sites/s1?section=oversight", {
+    setup: (api) => {
+      api.data.siteItems.s1.push({
+        sk: "COMPLIANCE_MANAGER#pm1",
+        type: "siteComplianceManagerAssignment",
+        managerId: "pm1",
+        status: "active",
+      });
+      serveSettingsMetadata(api);
+    },
+  });
+  const assignment = '[data-compliance-manager-list] [data-manager-id="pm1"]';
+  const managerEmail = api.data.programManagers[0].email;
+  assert.ok($(assignment).textContent.includes(managerEmail));
+  const initialRequests = api.requests.length;
+
+  await click('a[href="/sites/s1?section=settings"]');
+  assert.ok(!missing(form));
+  await click('a[href="/sites/s1?section=oversight"]');
+  assert.ok($(assignment).textContent.includes(managerEmail));
+  assert.equal(api.calls("GET", /^sites\/s1\?view=settings$/).length, 1);
+  assert.equal(api.requests.length, initialRequests + 1);
+});
+
+test("a Supervisor switches a Site to simulated 311 filing", async () => {
+  const { api } = await mountAdmin(SETTINGS, {
+    setup: (api) => {
+      api.data.sites[0].updatedAt = "version-1";
+      serveSetting(api);
+    },
+  });
+  assert.equal($(select).value, "true");
+  assert.equal($(save).disabled, true);
+  await fill(select, "false");
+  assert.equal($(save).disabled, false);
+  await click(save);
+  assert.deepEqual(api.calls("PUT", DELIBERATE_311)[0].body, {
+    deliberate311ProductionEnabled: false,
+    expectedUpdatedAt: "version-1",
+  });
+  assert.equal($(form).dataset.isDirty, "false");
+  assert.equal($(save).disabled, true);
+  assert.equal($(select).value, "false");
+});
+
+test("a failed settings save keeps the draft for another try", async () => {
+  const { api } = await mountAdmin(SETTINGS, {
+    setup: (api) => api.fail("PUT", DELIBERATE_311, 409, "site_changed"),
+  });
+  await fill(select, "false");
+  await click(save);
+  assert.equal(
+    $(`${form} [data-form-save-error]`).textContent,
+    t("admin.errors.siteChanged"),
+  );
+  assert.equal($(select).value, "false");
+  assert.equal($(select).hasAttribute("disabled"), false);
+  assert.equal($(save).disabled, false);
+  assert.equal($(form).dataset.isDirty, "true");
+  serveSetting(api);
+  await click(save);
+  assert.equal($(form).dataset.isDirty, "false");
+});
+
+test("an edited setting guards leaving the tab", async () => {
+  await mountAdmin(SETTINGS);
+  await fill(select, "false");
+  await click('nav[aria-label="Site sections"] a[href$="section=details"]');
+  assert.equal($("#site-unsaved-dialog").open, true);
+  await click('#site-unsaved-dialog button[value="keep"]');
+  assert.equal(window.location.search, "?section=settings");
+  assert.equal($(select).value, "false");
+});
+
+test("a Compliance manager has no App settings tab", async () => {
+  await mountAdmin(SETTINGS, { role: "compliance-manager" });
+  assert.ok(missing('a[href="/sites/s1?section=settings"]'));
+  assert.ok(missing(form));
+  // The settings URL falls back to the details tab, not a blank page.
+  assert.ok(!missing("#site-details-form"));
+});

@@ -1,6 +1,8 @@
 import { siteManagerRoster } from "./site-managers.js";
 import { mapWithConcurrency } from "./concurrency.js";
 
+export const DIRECTORY_REQUEST_CONCURRENCY = 3;
+
 /**
  * Load the manager directory without exceeding one shared request budget.
  * Program and Site batches run sequentially so their limits do not add up.

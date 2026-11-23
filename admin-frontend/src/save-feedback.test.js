@@ -1,4 +1,5 @@
-import test from "node:test";
+// @vitest-environment node
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { upsertRecord, withSaveFeedback } from "./save-feedback.js";
 

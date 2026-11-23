@@ -1,5 +1,6 @@
+// @vitest-environment node
 import { readFileSync } from "node:fs";
-import test from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { createActionFeedback } from "./action-feedback-core.js";
 const en = JSON.parse(
