@@ -46,7 +46,7 @@
     "test:site-imports": "node --test scripts/test-site-import-managers.mjs"
   },
   "dependencies": {
-    "@aws-crypto/client-node": "^4.2.1",
+    "@aws-crypto/client-node": "^5.0.2",
     "@aws-sdk/client-cloudwatch": "3.1165.0",
     "@aws-sdk/client-cognito-identity-provider": "3.1106.0",
     "@aws-sdk/client-dynamodb": "3.1106.0",
