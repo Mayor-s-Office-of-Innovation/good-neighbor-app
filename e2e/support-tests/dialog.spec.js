@@ -33,6 +33,9 @@ test.beforeEach(async ({ page }) => {
   await page.locator("#settings-help").click();
   await expect(page).toHaveURL(/\/help$/);
   await expect(page.locator("support-view h1")).toHaveText(t("support.title"));
+  // Navigation announces the heading on the next animation frame. Wait for
+  // that focus handoff before tests focus controls and send keyboard input.
+  await expect(page.locator("#support-title")).toBeFocused();
 });
 
 test("Ask requires 20 trimmed characters and clears validation after sending", async ({

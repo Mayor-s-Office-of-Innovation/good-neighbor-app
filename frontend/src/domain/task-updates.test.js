@@ -3,6 +3,7 @@ import { t } from "../i18n/i18n.js";
 import { formatDateTime, formatTime, formatWeekday } from "../i18n/dates.js";
 import {
   cityNoteInFlight,
+  cityNoteStatus,
   cityNoteLabelKey,
   formatPacificUpdated,
 } from "./task-updates.js";
@@ -56,4 +57,16 @@ describe("City note helpers", () => {
     expect(cityNoteInFlight({ cityNoteStatus: "sent" })).toBe(false);
     expect(cityNoteInFlight({})).toBe(false);
   });
+});
+
+it("keeps mixed multi-ticket notes in flight and shows failure once all tickets settle", () => {
+  const update = {
+    cityNotes: [{ cityNoteStatus: "failed" }, { cityNoteStatus: "unknown" }],
+  };
+  expect(cityNoteInFlight(update)).toBe(true);
+  update.cityNotes[1].cityNoteStatus = "sent";
+  expect(cityNoteInFlight(update)).toBe(false);
+  expect(cityNoteStatus(update)).toBe("failed");
+  update.cityNotes[0].cityNoteStatus = "suppressed";
+  expect(cityNoteStatus(update)).toBeUndefined();
 });

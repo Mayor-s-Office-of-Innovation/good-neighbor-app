@@ -337,6 +337,8 @@ if (typeof document !== "undefined") {
     if (!href || !href.startsWith("/") || href.startsWith("//")) return;
     if (a.target && a.target !== "_self") return;
     if (a.hasAttribute("download")) return;
+    // Recovery links must restart bootstrap and read the saved session.
+    if (a.hasAttribute("data-reload")) return;
     e.preventDefault();
     navigate(href);
   });

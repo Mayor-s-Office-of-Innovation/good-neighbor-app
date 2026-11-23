@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
+import { catalogForPolicyVersion } from "./catalog-registry.js";
 import { evaluateCondition } from "./evaluator.js";
 import { validateCatalog } from "./rule-catalog.js";
 
@@ -19,10 +19,18 @@ it("activates all 39 final CSV rules without changing their fields", () => {
       { encoding: "utf8" },
     ),
   );
-  expect(activeCatalog().policyVersion).toBe("actions-escalations-v10");
-  expect(activeCatalog().rules).toHaveLength(39);
-  expect(activeCatalog().rules).toEqual(imported.catalog.rules);
-  expect(validateCatalog(activeCatalog())).toEqual([]);
+  expect(catalogForPolicyVersion("actions-escalations-v10").policyVersion).toBe(
+    "actions-escalations-v10",
+  );
+  expect(catalogForPolicyVersion("actions-escalations-v10").rules).toHaveLength(
+    39,
+  );
+  expect(catalogForPolicyVersion("actions-escalations-v10").rules).toEqual(
+    imported.catalog.rules,
+  );
+  expect(
+    validateCatalog(catalogForPolicyVersion("actions-escalations-v10")),
+  ).toEqual([]);
 });
 
 it.each([1, 2])(
@@ -120,7 +128,7 @@ it.each([4, 5])(
 );
 
 it("activates the supplied v10 rubric and preserves historical pickup behavior", () => {
-  const catalog = activeCatalog();
+  const catalog = catalogForPolicyVersion("actions-escalations-v10");
   expect(catalog.policyVersion).toBe("actions-escalations-v10");
   expect(catalog.rules).toHaveLength(39);
   expect(validateCatalog(catalog)).toEqual([]);
@@ -146,12 +154,13 @@ it("activates the supplied v10 rubric and preserves historical pickup behavior",
 });
 
 it("keeps every explicit 311 filing rule in progress", () => {
-  const rules = activeCatalog().rules.filter((rule) =>
-    rule.outcome.appActions.some(
-      (action) =>
-        action.code === "create_311_ticket" &&
-        action.payload.executionTrigger === "user_confirmed",
-    ),
+  const rules = catalogForPolicyVersion("actions-escalations-v10").rules.filter(
+    (rule) =>
+      rule.outcome.appActions.some(
+        (action) =>
+          action.code === "create_311_ticket" &&
+          action.payload.executionTrigger === "user_confirmed",
+      ),
   );
   expect(rules).toHaveLength(10);
   expect(rules.every((rule) => rule.canBeInProgress)).toBe(true);

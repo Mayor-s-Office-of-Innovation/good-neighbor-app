@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../helpers/recovery-test.js";
 
 test("question reorder retains unchanged cards and loaded photos", async ({
   page,

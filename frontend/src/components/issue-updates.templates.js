@@ -5,6 +5,7 @@ import { hasKey, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import {
   cityNoteLabelKey,
+  cityNoteStatus,
   formatPacificDateTime,
 } from "../domain/task-updates.js";
 import { artifactPhoto } from "./artifact-photo.templates.js";
@@ -62,13 +63,14 @@ export function taskUpdateActions() {
  * @param {Record<string, any>} update
  */
 function cityNoteState(update) {
-  const key = cityNoteLabelKey(update.cityNoteStatus);
+  const status = cityNoteStatus(update);
+  const key = cityNoteLabelKey(status);
   if (!key) return "";
-  const failed = update.cityNoteStatus === "failed";
+  const failed = status === "failed";
   // Reuses the status ticker's look so no new CSS lands in the main bundle.
   return html`<span
     class="status-ticker status-ticker--${failed ? "danger" : "muted"}"
-    data-city-note-status="${escapeAttr(update.cityNoteStatus)}"
+    data-city-note-status="${escapeAttr(status)}"
   >
     <wa-icon
       name="${failed ? "triangle-exclamation" : "paper-plane"}"

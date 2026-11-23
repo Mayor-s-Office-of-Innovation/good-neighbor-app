@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../helpers/recovery-test.js";
 
 test("pull refresh is bounded, coalesced, and cancellable", async ({
   page,
