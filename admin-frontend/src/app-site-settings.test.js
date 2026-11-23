@@ -30,6 +30,69 @@ function serveSetting(api) {
   });
 }
 
+/** Settings returns Site metadata without assignments. @param {any} api */
+function serveSettingsMetadata(api) {
+  api.on("GET", /^sites\/s1\?view=settings$/, (request) => {
+    const reply = api.reply(request);
+    return {
+      ...reply,
+      json: {
+        ...reply.json,
+        items: reply.json.items.filter((item) => item.sk === "#META"),
+      },
+    };
+  });
+}
+
+test("Settings loads only metadata and returning to Details reuses its roster", async () => {
+  const { api } = await mountAdmin("/sites/s1", {
+    setup: serveSettingsMetadata,
+  });
+  const managerEmail = api.data.people[0].email;
+  const managerLink = `a[href="mailto:${managerEmail}"]`;
+  assert.equal($(managerLink).textContent, managerEmail);
+  const initialRequests = api.requests.length;
+
+  await click('a[href="/sites/s1?section=settings"]');
+  assert.ok(!missing(form));
+  assert.deepEqual(
+    api.requests
+      .slice(initialRequests)
+      .map(({ method, path, search }) => [method, path + search]),
+    [["GET", "sites/s1?view=settings"]],
+  );
+
+  await click('a[href="/sites/s1?section=details"]');
+  assert.ok(!missing("#site-details-form"));
+  assert.equal(api.requests.length, initialRequests + 1);
+  assert.equal($(managerLink).textContent, managerEmail);
+});
+
+test("Settings preserves assigned City program managers on the cached Oversight tab", async () => {
+  const { api } = await mountAdmin("/sites/s1?section=oversight", {
+    setup: (api) => {
+      api.data.siteItems.s1.push({
+        sk: "COMPLIANCE_MANAGER#pm1",
+        type: "siteComplianceManagerAssignment",
+        managerId: "pm1",
+        status: "active",
+      });
+      serveSettingsMetadata(api);
+    },
+  });
+  const assignment = '[data-compliance-manager-list] [data-manager-id="pm1"]';
+  const managerEmail = api.data.programManagers[0].email;
+  assert.ok($(assignment).textContent.includes(managerEmail));
+  const initialRequests = api.requests.length;
+
+  await click('a[href="/sites/s1?section=settings"]');
+  assert.ok(!missing(form));
+  await click('a[href="/sites/s1?section=oversight"]');
+  assert.ok($(assignment).textContent.includes(managerEmail));
+  assert.equal(api.calls("GET", /^sites\/s1\?view=settings$/).length, 1);
+  assert.equal(api.requests.length, initialRequests + 1);
+});
+
 test("a Supervisor switches a Site to simulated 311 filing", async () => {
   const { api } = await mountAdmin(SETTINGS, {
     setup: (api) => {

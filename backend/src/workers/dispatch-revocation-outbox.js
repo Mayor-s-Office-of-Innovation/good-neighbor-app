@@ -120,7 +120,9 @@ export const handler = async (event) => {
           ConsistentRead: true,
         }),
       );
-      if (latest.Item?.status !== "dispatched") throw error;
+      // A fast worker may finish before this dispatcher records its send.
+      if (!["dispatched", "complete", "failed"].includes(latest.Item?.status))
+        throw error;
     }
   }
 };

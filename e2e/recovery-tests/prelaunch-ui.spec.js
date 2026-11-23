@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../helpers/recovery-test.js";
 
 test("connection retry gives bounded busy feedback and recovers immediately", async ({
   page,

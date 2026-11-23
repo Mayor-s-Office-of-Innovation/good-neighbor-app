@@ -49,3 +49,17 @@ describe("City note state on the task timeline", () => {
     },
   );
 });
+
+it("shows resolution note progress and terminal failure from per-ticket checkpoints", () => {
+  const cityNotes = [
+    { cityNoteStatus: "failed" },
+    { cityNoteStatus: "pending" },
+  ];
+  expect(item({ cityNotes })).toContain(
+    escapeHtml(t("taskUpdate.cityNote.sending")),
+  );
+  cityNotes[1].cityNoteStatus = "sent";
+  expect(item({ cityNotes })).toContain(
+    escapeHtml(t("taskUpdate.cityNote.failed")),
+  );
+});

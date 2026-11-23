@@ -49,6 +49,20 @@ export function cityNoteLabelKey(status) {
 /** @param {Record<string, any>} update */
 export function cityNoteInFlight(update) {
   return (
-    cityNoteLabelKey(update?.cityNoteStatus) === "taskUpdate.cityNote.sending"
+    cityNoteLabelKey(cityNoteStatus(update)) === "taskUpdate.cityNote.sending"
   );
+}
+
+/** @param {Record<string, any>} update @returns {string | undefined} */
+export function cityNoteStatus(update) {
+  if (!Array.isArray(update.cityNotes)) return update.cityNoteStatus;
+  const statuses = update.cityNotes.map((note) => note.cityNoteStatus);
+  if (
+    statuses.some((status) =>
+      ["pending", "sending", "unknown"].includes(status),
+    )
+  )
+    return "pending";
+  if (statuses.includes("failed")) return "failed";
+  return undefined;
 }
