@@ -151,7 +151,9 @@ test("site creation navigates without rebuilding directories and hides the compl
   await expect(page.locator("admin-app h1")).toBeVisible();
   requests.length = 0;
   await page.evaluate(async () => {
-    const app = /** @type {any} */ (document.querySelector("admin-app"));
+    const page = /** @type {any} */ (
+      document.querySelector("admin-new-site-page")
+    );
     const form = document.createElement("form");
     for (const [name, value] of Object.entries({
       "provider-id": "p",
@@ -164,8 +166,8 @@ test("site creation navigates without rebuilding directories and hides the compl
       input.value = value;
       form.append(input);
     }
-    app.state.newSiteUsers = [];
-    await app.createSiteFromFlow(form);
+    page.state.newSiteUsers = [];
+    await page.createSiteFromFlow(form);
   });
   await expect(page).toHaveURL(/\/sites\/s$/);
   await expect(page.locator(".site-record h1")).toHaveText("Example Site");
@@ -352,8 +354,10 @@ test("an expanded Letters panel renews its links after compliance metadata refre
     page.locator('[data-site-letters] a[href="/letter-1.pdf"]'),
   ).toBeVisible();
   await page.evaluate(async () => {
-    const app = /** @type {any} */ (document.querySelector("admin-app"));
-    await app.openSite("s", false, true);
+    const sitePage = /** @type {any} */ (
+      document.querySelector("admin-site-page")
+    );
+    await sitePage.openSite("s", false, true);
   });
   await expect(
     page.locator('[data-site-letters] a[href="/letter-2.pdf"]'),

@@ -1,8 +1,10 @@
 // @vitest-environment node
 import assert from "node:assert/strict";
 import { afterEach, test, vi } from "vitest";
-import { adminSession, createAdminSession } from "./admin-session.js";
+import { createAdminSession } from "./admin-session.js";
 import { adminApi } from "./services/admin-api.js";
+
+const adminSession = createAdminSession();
 
 /**
  * @param {string} role

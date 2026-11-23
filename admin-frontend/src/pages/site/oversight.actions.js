@@ -1,5 +1,4 @@
-// main.js adds these to AdminApp, so they can use this.state and render().
-import { adminCatalog } from "../../admin-catalog.js";
+// Site oversight actions, mixed into the Site page so they share its state.
 import { actionFeedback } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
 import {
@@ -13,8 +12,8 @@ import {
   showFormSaveError,
   syncDirtyForm,
 } from "../../form-state.js";
-import { bindComplianceManagerAssignmentControls } from "./oversight.bindings.js";
 import { siteSaveErrorMessage } from "./save-error-messages.js";
+import { appMessageError } from "../../admin-error-messages.js";
 
 export const siteOversightActions = {
   /** @param {HTMLFormElement} form */
@@ -44,7 +43,7 @@ export const siteOversightActions = {
           : "admin.toast.invitationSent",
       );
       const result = await adminApi.listCityProgramManagers();
-      adminCatalog.setProgramManagers(result.programManagers || []);
+      this.catalog.setProgramManagers(result.programManagers || []);
       const manager = this.state.programManagers.find(
         (item) => String(item.email || "").toLowerCase() === email,
       );
@@ -74,7 +73,9 @@ export const siteOversightActions = {
     )
       return;
     if (list.querySelectorAll("li[data-manager-id]").length >= 2) {
-      throw new Error("A site can have no more than two Program managers.");
+      throw appMessageError(
+        "A site can have no more than two Program managers.",
+      );
     }
     list.insertAdjacentHTML(
       "beforeend",
@@ -83,7 +84,6 @@ export const siteOversightActions = {
         this.state.capabilities.createEntities === true,
       ),
     );
-    bindComplianceManagerAssignmentControls(this);
     const form = list.closest("form");
     if (form instanceof HTMLFormElement) syncDirtyForm(form);
     this.updateComplianceManagerCount();
@@ -163,7 +163,7 @@ export const siteOversightActions = {
       });
       feedback.success();
       const key = type === "department" ? "departments" : "systemsOfCare";
-      adminCatalog.addOversightOption(key, result.option);
+      this.catalog.addOversightOption(key, result.option);
       const target =
         form.dataset.targetSelect ||
         (type === "department"
@@ -207,6 +207,8 @@ export const siteOversightActions = {
     const feedback = actionFeedback("admin.toast.oversightSaved");
     try {
       if (!this.state.site) return false;
+      const { siteId, name } = this.state.site;
+      const visit = this.visit;
       const managerIds = [
         ...form.querySelectorAll("input[name='compliance-manager-id']"),
       ].map((input) => input.value);
@@ -227,7 +229,6 @@ export const siteOversightActions = {
       this.state.siteSaving = true;
       this.state.siteSaveMessage = "";
       this.state.siteSaveError = "";
-      this.state.error = "";
       if (managerIds.length > 2) {
         this.state.siteSaveError =
           "A site can have no more than two Program managers.";
@@ -235,26 +236,28 @@ export const siteOversightActions = {
         return false;
       }
       try {
-        const result = await adminApi.updateSite(this.state.site.siteId, {
-          name: this.state.site.name,
-          oversight,
-        });
+        const result = await adminApi.updateSite(siteId, { name, oversight });
         feedback.changed();
         if (
           this.state.capabilities.createEntities === true &&
           assignmentsChanged
         ) {
           const assignmentResult = await adminApi.replaceSiteComplianceManagers(
-            this.state.site.siteId,
+            siteId,
             managerIds,
           );
-          this.state.assignedComplianceManagers =
-            assignmentResult.assignments || [];
+          if (visit === this.visit)
+            this.state.assignedComplianceManagers =
+              assignmentResult.assignments || [];
         }
-        this.state.site = { ...this.state.site, ...result.site };
-        adminCatalog.updateSite(this.state.site.siteId, this.state.site);
+        this.catalog.updateSite(siteId, result.site);
         feedback.success();
+        // The save still counts; only the page the user left skips the redraw.
+        if (visit !== this.visit) return true;
+        this.state.site = { ...this.state.site, ...result.site };
         this.state.siteSaveMessage = "";
+        // <admin-app> draws the error line outside this page, so this page's redraw can't clear it.
+        this.clearError();
         return true;
       } catch (error) {
         feedback.failure(error);
@@ -264,7 +267,7 @@ export const siteOversightActions = {
         this.state.siteSaving = false;
         if (this.state.siteSaveError) {
           showFormSaveError(form, this.state.siteSaveError);
-        } else {
+        } else if (visit === this.visit) {
           this.render();
         }
       }

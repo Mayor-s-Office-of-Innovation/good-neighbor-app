@@ -55,7 +55,7 @@ export function siteSaveErrorMessage(error) {
   if (code === "site_update_conflict") {
     return "Someone else updated this site. Reload it before saving your changes.";
   }
-  return adminErrorMessage(error, t, t("admin.toast.requestFailed"));
+  return adminErrorMessage(error, t);
 }
 
 export function compliancePeriodErrorMessage(error) {

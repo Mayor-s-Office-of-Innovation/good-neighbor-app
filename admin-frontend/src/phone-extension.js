@@ -42,13 +42,3 @@ export function removeExtension(button) {
   add.setAttribute("aria-expanded", "false");
   add.focus();
 }
-
-/** @param {ParentNode} root */
-export function bindPhoneExtensions(root) {
-  root.querySelectorAll("[data-add-extension]").forEach((button) => {
-    button.addEventListener("click", () => addExtension(button));
-  });
-  root.querySelectorAll("[data-remove-extension]").forEach((button) => {
-    button.addEventListener("click", () => removeExtension(button));
-  });
-}

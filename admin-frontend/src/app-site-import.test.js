@@ -2,9 +2,9 @@ import { test, vi } from "vitest";
 import assert from "node:assert/strict";
 import {
   $,
-  $$,
   byText,
   click,
+  mountPage,
   pageError,
   routeTo,
   settle,
@@ -14,15 +14,17 @@ import {
   window,
   missing,
   focused,
+  adminData,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
-import { failTimes } from "../../e2e/admin-tests/directory-helpers.js";
 import {
   importPreview as preview,
   importRows as rows,
 } from "../../e2e/admin-tests/site-import-helpers.js";
+import { managerData } from "../../e2e/admin-tests/site-access-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
+import "./pages/directory/directory-page.js";
+import "./pages/site/site-import-page.js";
 
 // pages/site/import.templates.js has no catalog key for this copy, so tests match its English.
 
@@ -54,12 +56,21 @@ async function choosePreview() {
   assert.ok(!missing("#review-title"));
 }
 
-/** @param {Parameters<typeof mountAdmin>[1]["setup"]} setup */
-const openImport = (setup, path = "/sites/import") =>
-  mountAdmin(path, { setup });
+/**
+ * <admin-site-import-page> alone, without <admin-app>, following the import route; a request
+ * other than an import call fails the test. Its errors show through pageError().
+ * @param {(api: any) => void} [setup]
+ */
+const openImportPage = (setup, path = "/sites/import") =>
+  mountPage("admin-site-import-page", path, {
+    calls: [/^(GET|POST) site-imports(\/|$)/],
+    follow: ["site-import"],
+    recordErrors: true,
+    setup,
+  });
 
 test("past imports show each result and the upload help", async () => {
-  await openImport((api) => {
+  await openImportPage((api) => {
     api.data.imports = [
       {
         fileName: "done.csv",
@@ -89,14 +100,13 @@ test("past imports show each result and the upload help", async () => {
 });
 
 test("an empty or unreadable import history shows the empty row", async () => {
-  const { api } = await openImport((api) => {
+  const { api } = await openImportPage((api) => {
     api.data.imports = [{ fileName: "old.csv" }];
     api.fail("GET", /^site-imports$/);
   });
   assert.match(pastImports().textContent, /No past imports\./);
   const reopen = async () => {
     await routeTo("/sites");
-    assert.ok(!missing("#directory-title"));
     await routeTo("/sites/import");
   };
   api.on("GET", /^site-imports$/, { json: { imports: api.data.imports } });
@@ -109,7 +119,7 @@ test("an empty or unreadable import history shows the empty row", async () => {
 });
 
 test("the chosen file name is announced and cleared", async () => {
-  await openImport();
+  await openImportPage();
   await chooseFile();
   assert.equal($("#site-import-file-name").textContent.trim(), "sites.csv");
   assert.equal($("#site-import-file-name").hidden, false);
@@ -118,7 +128,7 @@ test("the chosen file name is announced and cleared", async () => {
 });
 
 test("a preview lists every row status and reason", async () => {
-  const { api } = await openImport((api) =>
+  const { api } = await openImportPage((api) =>
     api.on("POST", /^site-imports\/preview$/, { json: preview }),
   );
   await choosePreview();
@@ -164,7 +174,7 @@ test("a preview lists every row status and reason", async () => {
 });
 
 test("an oversized file or failed preview shows a plain-language error", async () => {
-  const { api } = await openImport((api) =>
+  const { api } = await openImportPage((api) =>
     api.fail("POST", /^site-imports\/preview$/, 400, "unreadable_csv"),
   );
   await chooseFile("a".repeat(1024 * 1024 + 1));
@@ -181,7 +191,7 @@ test("an oversized file or failed preview shows a plain-language error", async (
 });
 
 test("submitting without a file does nothing", async () => {
-  const { api } = await openImport();
+  const { api } = await openImportPage();
   await submit("#site-import-form");
   assert.ok(!missing("#upload-title"));
   assert.equal(pageError(), "");
@@ -193,7 +203,7 @@ test("applying polls until complete and confirms success", async () => {
     { status: "applying", outcomes: { applied: 1 }, rows: rows.slice(0, 2) },
     { status: "complete", resultStatus: "succeeded", outcomes: { applied: 2 } },
   ];
-  const { api } = await openImport((api) => {
+  const { api } = await openImportPage((api) => {
     api.on("POST", /^site-imports\/preview$/, {
       json: { ...preview, counts: { create: 2 }, rows: rows.slice(0, 2) },
     });
@@ -246,7 +256,7 @@ for (const [name, result, title] of [
   ],
 ])
   test(`a completed import explains when ${name}`, async () => {
-    await openImport((api) => {
+    await openImportPage((api) => {
       api.on("POST", /^site-imports\/preview$/, { json: preview });
       api.on("POST", /^site-imports\/i1\/apply$/, { json: result });
     });
@@ -254,7 +264,7 @@ for (const [name, result, title] of [
     await click("#apply-site-import");
     assert.ok(!missing("#dismiss-import-notice"));
     assert.ok(
-      $("admin-app section[role='status']").textContent.includes(
+      $("admin-site-import-page section[role='status']").textContent.includes(
         t(/** @type {string} */ (title)),
       ),
     );
@@ -263,7 +273,7 @@ for (const [name, result, title] of [
   });
 
 test("a history refresh failure after import is reported, not fatal", async () => {
-  const { api } = await openImport((api) => {
+  const { api } = await openImportPage((api) => {
     api.on("POST", /^site-imports\/preview$/, { json: preview });
     api.on("POST", /^site-imports\/i1\/apply$/, {
       json: { status: "complete", outcomes: { applied: 1 } },
@@ -277,7 +287,7 @@ test("a history refresh failure after import is reported, not fatal", async () =
 });
 
 test("a history refresh failure after import keeps the earlier history", async () => {
-  const { api } = await openImport((api) => {
+  const { api } = await openImportPage((api) => {
     api.data.imports = [{ importId: "i0", fileName: "earlier.csv" }];
     api.on("POST", /^site-imports\/preview$/, { json: preview });
     api.on("POST", /^site-imports\/i1\/apply$/, {
@@ -292,21 +302,21 @@ test("a history refresh failure after import keeps the earlier history", async (
 });
 
 test("a failed apply keeps the preview and shows the error", async () => {
-  await openImport((api) => {
+  await openImportPage((api) => {
     api.on("POST", /^site-imports\/preview$/, { json: preview });
     api.fail("POST", /^site-imports\/i1\/apply$/, 409, "stale_preview");
   });
   await choosePreview();
   await click("#apply-site-import");
   // An API code is not something a user can act on, so it never shows.
-  assert.equal(pageError(), t("admin.toast.requestFailed"));
+  assert.equal(pageError(), t("admin.errors.importStale"));
   assert.ok(!missing("#review-title"));
   assert.equal($("#apply-site-import").disabled, false);
 });
 
 test("returning to the import page mid-apply shows it still working", async () => {
   const held = gate();
-  await openImport((api) => {
+  await openImportPage((api) => {
     api.on("POST", /^site-imports\/preview$/, { json: preview });
     api.on("POST", /^site-imports\/i1\/apply$/, async () => {
       await held.promise;
@@ -317,19 +327,49 @@ test("returning to the import page mid-apply shows it still working", async () =
   await click("#apply-site-import");
   assert.ok(review().querySelector('[role="status"]'));
   await routeTo("/sites");
-  assert.ok(!missing("#directory-title"));
   await routeTo("/sites/import?importId=i1");
   assert.ok(review().querySelector('[role="status"]'));
   await routeTo("/providers");
-  assert.ok(!missing('a[href="/providers/v1"]'));
   held.release();
   await settle();
   assert.equal(url(), "/providers");
   assert.ok(missing("#upload-title"));
 });
 
+test("an apply that fails after the user leaves still shows the error", async () => {
+  const held = gate();
+  await openImportPage((api) => {
+    api.on("POST", /^site-imports\/preview$/, { json: preview });
+    api.on("POST", /^site-imports\/i1\/apply$/, {
+      delay: held.promise,
+      status: 409,
+      json: { error: "stale_preview", message: "stale_preview" },
+    });
+  });
+  await choosePreview();
+  await click("#apply-site-import");
+  await routeTo("/providers");
+  held.release();
+  await settle();
+  assert.equal(pageError(), t("admin.errors.importStale"));
+});
+
+test("past imports that arrive after leave() don't let the page open, even at the same address", async () => {
+  const held = gate();
+  const { page, api } = await openImportPage();
+  api.on("GET", /^site-imports$/, async () => {
+    await held.promise;
+    return undefined;
+  });
+  const opening = page.open({ name: "site-import" });
+  // <admin-app> calls leave() as the user goes; the page mustn't wait for the URL to change.
+  page.leave();
+  held.release();
+  assert.equal(await opening, false);
+});
+
 test("cancel returns to the upload form", async () => {
-  await openImport((api) =>
+  await openImportPage((api) =>
     api.on("POST", /^site-imports\/preview$/, { json: preview }),
   );
   await choosePreview();
@@ -349,7 +389,7 @@ test("the conflict report downloads, or reports a failure", async () => {
       downloads.push(this.download);
     },
   );
-  const { api } = await openImport((api) => {
+  const { api } = await openImportPage((api) => {
     api.on("POST", /^site-imports\/preview$/, { json: preview });
     api.on("GET", /^site-imports\/i1\/conflicts\.csv$/, {
       body: "Row,Reason\n8,site_conflict\n",
@@ -361,8 +401,7 @@ test("the conflict report downloads, or reports a failure", async () => {
   assert.deepEqual(downloads, ["site-import-i1-conflicts.csv"]);
   api.fail("GET", /^site-imports\/i1\/conflicts\.csv$/);
   await click("#download-import-conflicts");
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "conflict_report_failed");
+  assert.equal(pageError(), t("admin.errors.importConflictReport"));
 });
 
 test("apply progress updates while rows are still applying", async () => {
@@ -379,7 +418,7 @@ test("apply progress updates while rows are still applying", async () => {
       return { status: "complete", outcomes: { applied: 1 } };
     },
   ];
-  const { api } = await openImport((api) => {
+  const { api } = await openImportPage((api) => {
     api.on("POST", /^site-imports\/preview$/, {
       json: { ...preview, counts: { create: 1 }, rows: rows.slice(0, 1) },
     });
@@ -410,7 +449,7 @@ test("apply progress updates while rows are still applying", async () => {
 });
 
 test("an import link reopens its preview with the saved key", async () => {
-  const { api } = await openImport((api) => {
+  const { api } = await openImportPage((api) => {
     api.on("GET", /^site-imports\/i1$/, {
       json: {
         import: {
@@ -436,7 +475,7 @@ test("an import link reopens its preview with the saved key", async () => {
 });
 
 test("an import link without a stored key makes a new one", async () => {
-  await openImport(
+  await openImportPage(
     (api) =>
       api.on("GET", /^site-imports\/i1$/, {
         json: { import: { status: "previewed", previewVersion: 1 }, rows: [] },
@@ -457,7 +496,7 @@ test("an import link without a stored key makes a new one", async () => {
 });
 
 test("a finished import link shows its results and cannot be applied again", async () => {
-  await openImport(
+  await openImportPage(
     (api) =>
       api.on("GET", /^site-imports\/i2$/, {
         json: {
@@ -492,7 +531,7 @@ test("a finished import link shows its results and cannot be applied again", asy
 });
 
 test("a past import opens its results from the history table", async () => {
-  await openImport((api) => {
+  await openImportPage((api) => {
     api.data.imports = [
       {
         importId: "i 4",
@@ -502,7 +541,8 @@ test("a past import opens its results from the history table", async () => {
       },
     ];
   });
-  await click(byText("done.csv", "a"));
+  // <admin-app> follows the link's data-route; routeTo() stands in for it.
+  await routeTo(byText("done.csv", "a").getAttribute("href"));
   assert.equal(url(), "/sites/import?importId=i%204");
   assert.ok(
     results().textContent.includes(
@@ -513,7 +553,7 @@ test("a past import opens its results from the history table", async () => {
 });
 
 test("a notice from a finished import clears on the way back to the upload form", async () => {
-  await openImport((api) => {
+  await openImportPage((api) => {
     api.on("POST", /^site-imports\/preview$/, { json: preview });
     api.on("POST", /^site-imports\/i1\/apply$/, {
       json: { status: "complete", outcomes: { failed: 1 } },
@@ -526,22 +566,8 @@ test("a notice from a finished import clears on the way back to the upload form"
   assert.ok(missing("#dismiss-import-notice"));
 });
 
-test("an unreadable import link shows the error and a retry", async () => {
-  await openImport((api) => {
-    api.on("GET", /^site-imports\/i3$/, {
-      json: { import: { status: "previewed", previewVersion: 1 }, rows: [] },
-    });
-    api.on("GET", /^site-imports\/i3$/, failTimes(1, 404, "import_not_found"));
-  }, "/sites/import?importId=i3");
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "import_not_found");
-  await click("#retry-page-load");
-  assert.ok(!missing("#review-title"));
-  assert.equal(pageError(), "");
-});
-
 test("an apply that ends in an unknown state keeps the preview", async () => {
-  await openImport((api) => {
+  await openImportPage((api) => {
     api.on("POST", /^site-imports\/preview$/, { json: preview });
     api.on("POST", /^site-imports\/i1\/apply$/, { json: { status: "queued" } });
   });
@@ -553,7 +579,7 @@ test("an apply that ends in an unknown state keeps the preview", async () => {
 });
 
 test("an import history reply without a list empties the table", async () => {
-  const { api } = await openImport((api) => {
+  const { api } = await openImportPage((api) => {
     api.data.imports = [{ fileName: "old.csv" }];
     api.on("POST", /^site-imports\/preview$/, { json: preview });
     api.on("POST", /^site-imports\/i1\/apply$/, {
@@ -567,19 +593,123 @@ test("an import history reply without a list empties the table", async () => {
   assert.match(pastImports().textContent, /No past imports\./);
 });
 
-test("a Compliance manager reaches the upload form by URL though the menu hides Import", async () => {
-  const { api } = await mountAdmin("/sites/import", {
-    role: "compliance-manager",
-    setup: (api) => (api.data.imports = [{ fileName: "old.csv" }]),
+test("after a finished import, the Site managers list reads its managers again", async () => {
+  /** Mount the Site managers list against `data`, sharing `shared`'s lists and role. @param {any} data @param {any} [shared] */
+  const openManagers = (data, shared = {}) =>
+    mountPage("admin-directory-page", "/managers", {
+      calls: [
+        /^GET programs\/[^/]+$/,
+        /^GET sites\/[^/]+\/manager-memberships$/,
+        /^GET sites\/[^/]+\?roster=1$/,
+        /^GET people$/,
+        // A finished import marks every catalog list out of date.
+        /^GET (providers\?directory=1|programs|oversight-options|program-managers)$/,
+      ],
+      sites: true,
+      data,
+      ...shared,
+    });
+  const { catalog, session } = await openManagers(adminData());
+  assert.ok(missing('a[href="/managers/u3"]'));
+  await mountPage("admin-site-import-page", "/sites/import", {
+    calls: [/^(GET|POST) site-imports(\/|$)/],
+    recordErrors: true,
+    catalog,
+    session,
+    setup: (api) => {
+      api.on("POST", /^site-imports\/preview$/, {
+        json: { ...preview, counts: { create: 2 }, rows: rows.slice(0, 2) },
+      });
+      api.on("POST", /^site-imports\/i1\/apply$/, {
+        json: {
+          status: "complete",
+          resultStatus: "succeeded",
+          outcomes: { applied: 2 },
+        },
+      });
+    },
   });
-  assert.ok(missing('a[href="/sites/import"]'));
-  // Pins a gap: the import route has no capability check, so the upload form
-  // shows to a Compliance manager. No issue filed yet.
-  assert.ok(!missing("#upload-title"));
-  // The backend refuses their history read with a 403, and the table reads as empty, with no error.
-  assert.equal(api.calls("GET", /^site-imports$/).length, 1);
-  assert.match(pastImports().textContent, /No past imports\./);
-  assert.doesNotMatch(pastImports().textContent, /old\.csv/);
-  assert.equal(pageError(), "");
-  assert.equal(toastText(), "");
+  await choosePreview();
+  await click("#apply-site-import");
+  // managerData() adds Morgan (u3) as a manager of Example Site, as an import could.
+  await openManagers(managerData(), { catalog, session });
+  assert.ok(
+    !missing('[aria-labelledby="managers-title"] a[href="/managers/u3"]'),
+  );
+});
+
+test("an apply that finishes after leave() doesn't rewrite the address, even on the import route", async () => {
+  const held = gate();
+  const { page } = await openImportPage((api) => {
+    api.on("POST", /^site-imports\/preview$/, { json: preview });
+    api.on("POST", /^site-imports\/i1\/apply$/, async () => {
+      await held.promise;
+      return { json: { status: "complete", outcomes: { applied: 1 } } };
+    });
+  });
+  await choosePreview();
+  await click("#apply-site-import");
+  // <admin-app> calls leave() as the user goes; the page mustn't wait for the URL to change.
+  page.leave();
+  window.history.replaceState({}, "", "/sites/import");
+  held.release();
+  await settle();
+  assert.equal(url(), "/sites/import");
+});
+
+test("a preview that finishes after leave() doesn't change the address", async () => {
+  const held = gate();
+  const { page } = await openImportPage((api) =>
+    api.on("POST", /^site-imports\/preview$/, async () => {
+      await held.promise;
+      return { json: preview };
+    }),
+  );
+  await chooseFile();
+  await submit("#site-import-form");
+  page.leave();
+  window.history.replaceState({}, "", "/sites");
+  held.release();
+  await settle();
+  assert.equal(url(), "/sites");
+});
+
+for (const failed of [false, true]) {
+  test(`returning during a ${failed ? "failed" : "successful"} preview restores an upload that can be retried`, async () => {
+    const held = gate();
+    const { api } = await openImportPage((api) => {
+      api.on("POST", /^site-imports\/preview$/, {
+        delay: held.promise,
+        status: failed ? 400 : 200,
+        json: failed ? { error: "unreadable_csv" } : preview,
+      });
+    });
+    const submitButton = '#site-import-form button[type="submit"]';
+    await chooseFile();
+    await submit("#site-import-form");
+    assert.equal(api.calls("POST", /^site-imports\/preview$/).length, 1);
+    await routeTo("/sites");
+    await routeTo("/sites/import");
+    assert.equal($(submitButton).disabled, true);
+
+    held.release();
+    await settle();
+    assert.equal($(submitButton).disabled, false);
+    assert.equal(url(), "/sites/import");
+    assert.ok(missing("#review-title"));
+    assert.equal(pageError(), failed ? t("admin.import.unreadableCsv") : "");
+
+    api.on("POST", /^site-imports\/preview$/, { json: preview });
+    await choosePreview();
+    assert.equal(url(), "/sites/import?importId=i1");
+    assert.equal(api.calls("POST", /^site-imports\/preview$/).length, 2);
+    assert.equal(pageError(), "");
+  });
+}
+
+test("a redraw after the URL moves on still draws the route open() was given", async () => {
+  const { page } = await openImportPage();
+  window.history.replaceState({}, "", "/not-a-page");
+  page.render();
+  assert.ok(!missing("admin-site-import-page h1"));
 });

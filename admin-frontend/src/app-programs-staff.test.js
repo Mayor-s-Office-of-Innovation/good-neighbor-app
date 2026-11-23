@@ -325,7 +325,7 @@ test("a staff edit whose refresh fails reports the error", async () => {
   });
   await click("[data-edit-program-staff='u1']");
   await click(`${editForm("u1")} button[type='submit']`);
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
+  // The Program page passes the API code on; <admin-app> shows a sentence for it.
   assert.deepEqual(errors, ["program_read_failed"]);
 });
 
@@ -373,7 +373,7 @@ test("a staff refresh that fails after leaving the Program still reports the err
   await leavePage("/sites");
   held.release();
   await settle();
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
+  // The page reports the raw error; <admin-app>'s error line shows it as a plain message.
   assert.deepEqual(errors, ["program_read_failed"]);
 });
 
@@ -577,6 +577,13 @@ test("resetting the Program name form clears its unsaved edit", async () => {
   assert.equal($(`${form} [data-save-button]`).disabled, true);
 });
 
+test("the Program page reports an edited name as unsaved, with no app around it", async () => {
+  const { page } = await openProgramPage("/programs/p1");
+  assert.equal(page.hasUnsavedChanges(), false);
+  await fill('#program-details-form wa-input[name="program-name"]', "Draft");
+  assert.equal(page.hasUnsavedChanges(), true);
+});
+
 /**
  * Whether the manager directory must read again after the save.
  * @param {() => Promise<void>} save
@@ -703,4 +710,14 @@ test("a Program page redrawn after the address changes still draws its own visit
   window.history.pushState({}, "", "/sites");
   page.render();
   assert.equal(heading(), "Example Program");
+});
+
+const crumbs = `nav[aria-label="${t("admin.breadcrumb.label")}"]`;
+
+test("a program page's breadcrumb names the program as the current page", async () => {
+  await openProgramPage("/programs/p1");
+  assert.equal(
+    $(`${crumbs} [aria-current="page"]`).textContent,
+    t("admin.breadcrumb.program"),
+  );
 });
