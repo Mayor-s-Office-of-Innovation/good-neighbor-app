@@ -184,7 +184,7 @@ function siteRow(row, { selected, noData, siteHref, names, most }) {
   const noPublic =
     row.status !== "inactive" && row.publicContact?.state === "missing";
   return `<tr role="row" data-site-row="${escapeHtml(row.siteId)}">
-    <td role="cell"><wa-checkbox data-select-site="${escapeHtml(row.siteId)}" aria-label="${escapeHtml(t("admin.insights.selectSite", { name: row.name ?? row.siteId }))}" ${selected.has(row.siteId) ? "checked" : ""}></wa-checkbox></td>
+    <td role="cell"><wa-checkbox data-select-site="${escapeHtml(row.siteId)}" ${selected.has(row.siteId) ? "checked" : ""}><span class="visually-hidden">${escapeHtml(t("admin.insights.selectSite", { name: row.name ?? row.siteId }))}</span></wa-checkbox></td>
     <th role="rowheader" scope="row" ${label("site")}><a href="${escapeHtml(siteHref(row.siteId))}" data-route data-site-link="${escapeHtml(row.siteId)}">${escapeHtml(row.name ?? row.siteId)}</a>${
       manager
         ? `<div class="muted" data-manager="${escapeHtml(row.managerId)}">${escapeHtml(manager)}</div>`
@@ -304,7 +304,7 @@ export function resultsView({
     <table role="table">
       <caption class="visually-hidden">${escapeHtml(t("admin.insights.tableCaption", { period: periodLabel(interval) }))}</caption>
       <thead role="rowgroup"><tr role="row">
-        <th role="columnheader" scope="col"><wa-checkbox id="insights-select-all" aria-label="${escapeHtml(t("admin.insights.selectAll"))}"></wa-checkbox></th>
+        <th role="columnheader" scope="col"><wa-checkbox id="insights-select-all"><span class="visually-hidden">${escapeHtml(t("admin.insights.selectAll"))}</span></wa-checkbox></th>
         ${columnHead("site", false, state)}${columnHead("checks", true, state)}${columnHead("response", true, state)}${columnHead("severity", false, state)}${columnHead("issuesPer30d", true, state)}
         <th role="columnheader" scope="col"><span class="visually-hidden">${escapeHtml(t("admin.insights.col.open"))}</span></th>
       </tr></thead>

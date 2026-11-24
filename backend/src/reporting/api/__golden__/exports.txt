@@ -1,0 +1,72 @@
+## issues -> 200
+{"job":{"jobId":"86963a3995798faeda5cc0875c33ad82","kind":"export","state":"queued","request":{"dataset":"issues","period":"financialYear","startYear":"2026"},"snapshotId":"golden1","createdAt":"2026-11-04T20:00:00.000Z","updatedAt":"2026-11-04T20:00:00.000Z","expiresAt":"2026-11-05T20:00:00.000Z","error":null,"result":null,"dataQuality":null,"downloadUrl":null,"downloadSeconds":null}}
+{"job":{"jobId":"86963a3995798faeda5cc0875c33ad82","kind":"export","state":"succeeded","request":{"dataset":"issues","period":"financialYear","startYear":"2026"},"snapshotId":"golden1","createdAt":"2026-11-04T20:00:00.000Z","updatedAt":"2026-11-04T20:00:00.000Z","expiresAt":"2026-11-05T20:00:00.000Z","error":null,"result":{"filename":"insights-issues-2026-07-01-to-2027-06-30-golden1.csv","contentType":"text/csv; charset=utf-8","rows":11,"bytes":1489},"dataQuality":null,"downloadUrl":"memory://ca0df2c95aa144c1d0ff2ff3c8f967fd/86963a3995798faeda5cc0875c33ad82/insights-issues-2026-07-01-to-2027-06-30-golden1.csv","downloadSeconds":300}}
+﻿Issue ID,Site,Site ID,Category,Severity (1-5),State,Created,Response deadline,First response,Response state,Resolved,Parent check
+t4,Synthetic Site 1,s1,Debris,3,Open,2026-11-03T17:00:00.000Z,2026-11-06T17:00:00.000Z,,Awaiting response,,c4
+t3,Synthetic Site 1,s1,Unsecured gate,5,Resolved,2026-10-20T17:00:00.000Z,2026-10-23T17:00:00.000Z,2026-10-21T17:00:00.000Z,Responded on time,2026-10-22T17:00:00.000Z,c3
+t10,s4,s4,Debris,3,Open,2026-10-20T17:00:00.000Z,2026-10-23T17:00:00.000Z,,Overdue,,c11
+t9,site 9,s6,Café débris,5,Resolved,2026-10-14T18:00:00.000Z,2026-10-17T18:00:00.000Z,2026-10-14T19:00:00.000Z,Responded on time,2026-11-03T18:00:00.000Z,
+t8,Site 9,s5,,,Open,2026-10-12T17:00:00.000Z,2026-10-15T17:00:00.000Z,,Overdue,,c9
+t2,Synthetic Site 1,s1,Debris,2,Open,2026-10-10T17:00:00.000Z,2026-10-13T17:00:00.000Z,,Overdue,,c2
+t5,Synthetic Site 2,s2,Debris,3,Open,2026-10-05T17:00:00.000Z,2026-10-08T17:00:00.000Z,2026-10-09T17:00:00.000Z,Responded late,,c7
+t1,Synthetic Site 1,s1,Unsecured gate,4,Open,2026-10-02T17:00:00.000Z,2026-10-05T17:00:00.000Z,2026-10-03T17:00:00.000Z,Responded on time,,c1
+t1,Site 9,s5,Unsecured gate,4,Open,2026-10-02T17:00:00.000Z,2026-10-05T17:00:00.000Z,,Overdue,,c1
+t7,Site 9,s5,Café débris,2,Open,2026-10-01T16:00:00.000Z,2026-10-04T16:00:00.000Z,2026-10-02T16:00:00.000Z,Responded on time,,c1
+t6,Synthetic Site 2,s2,Debris,1,Open,2026-09-15T17:00:00.000Z,2026-09-18T17:00:00.000Z,2026-09-15T18:00:00.000Z,Responded on time,,c6
+
+## checks -> 200
+{"job":{"jobId":"ee562a5daf3a2841f4a615e83dee5b39","kind":"export","state":"queued","request":{"dataset":"checks","period":"financialYear","startYear":"2026"},"snapshotId":"golden1","createdAt":"2026-11-04T20:00:00.000Z","updatedAt":"2026-11-04T20:00:00.000Z","expiresAt":"2026-11-05T20:00:00.000Z","error":null,"result":null,"dataQuality":null,"downloadUrl":null,"downloadSeconds":null}}
+{"job":{"jobId":"ee562a5daf3a2841f4a615e83dee5b39","kind":"export","state":"succeeded","request":{"dataset":"checks","period":"financialYear","startYear":"2026"},"snapshotId":"golden1","createdAt":"2026-11-04T20:00:00.000Z","updatedAt":"2026-11-04T20:00:00.000Z","expiresAt":"2026-11-05T20:00:00.000Z","error":null,"result":{"filename":"insights-checks-2026-07-01-to-2027-06-30-golden1.csv","contentType":"text/csv; charset=utf-8","rows":12,"bytes":773},"dataQuality":null,"downloadUrl":"memory://ca0df2c95aa144c1d0ff2ff3c8f967fd/ee562a5daf3a2841f4a615e83dee5b39/insights-checks-2026-07-01-to-2027-06-30-golden1.csv","downloadSeconds":300}}
+﻿Check ID,Site,Site ID,Recorded state,Completed or started,Issue IDs
+c5,Synthetic Site 1,s1,Unfinished,2026-11-04T15:50:00.000Z,
+c4,Synthetic Site 1,s1,Completed,2026-11-03T17:00:00.000Z,t4
+c3,Synthetic Site 1,s1,Completed,2026-10-20T17:00:00.000Z,t3
+c11,s4,s4,Completed,2026-10-20T17:00:00.000Z,t10
+c10,site 9,s6,Completed,2026-10-14T17:00:00.000Z,
+c9,Site 9,s5,Completed,2026-10-12T17:00:00.000Z,t8
+c2,Synthetic Site 1,s1,Completed,2026-10-10T17:00:00.000Z,t2
+c8,Synthetic Site 3,s3,Completed,2026-10-06T17:00:00.000Z,
+c7,Synthetic Site 2,s2,Completed,2026-10-05T17:00:00.000Z,t5
+c1,Synthetic Site 1,s1,Completed,2026-10-02T17:00:00.000Z,t1
+c1,Site 9,s5,Completed,2026-10-02T17:00:00.000Z,t1 t7
+c6,Synthetic Site 2,s2,Completed,2026-09-15T17:00:00.000Z,t6
+
+## sites -> 200
+{"job":{"jobId":"e7930fd7e2f92ed38da6c36ebe99115b","kind":"export","state":"queued","request":{"dataset":"sites","period":"financialYear","startYear":"2026"},"snapshotId":"golden1","createdAt":"2026-11-04T20:00:00.000Z","updatedAt":"2026-11-04T20:00:00.000Z","expiresAt":"2026-11-05T20:00:00.000Z","error":null,"result":null,"dataQuality":null,"downloadUrl":null,"downloadSeconds":null}}
+{"job":{"jobId":"e7930fd7e2f92ed38da6c36ebe99115b","kind":"export","state":"succeeded","request":{"dataset":"sites","period":"financialYear","startYear":"2026"},"snapshotId":"golden1","createdAt":"2026-11-04T20:00:00.000Z","updatedAt":"2026-11-04T20:00:00.000Z","expiresAt":"2026-11-05T20:00:00.000Z","error":null,"result":{"filename":"insights-sites-2026-07-01-to-2027-06-30-golden1.csv","contentType":"text/csv; charset=utf-8","rows":7,"bytes":1118},"dataQuality":null,"downloadUrl":"memory://ca0df2c95aa144c1d0ff2ff3c8f967fd/e7930fd7e2f92ed38da6c36ebe99115b/insights-sites-2026-07-01-to-2027-06-30-golden1.csv","downloadSeconds":300}}
+﻿siteId,name,status,siteType,providerId,programId,department,managerId,completedPerimeterChecks,singleIssueReports,unfinishedChecks,issuesCreated,severeIssues,awaiting,overdue,onTime,late,unknown,notTimed,maxSeverity,publicContact,publicEmail,publicPhone,publicPhoneExtension,siteContact,contactBasis
+s4,,active,shelter,v3,p3,Example Department,pm3,1,0,0,1,0,0,1,0,0,0,0,3,missing,,,,missing,current
+s5,Site 9,active,shelter,v3,p3,Example Department,pm3,2,0,0,3,1,0,2,1,0,0,0,4,missing,,,,missing,current
+s6,site 9,active,shelter,v1,p3,Example Department,pm3,1,0,0,1,1,0,0,1,0,0,0,5,missing,front@example.org,,,missing,current
+s7,Site 10,active,drop_in,v3,p3,Example Department,pm3,0,0,0,0,0,0,0,0,0,0,0,,missing,,,,missing,current
+s1,Synthetic Site 1,active,shelter,v1,p1,Example Department,pm1,3,1,1,4,2,1,1,2,0,0,0,5,available,desk@example.org,415-555-0100,,available,current
+s2,Synthetic Site 2,active,drop_in,v2,p2,Other Department,pm2,2,0,0,2,0,0,0,1,1,0,0,3,missing,,,,missing,current
+s3,Synthetic Site 3,inactive,shelter,v1,p1,Example Department,pm1,1,0,0,0,0,0,0,0,0,0,0,,missing,,,,missing,current
+
+## issues by name, severe -> 200
+{"job":{"jobId":"df2986beddd2f5bef7f6fc77365513dc","kind":"export","state":"queued","request":{"dataset":"issues","period":"financialYear","startYear":"2026","severityBand":"severe","sort":"siteName"},"snapshotId":"golden1","createdAt":"2026-11-04T20:00:00.000Z","updatedAt":"2026-11-04T20:00:00.000Z","expiresAt":"2026-11-05T20:00:00.000Z","error":null,"result":null,"dataQuality":null,"downloadUrl":null,"downloadSeconds":null}}
+{"job":{"jobId":"df2986beddd2f5bef7f6fc77365513dc","kind":"export","state":"succeeded","request":{"dataset":"issues","period":"financialYear","startYear":"2026","severityBand":"severe","sort":"siteName"},"snapshotId":"golden1","createdAt":"2026-11-04T20:00:00.000Z","updatedAt":"2026-11-04T20:00:00.000Z","expiresAt":"2026-11-05T20:00:00.000Z","error":null,"result":{"filename":"insights-issues-2026-07-01-to-2027-06-30-golden1.csv","contentType":"text/csv; charset=utf-8","rows":4,"bytes":705},"dataQuality":null,"downloadUrl":"memory://ca0df2c95aa144c1d0ff2ff3c8f967fd/df2986beddd2f5bef7f6fc77365513dc/insights-issues-2026-07-01-to-2027-06-30-golden1.csv","downloadSeconds":300}}
+﻿Issue ID,Site,Site ID,Category,Severity (1-5),State,Created,Response deadline,First response,Response state,Resolved,Parent check
+t1,Site 9,s5,Unsecured gate,4,Open,2026-10-02T17:00:00.000Z,2026-10-05T17:00:00.000Z,,Overdue,,c1
+t9,site 9,s6,Café débris,5,Resolved,2026-10-14T18:00:00.000Z,2026-10-17T18:00:00.000Z,2026-10-14T19:00:00.000Z,Responded on time,2026-11-03T18:00:00.000Z,
+t1,Synthetic Site 1,s1,Unsecured gate,4,Open,2026-10-02T17:00:00.000Z,2026-10-05T17:00:00.000Z,2026-10-03T17:00:00.000Z,Responded on time,,c1
+t3,Synthetic Site 1,s1,Unsecured gate,5,Resolved,2026-10-20T17:00:00.000Z,2026-10-23T17:00:00.000Z,2026-10-21T17:00:00.000Z,Responded on time,2026-10-22T17:00:00.000Z,c3
+
+## checks by name, one provider -> 200
+{"job":{"jobId":"786ef0284e0da564a53a945973375237","kind":"export","state":"queued","request":{"dataset":"checks","period":"month","month":"2026-10","providerId":"v3","sort":"siteName"},"snapshotId":"golden1","createdAt":"2026-11-04T20:00:00.000Z","updatedAt":"2026-11-04T20:00:00.000Z","expiresAt":"2026-11-05T20:00:00.000Z","error":null,"result":null,"dataQuality":null,"downloadUrl":null,"downloadSeconds":null}}
+{"job":{"jobId":"786ef0284e0da564a53a945973375237","kind":"export","state":"succeeded","request":{"dataset":"checks","period":"month","month":"2026-10","providerId":"v3","sort":"siteName"},"snapshotId":"golden1","createdAt":"2026-11-04T20:00:00.000Z","updatedAt":"2026-11-04T20:00:00.000Z","expiresAt":"2026-11-05T20:00:00.000Z","error":null,"result":{"filename":"insights-checks-2026-10-01-to-2026-10-31-golden1.csv","contentType":"text/csv; charset=utf-8","rows":3,"bytes":229},"dataQuality":null,"downloadUrl":"memory://ca0df2c95aa144c1d0ff2ff3c8f967fd/786ef0284e0da564a53a945973375237/insights-checks-2026-10-01-to-2026-10-31-golden1.csv","downloadSeconds":300}}
+﻿Check ID,Site,Site ID,Recorded state,Completed or started,Issue IDs
+c1,Site 9,s5,Completed,2026-10-02T17:00:00.000Z,t1 t7
+c9,Site 9,s5,Completed,2026-10-12T17:00:00.000Z,t8
+c11,s4,s4,Completed,2026-10-20T17:00:00.000Z,t10
+
+## sites with concerns, by Issues -> 200
+{"job":{"jobId":"f2151c1941318feb9ee06f982182c99f","kind":"export","state":"queued","request":{"dataset":"sites","period":"financialYear","startYear":"2026","show":"top","sort":"issuesPer30Days"},"snapshotId":"golden1","createdAt":"2026-11-04T20:00:00.000Z","updatedAt":"2026-11-04T20:00:00.000Z","expiresAt":"2026-11-05T20:00:00.000Z","error":null,"result":null,"dataQuality":null,"downloadUrl":null,"downloadSeconds":null}}
+{"job":{"jobId":"f2151c1941318feb9ee06f982182c99f","kind":"export","state":"succeeded","request":{"dataset":"sites","period":"financialYear","startYear":"2026","show":"top","sort":"issuesPer30Days"},"snapshotId":"golden1","createdAt":"2026-11-04T20:00:00.000Z","updatedAt":"2026-11-04T20:00:00.000Z","expiresAt":"2026-11-05T20:00:00.000Z","error":null,"result":{"filename":"insights-sites-2026-07-01-to-2027-06-30-golden1.csv","contentType":"text/csv; charset=utf-8","rows":5,"bytes":895},"dataQuality":null,"downloadUrl":"memory://ca0df2c95aa144c1d0ff2ff3c8f967fd/f2151c1941318feb9ee06f982182c99f/insights-sites-2026-07-01-to-2027-06-30-golden1.csv","downloadSeconds":300}}
+﻿siteId,name,status,siteType,providerId,programId,department,managerId,completedPerimeterChecks,singleIssueReports,unfinishedChecks,issuesCreated,severeIssues,awaiting,overdue,onTime,late,unknown,notTimed,maxSeverity,publicContact,publicEmail,publicPhone,publicPhoneExtension,siteContact,contactBasis
+s1,Synthetic Site 1,active,shelter,v1,p1,Example Department,pm1,3,1,1,4,2,1,1,2,0,0,0,5,available,desk@example.org,415-555-0100,,available,current
+s5,Site 9,active,shelter,v3,p3,Example Department,pm3,2,0,0,3,1,0,2,1,0,0,0,4,missing,,,,missing,current
+s4,,active,shelter,v3,p3,Example Department,pm3,1,0,0,1,0,0,1,0,0,0,0,3,missing,,,,missing,current
+s6,site 9,active,shelter,v1,p3,Example Department,pm3,1,0,0,1,1,0,0,1,0,0,0,5,missing,front@example.org,,,missing,current
+s2,Synthetic Site 2,active,drop_in,v2,p2,Other Department,pm2,2,0,0,2,0,0,0,1,1,0,0,3,missing,,,,missing,current
+

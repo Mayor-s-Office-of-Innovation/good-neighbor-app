@@ -12,27 +12,32 @@ mock_provider "aws" {
   # Terraform 1.9, which CI runs, checks the whole module when a test cleans up.
   mock_resource "aws_cloudfront_function" {
     defaults = {
-      arn = "arn:aws:cloudfront::111111111111:function/mock"
+      arn = "arn:aws:cloudfront::aws:function/mock"
     }
   }
   mock_resource "aws_iam_role" {
     defaults = {
-      arn = "arn:aws:iam::111111111111:role/mock"
+      arn = "arn:aws:iam::aws:role/mock"
     }
   }
   mock_resource "aws_kms_key" {
     defaults = {
-      arn = "arn:aws:kms:us-west-2:111111111111:key/mock"
+      arn = "arn:aws:kms:us-west-2:aws:key/mock"
+    }
+  }
+  mock_resource "aws_lambda_function" {
+    defaults = {
+      arn = "arn:aws:lambda:us-west-2:aws:function:mock"
     }
   }
   mock_resource "aws_sqs_queue" {
     defaults = {
-      arn = "arn:aws:sqs:us-west-2:111111111111:other-queue"
+      arn = "arn:aws:sqs:us-west-2:aws:other-queue"
     }
   }
   mock_resource "aws_sns_topic" {
     defaults = {
-      arn = "arn:aws:sns:us-west-2:111111111111:mock"
+      arn = "arn:aws:sns:us-west-2:aws:mock"
     }
   }
   mock_resource "aws_s3_bucket" {
@@ -42,7 +47,7 @@ mock_provider "aws" {
   }
   mock_resource "aws_apigatewayv2_api" {
     defaults = {
-      execution_arn = "arn:aws:execute-api:us-west-2:111111111111:mock"
+      execution_arn = "arn:aws:execute-api:us-west-2:aws:mock"
     }
   }
   mock_resource "aws_cognito_user_pool" {
@@ -56,12 +61,12 @@ mock_provider "aws" {
 
   mock_resource "aws_wafv2_web_acl" {
     defaults = {
-      arn = "arn:aws:wafv2:us-east-1:111111111111:global/webacl/mock/00000000"
+      arn = "arn:aws:wafv2:us-east-1:aws:global/webacl/mock/00000000"
     }
   }
   mock_resource "aws_acm_certificate" {
     defaults = {
-      arn = "arn:aws:acm:us-east-1:111111111111:certificate/mock"
+      arn = "arn:aws:acm:us-east-1:aws:certificate/mock"
       domain_validation_options = [
         {
           domain_name           = "media.example.org"
@@ -80,13 +85,13 @@ mock_provider "archive" {}
 override_resource {
   target = aws_sqs_queue.insights_jobs_dlq
   values = {
-    arn = "arn:aws:sqs:us-west-2:111111111111:insights-jobs-dlq"
+    arn = "arn:aws:sqs:us-west-2:aws:insights-jobs-dlq"
   }
 }
 override_resource {
   target = aws_sqs_queue.insights_jobs
   values = {
-    arn = "arn:aws:sqs:us-west-2:111111111111:insights-jobs"
+    arn = "arn:aws:sqs:us-west-2:aws:insights-jobs"
   }
 }
 override_resource {
@@ -104,25 +109,25 @@ override_resource {
 override_resource {
   target = aws_lambda_function.analytics_query
   values = {
-    arn = "arn:aws:lambda:us-west-2:111111111111:function:analytics-query"
+    arn = "arn:aws:lambda:us-west-2:aws:function:analytics-query"
   }
 }
 override_resource {
   target = aws_lambda_function.insights_jobs
   values = {
-    arn = "arn:aws:lambda:us-west-2:111111111111:function:insights-jobs"
+    arn = "arn:aws:lambda:us-west-2:aws:function:insights-jobs"
   }
 }
 override_resource {
   target = aws_dynamodb_table.app
   values = {
-    arn = "arn:aws:dynamodb:us-west-2:111111111111:table/app"
+    arn = "arn:aws:dynamodb:us-west-2:aws:table/app"
   }
 }
 override_resource {
   target = aws_lambda_function.analytics_projection
   values = {
-    arn = "arn:aws:lambda:us-west-2:111111111111:function:analytics-projection"
+    arn = "arn:aws:lambda:us-west-2:aws:function:analytics-projection"
   }
 }
 
@@ -132,7 +137,7 @@ variables {
   data_classification           = "internal"
   tags                          = {}
   bedrock_model_id              = "test-model"
-  setup_code_email_identity_arn = "arn:aws:ses:us-west-2:111111111111:identity/example.org"
+  setup_code_email_identity_arn = "arn:aws:ses:us-west-2:aws:identity/example.org"
   provider_app_url              = "https://example.org/"
   sf311_media_domain_name       = "media.example.org"
   sf311_media_zone_id           = "Z0000000000000"
@@ -326,11 +331,11 @@ run "insights_infra" {
       statement.sid => { actions = sort(tolist(statement.actions)), resources = sort(tolist(statement.resources)) }
       if contains(["ListLake", "ReadConverterState", "StartTableExport", "DescribeTableExport", "WriteRawExports", "UseAppKey"], statement.sid)
       }) == jsonencode({
-      DescribeTableExport = { actions = ["dynamodb:DescribeExport"], resources = ["arn:aws:dynamodb:us-west-2:111111111111:table/app/export/*"] }
+      DescribeTableExport = { actions = ["dynamodb:DescribeExport"], resources = ["arn:aws:dynamodb:us-west-2:aws:table/app/export/*"] }
       ListLake            = { actions = ["s3:ListBucket"], resources = ["arn:aws:s3:::analytics-lake"] }
       ReadConverterState  = { actions = ["s3:GetObject"], resources = ["arn:aws:s3:::analytics-lake/readings/_converter/state.json"] }
-      StartTableExport    = { actions = ["dynamodb:ExportTableToPointInTime"], resources = ["arn:aws:dynamodb:us-west-2:111111111111:table/app"] }
-      UseAppKey           = { actions = ["kms:Decrypt", "kms:GenerateDataKey"], resources = ["arn:aws:kms:us-west-2:111111111111:key/mock"] }
+      StartTableExport    = { actions = ["dynamodb:ExportTableToPointInTime"], resources = ["arn:aws:dynamodb:us-west-2:aws:table/app"] }
+      UseAppKey           = { actions = ["kms:Decrypt", "kms:GenerateDataKey"], resources = ["arn:aws:kms:us-west-2:aws:key/mock"] }
       WriteRawExports     = { actions = ["s3:AbortMultipartUpload", "s3:PutObject", "s3:PutObjectAcl"], resources = ["arn:aws:s3:::analytics-lake/raw/AWSDynamoDB/*"] }
     })
     error_message = "The converter's backfill grants must be exactly these: list the lake, read its state, start and describe a table export, and write it only where DynamoDB puts exports, with no KMS Encrypt it doesn't use."

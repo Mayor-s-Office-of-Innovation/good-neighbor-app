@@ -77,7 +77,7 @@ describe("SF311 service-code resolution", () => {
 
   it.each([
     ["graffiti", "1.5.1.1.18.0"],
-    ["bulky-items", "1.1.4.7.7.0"],
+    ["bulky-items", "1.1.4.7.21.0"],
   ])("defaults empty and unknown %s results to %s", (classifierId, code) => {
     for (const labels of [[], [""], ["unrecognized"]]) {
       expect(serviceCodesForClassifierLabels({ classifierId, labels })).toEqual(
@@ -92,7 +92,7 @@ describe("SF311 service-code resolution", () => {
         classifierId: "bulky-items",
         labels: ["Mattress", "unknown", "Furniture", "unknown"],
       }),
-    ).toEqual(["1.1.4.7.10.0", "1.1.4.7.7.0"]);
+    ).toEqual(["1.1.4.7.10.0", "1.1.4.7.21.0", "1.1.4.7.7.0"]);
   });
 
   it("does not guess a default for an unknown classifier", () => {

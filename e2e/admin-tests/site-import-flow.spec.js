@@ -1,4 +1,4 @@
-import { test, expect, mockAdmin } from "./admin-mock.js";
+import { test, expect, mockAdmin, gate } from "./admin-mock.js";
 import {
   importPreview as preview,
   importRows as rows,
@@ -71,3 +71,45 @@ test("the conflict report downloads", async ({ page }) => {
   ]);
   expect(download.suggestedFilename()).toBe("site-import-i1-conflicts.csv");
 });
+
+for (const failed of [false, true]) {
+  test(`browser Back during a ${failed ? "failed" : "successful"} preview allows another upload`, async ({
+    page,
+  }) => {
+    const held = gate();
+    const api = await mockAdmin(page);
+    api.on("POST", /^site-imports\/preview$/, {
+      delay: held.promise,
+      status: failed ? 400 : 200,
+      json: failed ? { error: "unreadable_csv" } : preview,
+    });
+    await page.goto("/sites/import");
+    await signedIn(page);
+    const file = page.locator('input[name="site-import-file"]');
+    const submit = page.locator('#site-import-form button[type="submit"]');
+    await file.setInputFiles(csv);
+    await submit.click();
+    await expect
+      .poll(() => api.calls("POST", /^site-imports\/preview$/).length)
+      .toBe(1);
+    await page.locator('a[data-route][href="/sites"]').first().click();
+    await expect(page.locator("#directory-search-input")).toBeVisible();
+    await page.goBack();
+    await expect(submit).toBeDisabled();
+
+    held.release();
+    await expect(submit).toBeEnabled();
+    await expect(page).toHaveURL(/\/sites\/import$/);
+    await expect(page.locator("#review-title")).toHaveCount(0);
+    // The returning visit can operate the form with the keyboard as well.
+    api.on("POST", /^site-imports\/preview$/, { json: preview });
+    await file.setInputFiles(csv);
+    await submit.focus();
+    await expect(submit).toHaveAccessibleName(/\S/);
+    await expect(submit).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#review-title")).toBeVisible();
+    await expect(page).toHaveURL(/\/sites\/import\?importId=i1$/);
+    expect(api.calls("POST", /^site-imports\/preview$/)).toHaveLength(2);
+  });
+}

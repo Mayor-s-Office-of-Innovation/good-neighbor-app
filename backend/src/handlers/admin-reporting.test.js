@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,9 +25,8 @@ const { LIMITS, SITE_DIMENSIONS, requestError } = await import(
   "../reporting/api/requests.js"
 );
 
-const { syntheticProjection, writeSyntheticProjection } = await import(
-  "../reporting/api/test-projection.js"
-);
+const { syntheticProjection, tablesSource, writeSyntheticProjection } =
+  await import("../reporting/api/test-projection.js");
 
 const NOW = Date.parse("2026-11-04T20:00:00.000Z");
 
@@ -64,14 +63,7 @@ const escapedJson = (body) => JSON.stringify(body).replaceAll("€", "\\u20ac");
 /** @param {{ source?: any, maxExportRows?: number, jobStore?: any }} [opts] */
 function setup(opts = {}) {
   const projection = syntheticProjection();
-  const source = opts.source ?? {
-    latest: async () => ({ prefix: "p1", snapshotId: "snap1" }),
-    load: async (/** @type {string} */ prefix) => ({
-      prefix,
-      manifest: projection.manifest,
-      tables: projection.tables,
-    }),
-  };
+  const source = opts.source ?? tablesSource(projection);
   /** @type {{ ownerKey: string, jobId: string }[]} */
   const started = [];
   const jobStore =
@@ -85,8 +77,16 @@ function setup(opts = {}) {
     now: () => NOW,
     maxExportRows: opts.maxExportRows,
   });
+  opened.push(h);
   return { h, started, jobStore, projection };
 }
+
+// Closed after each test, so no snapshot copy outlives it.
+/** @type {{ close: () => Promise<void> }[]} */
+const opened = [];
+afterEach(async () => {
+  await Promise.all(opened.splice(0).map((h) => h.close()));
+});
 
 // A block body: a returned mock would run as the hook's teardown.
 beforeEach(() => {
@@ -221,16 +221,12 @@ describe("reads", () => {
   });
 
   it("logs a 503 that is ours to fix, such as a snapshot of another contract", async () => {
-    const { projection } = setup();
+    const projection = syntheticProjection();
     const { h } = setup({
-      source: {
-        latest: async () => ({ prefix: "p1", snapshotId: "snap1" }),
-        load: async (/** @type {string} */ prefix) => ({
-          prefix,
-          manifest: { ...projection.manifest, contractVersion: "old" },
-          tables: projection.tables,
-        }),
-      },
+      source: tablesSource({
+        ...projection,
+        manifest: { ...projection.manifest, contractVersion: "old" },
+      }),
     });
     const res = await h.getOverview(event());
     expect([res.statusCode, json(res).error]).toEqual([
@@ -487,6 +483,7 @@ async function handlersOverFolder(env) {
   vi.resetModules();
   const fresh = await import("./admin-reporting.js");
   const h = fresh.reportingHandlers({ INSIGHTS_PROJECTION_DIR: dir, ...env });
+  opened.push(h);
   const manifestPath = join(dir, "manifest.json");
   return {
     snapshotId: async () => json(await h.getOverview(event())).meta.snapshotId,
@@ -835,6 +832,7 @@ describe("export and report jobs", () => {
         INSIGHTS_JOBS_BUCKET: "j",
         INSIGHTS_JOBS_QUEUE_URL: queueUrl,
       });
+      opened.push(h);
       const res = await h.postExport(
         event({ headers: key, body: { dataset: "issues" } }),
       );
@@ -983,6 +981,7 @@ describe("export and report jobs", () => {
         S3_PUBLIC_PRESIGN_ENDPOINT: "http://localhost:9000",
         INSIGHTS_JOBS_BUCKET: "j",
       });
+      opened.push(h);
       const res = await h.getOverview(event());
       expect([res.statusCode, json(res).siteCount]).toEqual([200, 3]);
     } finally {
@@ -1004,26 +1003,21 @@ describe("export and report jobs", () => {
        * @param {string} evaluatedAt
        * @returns {any}
        */
-      const handlersOn = (id, evaluatedAt) =>
-        createReportingHandlers({
+      const handlersOn = (id, evaluatedAt) => {
+        const h = createReportingHandlers({
           snapshots: createSnapshotStore({
-            source: {
-              latest: async () => ({ prefix: id, snapshotId: id }),
-              load: async (/** @type {string} */ prefix) => ({
-                prefix,
-                manifest: {
-                  ...projection.manifest,
-                  snapshotId: id,
-                  evaluatedAt,
-                },
-                tables: projection.tables,
-              }),
-            },
+            source: tablesSource({
+              ...projection,
+              manifest: { ...projection.manifest, snapshotId: id, evaluatedAt },
+            }),
           }),
           jobStore,
           starter: async () => {},
           now: () => NOW,
         });
+        opened.push(h);
+        return h;
+      };
       // 11 pm on Oct 31 in San Francisco, then the next day's snapshot.
       const first = json(
         await handlersOn("snap1", "2026-11-01T06:00:00.000Z")[route](

@@ -64,6 +64,8 @@ export class TaskUpdateDialog extends HTMLElement {
     /** @type {boolean | null | undefined} */
     this._cityHelpNeeded = undefined;
     this._requests = new Map();
+    /** @type {Map<string, ReturnType<Crypto["randomUUID"]>>} */
+    this._resolutionIds = new Map();
     this._cityUpdates = [];
     this._loadGeneration = 0;
     /** @type {Set<AbortController>} */
@@ -134,8 +136,16 @@ export class TaskUpdateDialog extends HTMLElement {
     )
       return;
     this._resolving = true;
-    const completion = createTaskUpdate(task.taskId, { type: "issue_resolved" })
+    const requestId =
+      this._resolutionIds.get(task.taskId) || crypto.randomUUID();
+    this._resolutionIds.set(task.taskId, requestId);
+    const completion = createTaskUpdate(
+      task.taskId,
+      { type: "issue_resolved" },
+      requestId,
+    )
       .then((response) => {
+        this._resolutionIds.delete(task.taskId);
         this._task = {
           ...task,
           ...response.task,
@@ -367,18 +377,28 @@ export class TaskUpdateDialog extends HTMLElement {
       const statuses = new Map(
         (page.updates || [])
           .filter((update) => update.updateId)
-          .map((update) => [update.updateId, update.cityNoteStatus]),
+          .map((update) => [
+            update.updateId,
+            {
+              cityNoteStatus: update.cityNoteStatus,
+              cityNotes: update.cityNotes,
+            },
+          ]),
       );
       let changed = false;
       const updates = (this._detail.updates || []).map((update) => {
         if (
           !update.updateId ||
           !statuses.has(update.updateId) ||
-          statuses.get(update.updateId) === update.cityNoteStatus
+          JSON.stringify(statuses.get(update.updateId)) ===
+            JSON.stringify({
+              cityNoteStatus: update.cityNoteStatus,
+              cityNotes: update.cityNotes,
+            })
         )
           return update;
         changed = true;
-        return { ...update, cityNoteStatus: statuses.get(update.updateId) };
+        return { ...update, ...statuses.get(update.updateId) };
       });
       if (changed) {
         this._detail = { ...this._detail, updates };

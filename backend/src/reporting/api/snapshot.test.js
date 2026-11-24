@@ -1,32 +1,95 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { setImmediate } from "node:timers/promises";
+
+// Lets a test run a step, such as a rebuild, while dirSource copies a file.
+const onCopy = vi.hoisted(() => ({
+  /** @type {((from: string) => void) | null} */ run: null,
+}));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const real = /** @type {typeof import("node:fs/promises")} */ (
+    await importOriginal()
+  );
+  return {
+    ...real,
+    /** @type {typeof real.copyFile} */
+    copyFile: async (from, ...rest) => {
+      onCopy.run?.(String(from));
+      return real.copyFile(from, ...rest);
+    },
+  };
+});
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { CONTRACT_VERSION } from "../contract.js";
+import { readProjection } from "../test-build.js";
 import {
   createSnapshotStore,
   dirSource,
-  indexSnapshot,
+  openSnapshot,
   s3Source,
 } from "./snapshot.js";
 import { overview } from "./read-model.js";
 import { parseListQuery, parsePeriodParams } from "./requests.js";
 import {
+  closeTestSnapshots,
+  openTables,
   syntheticProjection,
   writeSyntheticProjection,
 } from "./test-projection.js";
+
+// The synthetic projection's files, written once; each fake load copies them.
+const base = mkdtempSync(join(tmpdir(), "insights-snapshot-test-"));
+{
+  const instance = await DuckDBInstance.create(":memory:");
+  const conn = await instance.connect();
+  await writeSyntheticProjection(conn, join(base, "projection"));
+  conn.closeSync();
+  instance.closeSync();
+}
+afterAll(async () => {
+  await closeTestSnapshots();
+  rmSync(base, { recursive: true, force: true });
+});
+
+// Closed after each test, so no snapshot copy outlives it.
+/** @type {ReturnType<typeof createSnapshotStore>[]} */
+const stores = [];
+/** @param {Parameters<typeof createSnapshotStore>[0]} opts */
+const storeOf = (opts) => {
+  const store = createSnapshotStore(opts);
+  stores.push(store);
+  return store;
+};
+afterEach(async () => {
+  await Promise.all(stores.splice(0).map((store) => store.close()));
+});
 
 /**
  * @param {Record<string, any>} [manifest]
  * @returns {any}
  */
 function fakeSource(manifest = {}) {
-  const projection = syntheticProjection();
   let latest = { prefix: "p1", snapshotId: "snap1" };
   return {
     loads: 0,
+    /** @type {Record<string, string>} each prefix's last copied folder */
+    dirs: {},
     /** @param {{ prefix: string, snapshotId: string }} next */
     publish(next) {
       latest = next;
@@ -37,41 +100,51 @@ function fakeSource(manifest = {}) {
     /** @param {string} prefix */
     async load(prefix) {
       this.loads += 1;
+      const loaded = await dirSource(join(base, "projection")).load(
+        join(base, "projection"),
+      );
+      this.dirs[prefix] = loaded.dir;
       return {
+        ...loaded,
         prefix,
         // The ID latest() names for this prefix, as a real build writes it.
         manifest: {
-          ...projection.manifest,
+          ...loaded.manifest,
           ...manifest,
           snapshotId:
             latest.prefix === prefix
               ? latest.snapshotId
               : prefix.replace(/^p/, "snap"),
         },
-        tables: projection.tables,
       };
     },
   };
 }
 
-describe("indexSnapshot", () => {
-  it("finds Issues, Checks and Sites by ID", () => {
-    const { manifest, tables } = syntheticProjection();
-    const snap = indexSnapshot({ prefix: "p", manifest, tables });
-    const issue = tables.issues[0];
-    expect(snap.issuesById.get(issue.issueId)?.[0]).toBe(issue);
-    expect(snap.checksById.get(tables.checks[0].checkId)?.[0]).toBe(
-      tables.checks[0],
-    );
+/** @returns {{ promise: Promise<void>, resolve: () => void }} */
+function deferred() {
+  /** @type {() => void} */
+  let resolve = () => {};
+  const promise = new Promise((r) => {
+    resolve = () => r(undefined);
+  });
+  return { promise, resolve };
+}
+
+describe("openSnapshot", () => {
+  it("reads each Site and its contacts into memory", async () => {
+    const snap = await openTables(syntheticProjection());
     expect(snap.sitesById.get("s1")?.name).toBe("Synthetic Site 1");
+    expect(snap.contactsBySite.get("s1")?.publicEmail).toBe("desk@example.org");
+    expect(snap.sites.map((s) => s.siteId)).toEqual(["s1", "s2", "s3"]);
   });
 
-  it("gives the same Overview whatever order the projection's rows come in", () => {
+  it("gives the same Overview whatever order the projection's rows come in", async () => {
     /** @param {boolean} reversed */
-    const october = (reversed) => {
+    const october = async (reversed) => {
       const { manifest, tables } = syntheticProjection();
       if (reversed) for (const rows of Object.values(tables)) rows.reverse();
-      const snap = indexSnapshot({ prefix: "p", manifest, tables });
+      const snap = await openTables({ manifest, tables });
       return overview(snap, {
         interval: parsePeriodParams(
           { period: "month", month: "2026-10" },
@@ -82,10 +155,10 @@ describe("indexSnapshot", () => {
         now: Date.parse(manifest.evaluatedAt),
       });
     };
-    expect(october(true)).toEqual(october(false));
+    expect(await october(true)).toEqual(await october(false));
   });
 
-  it("counts a day once however many Sites have data on it, so launch week opens on the running month", () => {
+  it("counts a day once however many Sites have data on it, so launch week opens on the running month", async () => {
     // Three Sites a day from Oct 26 to Nov 6: six days in each month.
     const { manifest, tables } = syntheticProjection();
     tables.site_days = ["s1", "s2", "s3"].flatMap((siteId) =>
@@ -95,17 +168,23 @@ describe("indexSnapshot", () => {
         day: d > 20 ? `2026-10-${d}` : `2026-11-0${d}`,
       })),
     );
-    const snap = indexSnapshot({ prefix: "p", manifest, tables });
+    const snap = await openTables({ manifest, tables });
     expect(
       parsePeriodParams({}, "2026-11-06T19:00:00.000Z", snap.dataDays),
     ).toMatchObject({ startDay: "2026-11-01" });
   });
 
-  it("starts coverage on the earliest day with any record", () => {
+  it("starts coverage on the earliest day with any record", async () => {
     const { manifest, tables } = syntheticProjection();
     const first = tables.site_days.map((d) => d.day).sort()[0];
-    expect(indexSnapshot({ prefix: "p", manifest, tables }).coverageStart).toBe(
-      first,
+    expect((await openTables({ manifest, tables })).coverageStart).toBe(first);
+  });
+
+  it("starts coverage at an Issue's day when it comes before any Site day", async () => {
+    const { manifest, tables } = syntheticProjection();
+    tables.issues[0].createdDay = "2026-08-01";
+    expect((await openTables({ manifest, tables })).coverageStart).toBe(
+      "2026-08-01",
     );
   });
 });
@@ -113,7 +192,7 @@ describe("indexSnapshot", () => {
 describe("createSnapshotStore", () => {
   it("loads a snapshot once and serves it from memory", async () => {
     const source = fakeSource();
-    const store = createSnapshotStore({ source });
+    const store = storeOf({ source });
     await Promise.all([store.current(), store.current()]);
     expect(source.loads).toBe(1);
   });
@@ -127,7 +206,7 @@ describe("createSnapshotStore", () => {
       return load(prefix);
     };
     const onLoad = vi.fn();
-    const store = createSnapshotStore({ source, now: () => now, onLoad });
+    const store = storeOf({ source, now: () => now, onLoad });
     await Promise.all([store.current(), store.current()]);
     expect(onLoad.mock.calls).toEqual([[{ snapshotId: "snap1", ms: 1200 }]]);
   });
@@ -135,7 +214,7 @@ describe("createSnapshotStore", () => {
   it("swaps to a newer snapshot once its refresh time passes", async () => {
     const source = fakeSource();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -153,7 +232,7 @@ describe("createSnapshotStore", () => {
   it("keeps answering from the held snapshot while a newer one loads", async () => {
     const source = fakeSource();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -183,16 +262,15 @@ describe("createSnapshotStore", () => {
   it("answers 503 when no snapshot has been built, never zeros", async () => {
     const source = fakeSource();
     source.latest = async () => null;
-    await expect(
-      createSnapshotStore({ source }).current(),
-    ).rejects.toMatchObject({ code: "snapshot_unavailable", statusCode: 503 });
+    await expect(storeOf({ source }).current()).rejects.toMatchObject({
+      code: "snapshot_unavailable",
+      statusCode: 503,
+    });
   });
 
   it("refuses a snapshot built to a different contract", async () => {
     const source = fakeSource({ contractVersion: "insights-v0" });
-    await expect(
-      createSnapshotStore({ source }).current(),
-    ).rejects.toMatchObject({
+    await expect(storeOf({ source }).current()).rejects.toMatchObject({
       code: "snapshot_contract_mismatch",
       statusCode: 503,
     });
@@ -201,7 +279,7 @@ describe("createSnapshotStore", () => {
   it("keeps serving the last good snapshot when a newer one fails to load", async () => {
     const source = fakeSource();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -221,7 +299,7 @@ describe("createSnapshotStore", () => {
 
   it("loads an older snapshot by prefix for a job that captured it", async () => {
     const source = fakeSource();
-    const store = createSnapshotStore({ source });
+    const store = storeOf({ source });
     await store.current();
     expect((await store.byPrefix("p0", "snap0")).prefix).toBe("p0");
   });
@@ -229,7 +307,7 @@ describe("createSnapshotStore", () => {
   it("picks up a rebuilt local folder, which keeps its path", async () => {
     const source = fakeSource();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -244,7 +322,7 @@ describe("createSnapshotStore", () => {
   it("answers 503 once latest.json is gone, so warm and cold Lambdas agree", async () => {
     const source = fakeSource();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -266,7 +344,7 @@ describe("createSnapshotStore", () => {
   it("answers the stale request, then 503, where a request doesn't wait for the refresh", async () => {
     const source = fakeSource();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -285,7 +363,7 @@ describe("createSnapshotStore", () => {
   it("waits for a refresh, since a frozen Lambda would never finish it after replying", async () => {
     const source = fakeSource();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -303,7 +381,7 @@ describe("createSnapshotStore", () => {
     let now = 0;
     /** @type {number[]} */
     const waits = [];
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -322,7 +400,7 @@ describe("createSnapshotStore", () => {
   it("lets one refresh finish across requests, however long a frozen Lambda held it", async () => {
     const source = fakeSource();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -357,7 +435,7 @@ describe("createSnapshotStore", () => {
   it("shares a load with a job already loading the same prefix", async () => {
     const source = fakeSource();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -388,7 +466,7 @@ describe("createSnapshotStore", () => {
   it("follows latest.json back to an older snapshot, so a rollback lands on every Lambda", async () => {
     const source = fakeSource();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -405,7 +483,7 @@ describe("createSnapshotStore", () => {
   it("never lets a refresh that started earlier replace one that started later", async () => {
     const source = fakeSource();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -441,7 +519,7 @@ describe("createSnapshotStore", () => {
   it("loads a rebuilt folder afresh rather than join a job still loading its old build", async () => {
     const source = fakeSource();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -470,7 +548,7 @@ describe("createSnapshotStore", () => {
   it("with refreshMs 0, checks latest.json again rather than join a check that read it earlier", async () => {
     const source = fakeSource();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 0,
@@ -510,7 +588,7 @@ describe("createSnapshotStore", () => {
           finish = () => resolve(load(prefix));
         }),
     );
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       firstLoadWaitMs: 100,
       wait: async () => {},
@@ -569,7 +647,7 @@ describe("createSnapshotStore", () => {
     const source = fakeSource();
     const onError = vi.fn();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -590,7 +668,7 @@ describe("createSnapshotStore", () => {
     let now = 0;
     /** @type {AbortSignal[]} */
     const signals = [];
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -611,7 +689,7 @@ describe("createSnapshotStore", () => {
     const source = fakeSource();
     const onError = vi.fn();
     let now = 0;
-    const store = createSnapshotStore({
+    const store = storeOf({
       source,
       now: () => now,
       refreshMs: 1000,
@@ -637,7 +715,7 @@ describe("createSnapshotStore", () => {
         expiredKey: "p1/issues.parquet",
       });
     };
-    const store = createSnapshotStore({ source, refreshMs: 0, onError });
+    const store = storeOf({ source, refreshMs: 0, onError });
     for (let i = 0; i < 3; i += 1)
       await expect(store.current()).rejects.toMatchObject({
         code: "snapshot_unavailable",
@@ -658,7 +736,7 @@ describe("createSnapshotStore", () => {
         expiredKey: files[loads % 2],
       });
     };
-    const store = createSnapshotStore({ source, refreshMs: 0, onError });
+    const store = storeOf({ source, refreshMs: 0, onError });
     for (let i = 0; i < 3; i += 1)
       await expect(store.current()).rejects.toMatchObject({
         code: "snapshot_unavailable",
@@ -676,7 +754,7 @@ describe("createSnapshotStore", () => {
         expiredKey: "p1/manifest.json",
       });
     });
-    const store = createSnapshotStore({ source, refreshMs: 0 });
+    const store = storeOf({ source, refreshMs: 0 });
     for (let i = 0; i < 3; i += 1)
       await expect(store.current()).rejects.toMatchObject({
         code: "snapshot_unavailable",
@@ -689,7 +767,7 @@ describe("createSnapshotStore", () => {
 
   it("refuses a job's snapshot when its folder now holds another one", async () => {
     const source = fakeSource();
-    const store = createSnapshotStore({ source });
+    const store = storeOf({ source });
     await store.current();
     await expect(store.byPrefix("p1", "snap1-old")).rejects.toMatchObject({
       code: "snapshot_changed",
@@ -698,11 +776,131 @@ describe("createSnapshotStore", () => {
 
   it("loads an older snapshot once for all the jobs that read it", async () => {
     const source = fakeSource();
-    const store = createSnapshotStore({ source });
+    const store = storeOf({ source });
     await store.current();
     await store.byPrefix("p0", "snap0");
     await store.byPrefix("p0", "snap0");
     expect(source.loads).toBe(2);
+  });
+});
+
+describe("snapshot lifetime", () => {
+  /** @param {any} snap */
+  const siteCount = (snap) =>
+    snap.hold(
+      async (/** @type {any} */ q) =>
+        (await q("SELECT count(*)::INTEGER AS n FROM site_days"))[0].n,
+    );
+
+  it("keeps a snapshot's files through a read a refresh lands in, then deletes them", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = storeOf({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+    });
+    const first = await store.current();
+    const gate = deferred();
+    const read = first.hold(async (q) => {
+      await gate.promise;
+      return (await q("SELECT count(*)::INTEGER AS n FROM site_days"))[0].n;
+    });
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    now = 1001;
+    await store.current();
+    await vi.waitFor(async () =>
+      expect((await store.current()).prefix).toBe("p2"),
+    );
+    await setImmediate();
+    expect(existsSync(source.dirs.p1)).toBe(true);
+    gate.resolve();
+    expect(await read).toBeGreaterThan(0);
+    await /** @type {any} */ (first).disposed;
+    expect(existsSync(source.dirs.p1)).toBe(false);
+  });
+
+  it("lends a job a snapshot still open from a read, rather than load a copy", async () => {
+    const source = fakeSource();
+    let now = 0;
+    const store = storeOf({
+      source,
+      now: () => now,
+      refreshMs: 1000,
+    });
+    const first = await store.current();
+    const gate = deferred();
+    const read = first.hold(() => gate.promise);
+    source.publish({ prefix: "p2", snapshotId: "snap2" });
+    now = 1001;
+    await store.current();
+    await vi.waitFor(async () =>
+      expect((await store.current()).prefix).toBe("p2"),
+    );
+    expect(await store.byPrefix("p1", "snap1")).toBe(first);
+    gate.resolve();
+    await read;
+    // Kept for the job, so its files are still there to read.
+    expect(await siteCount(first)).toBeGreaterThan(0);
+    expect(source.loads).toBe(2);
+  });
+
+  it("lets the older snapshot go once a newer job's snapshot replaces it", async () => {
+    const source = fakeSource();
+    const store = storeOf({ source });
+    await store.current();
+    const older = await store.byPrefix("p0", "snap0");
+    await store.byPrefix("p9", "snap9");
+    await /** @type {any} */ (older).disposed;
+    expect(existsSync(source.dirs.p0)).toBe(false);
+  });
+
+  it("deletes every snapshot's folder on close, the held one and a job's older one", async () => {
+    const source = fakeSource();
+    const store = createSnapshotStore({ source });
+    await store.current();
+    await store.byPrefix("p0", "snap0");
+    await store.close();
+    expect(existsSync(source.dirs.p1)).toBe(false);
+    expect(existsSync(source.dirs.p0)).toBe(false);
+  });
+
+  it("reports a failed cleanup instead of ending the process, and still finishes", async () => {
+    const loaded = await dirSource(join(base, "projection")).load(
+      join(base, "projection"),
+    );
+    const onError = vi.fn();
+    const snap = await openSnapshot(
+      {
+        ...loaded,
+        cleanup: async () => {
+          await loaded.cleanup();
+          throw new Error("rm failed");
+        },
+      },
+      { onError },
+    );
+    snap.release();
+    await snap.disposed;
+    expect(onError).toHaveBeenCalledWith(new Error("rm failed"));
+  });
+
+  it("spills a large query to the temp folder, since Lambda's working folder is read-only", async () => {
+    const snap = await openTables(syntheticProjection());
+    const [{ dir }] = await snap.hold((q) =>
+      q("SELECT current_setting('temp_directory') AS dir"),
+    );
+    expect(dir).toBe(join(tmpdir(), `insights-spill-${process.pid}`));
+  });
+
+  it("deletes a failed load's folder at once", async () => {
+    const source = fakeSource();
+    const store = storeOf({ source });
+    await store.current();
+    await expect(store.byPrefix("p1", "snap1-old")).rejects.toMatchObject({
+      code: "snapshot_changed",
+    });
+    expect(existsSync(source.dirs.p1)).toBe(false);
   });
 });
 
@@ -725,8 +923,43 @@ describe("dirSource", () => {
     const latest = await source.latest();
     const loaded = await source.load(/** @type {any} */ (latest).prefix);
     expect(loaded.manifest.contractVersion).toBe(CONTRACT_VERSION);
+    // A copy, so a rebuild swapping the folder in place can't change it.
+    expect(loaded.dir).not.toBe(join(dir, "projection"));
+    rmSync(join(dir, "projection"), { recursive: true });
+    const reader = await DuckDBInstance.create(":memory:");
+    const read = await reader.connect();
     // Every table, so a new one is round-trip checked without a new line.
-    expect(loaded.tables).toEqual(projection.tables);
+    expect(await readProjection(read, loaded.dir)).toEqual(projection.tables);
+    read.closeSync();
+    reader.closeSync();
+    await loaded.cleanup();
+    expect(existsSync(loaded.dir)).toBe(false);
+  });
+
+  it("refuses a folder rebuilt while it was copied", async () => {
+    const out = join(dir, "projection");
+    const instance = await DuckDBInstance.create(":memory:");
+    const conn = await instance.connect();
+    await writeSyntheticProjection(conn, out);
+    conn.closeSync();
+    instance.closeSync();
+    const manifestPath = join(out, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    // A rebuild lands after the first table is copied, as a build swapping files would.
+    onCopy.run = () => {
+      onCopy.run = null;
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({ ...manifest, snapshotId: "snap2" }),
+      );
+    };
+    try {
+      await expect(dirSource(out).load(out)).rejects.toMatchObject({
+        code: "snapshot_changed",
+      });
+    } finally {
+      onCopy.run = null;
+    }
   });
 
   it("refuses another contract before reading any table", async () => {
@@ -807,7 +1040,14 @@ describe("s3Source", () => {
       snapshotId: "snap1",
     });
     const loaded = await source.load("p1");
-    expect(loaded.tables.checks).toEqual(projection.tables.checks);
+    const reader = await DuckDBInstance.create(":memory:");
+    const read = await reader.connect();
+    expect((await readProjection(read, loaded.dir)).checks).toEqual(
+      projection.tables.checks,
+    );
+    read.closeSync();
+    reader.closeSync();
+    await loaded.cleanup();
   });
 
   it("reports no snapshot when the build hasn't written a pointer", async () => {
@@ -857,7 +1097,8 @@ describe("s3Source", () => {
         open -= 1;
       }
     };
-    await s3Source({ s3, bucket: "lake" }).load("p1");
+    const loaded = await s3Source({ s3, bucket: "lake" }).load("p1");
+    await loaded.cleanup();
     expect(most).toBe(2);
   });
 

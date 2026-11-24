@@ -1,11 +1,8 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../helpers/recovery-test.js";
 import AxeBuilder from "@axe-core/playwright";
 import { t } from "../helpers/i18n.js";
 
 test.beforeEach(async ({ page }) => {
-  await page.route("**/v1/**", (route) =>
-    route.fulfill({ json: { checks: [], tasks: [], sites: [] } }),
-  );
   await page.route("**/__prelaunch_test", (route) =>
     route.fulfill({
       contentType: "text/html",
@@ -347,6 +344,9 @@ test("background check completion preserves the current single-issue controls", 
     report.dataset.previousCheck = previous.id;
     document.querySelector("main")?.append(report);
   });
+  // Initialization announces the heading on the next animation frame. Wait for
+  // that focus move before testing whether an unrelated completion preserves it.
+  await expect(page.locator(".single-issue__title")).toBeFocused();
   const controls = page.locator("#problem-footer button").first();
   await expect(controls).toBeEnabled();
   await controls.focus();

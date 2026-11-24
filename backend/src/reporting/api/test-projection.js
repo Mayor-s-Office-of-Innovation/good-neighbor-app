@@ -1,8 +1,14 @@
 // A small synthetic projection for the reporting API tests and the admin
 // mock's shape check, built through the real rules so its numbers are real.
 
-import { buildProjection } from "../projection.js";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DuckDBInstance } from "@duckdb/node-api";
+import { sqlString } from "../../analytics/convert.js";
+import { TABLE_SCHEMAS, buildProjection } from "../projection.js";
 import { buildFromRows } from "../test-build.js";
+import { dirSource, openSnapshot } from "./snapshot.js";
 
 export const TEST_EVALUATED_AT = "2026-11-04T19:00:00.000Z";
 export const TEST_AS_OF = "2026-11-04T18:00:00.000Z";
@@ -74,7 +80,7 @@ const site = (siteId, extra) => ({
 });
 
 /** @returns {import("../projection.js").ProjectionInputs} */
-function syntheticInputs() {
+export function syntheticInputs() {
   const checks = [
     check("s1", "c1", "2026-10-02T17:00:00.000Z"),
     check("s1", "c2", "2026-10-10T17:00:00.000Z"),
@@ -189,4 +195,71 @@ const built = await buildFromRows(
 export function syntheticProjection() {
   // A copy, so a test that edits its rows can't change another test's.
   return JSON.parse(JSON.stringify(built));
+}
+
+/** @type {Promise<any> | null} */
+let writer = null;
+/** @type {Awaited<ReturnType<typeof openSnapshot>>[]} */
+const openedForTests = [];
+
+/**
+ * Loads tables a test edited as the projection's files, cast to the contract,
+ * so the test reads what the real reader's SQL answers.
+ * @param {{ manifest: Record<string, any>, tables: Record<string, Record<string, any>[]> }} projection
+ * @param {string} prefix
+ * @returns {Promise<import("./snapshot.js").LoadedSnapshot>}
+ */
+async function loadTables({ manifest, tables }, prefix) {
+  writer ??= DuckDBInstance.create(":memory:").then((db) => db.connect());
+  const conn = await writer;
+  const dir = await mkdtemp(join(tmpdir(), "insights-test-tables-"));
+  try {
+    for (const [name, schema] of Object.entries(TABLE_SCHEMAS)) {
+      const columns = Object.entries(schema)
+        .map(([column, type]) => `CAST("${column}" AS ${type}) AS "${column}"`)
+        .join(", ");
+      await conn.run(
+        `COPY (SELECT ${columns} FROM (SELECT unnest(from_json($1::JSON,
+           ${sqlString(`[${JSON.stringify(schema)}]`)}), recursive := true)))
+         TO ${sqlString(join(dir, `${name}.parquet`))} (FORMAT PARQUET)`,
+        [JSON.stringify(tables[name] ?? [])],
+      );
+    }
+    await writeFile(join(dir, "manifest.json"), JSON.stringify(manifest));
+    return { ...(await dirSource(dir).load(dir)), prefix };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * @param {{ manifest: Record<string, any>, tables: Record<string, Record<string, any>[]> }} projection
+ * @param {string} [prefix]
+ * @returns {Promise<import("./snapshot.js").Snapshot>}
+ */
+export async function openTables(projection, prefix = "p1") {
+  const snap = await openSnapshot(await loadTables(projection, prefix));
+  openedForTests.push(snap);
+  return snap;
+}
+
+/**
+ * A source serving the tables as they stand when it loads, so a test can edit
+ * them after building its handlers.
+ * @param {{ manifest: Record<string, any>, tables: Record<string, Record<string, any>[]> }} projection
+ * @returns {import("./snapshot.js").SnapshotSource}
+ */
+export const tablesSource = (projection) => ({
+  latest: async () => ({
+    prefix: "p1",
+    snapshotId: String(projection.manifest.snapshotId),
+  }),
+  load: (prefix) => loadTables(projection, prefix),
+});
+
+/** Lets go of every snapshot openTables opened, deleting their folders. */
+export async function closeTestSnapshots() {
+  const all = openedForTests.splice(0);
+  for (const snap of all) snap.release();
+  await Promise.all(all.map((snap) => snap.disposed));
 }
