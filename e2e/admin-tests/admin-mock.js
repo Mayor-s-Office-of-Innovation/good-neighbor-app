@@ -3,6 +3,8 @@
 import { test as base, expect } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
+import { blankConfigJs, collectPageErrors } from "../helpers/admin-page.js";
+import { insightsReply, recordPhotosReply } from "./insights-mock.js";
 
 /**
  * @typedef {{ method: string, path: string, search: string, body: any, headers: Record<string, string> }} AdminRequest
@@ -17,12 +19,7 @@ const mockFailuresByPage = new WeakMap();
 
 export const test = base.extend({
   page: async ({ page }, use, testInfo) => {
-    /** @type {string[]} */
-    const pageErrors = [];
-    // The URL names the route that threw, when one test visits several.
-    page.on("pageerror", (error) =>
-      pageErrors.push(`${page.url()}: ${error.message}`),
-    );
+    const pageErrors = collectPageErrors(page);
     await (coverageDir
       ? withCoverage(coverageDir, page, use, testInfo)
       : use(page));
@@ -290,7 +287,16 @@ function defaultReply(data, role, request) {
   };
   if (!supervisor && supervisorRoutes.some((re) => re.test(`${method} ${p}`)))
     return supervisorRequired;
+  // Both admin roles read Insights, so the reply doesn't depend on role.
+  const insights = insightsReply(request);
+  if (insights) return insights;
   if (method !== "GET") return writeReply(data, request, exec);
+  const photos = /^sites\/([^/]+)\/record-photos$/.exec(p);
+  if (photos)
+    return recordPhotosReply(
+      decodeURIComponent(photos[1]),
+      new URLSearchParams(search || ""),
+    );
   if (p === "session")
     return {
       json: {
@@ -299,6 +305,8 @@ function defaultReply(data, role, request) {
           manageAdminUsers: supervisor,
           createEntities: supervisor,
           manageProviderManagers: supervisor,
+          // admin-auth.js gives both admin roles Insights.
+          viewInsights: true,
         },
       },
     };
@@ -464,6 +472,8 @@ const supervisorRoutes = [
   /^[A-Z]+ admin-users(\/|$)/,
   // admin-site-imports.js: every route.
   /^[A-Z]+ site-imports(\/|$)/,
+  // record-photos.js: supervisors only, like the System Status photos.
+  /^GET sites\/[^/]+\/record-photos$/,
 ];
 
 /** @param {string} value */
@@ -1142,22 +1152,20 @@ function writeReply(data, request, exec) {
 /**
  * Mock the admin API for one page.
  * @param {import("@playwright/test").Page} page
- * @param {{ role?: "compliance-supervisor" | "compliance-manager", data?: AdminData }} [options]
+ * @param {{ role?: "compliance-supervisor" | "compliance-manager", data?: AdminData, insights?: boolean }} [options]
+ *   insights: switch Insights on, as a deployed config.js would
  */
 export async function mockAdmin(page, options = {}) {
   const api = fakeAdminApi(options, () => settle(page));
   mockFailuresByPage.set(page, api.failures);
-  await page.addInitScript(() => {
+  await page.addInitScript((insightsEnabled) => {
     /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG = {
       apiBase: window.location.origin,
       localDebugAdmin: true,
+      insightsEnabled,
     };
-  });
-  await page.route(/\/config\.js$/, (route) =>
-    new URL(route.request().url()).pathname === "/config.js"
-      ? route.fulfill({ contentType: "application/javascript", body: "" })
-      : route.fallback(),
-  );
+  }, options.insights === true);
+  await blankConfigJs(page);
   await page.route("**/admin/v1/**", async (route) => {
     const url = new URL(route.request().url());
     // settle()'s probe request; not logged, so api.calls() counts only the admin pages' requests.

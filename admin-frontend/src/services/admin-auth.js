@@ -7,6 +7,7 @@ const EXPIRES_AT_KEY = "good-neighbor-admin-expires-at";
 const PKCE_VERIFIER_KEY = "good-neighbor-admin-pkce-verifier";
 const OAUTH_STATE_KEY = "good-neighbor-admin-oauth-state";
 const OAUTH_TRANSACTION_KEY = "good-neighbor-admin-oauth-transaction";
+const RETURN_TO_KEY = "good-neighbor-admin-return-to";
 const SESSION_KEY = "good-neighbor-admin-session";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const REFRESH_MARGIN_MS = 60 * 1000;
@@ -155,17 +156,19 @@ function clearAdminTokens() {
 
 /**
  * Redirect to Cognito managed login using authorization-code + PKCE.
+ * @param {string} [returnTo] a path the caller has checked, opened after the callback
  */
-export async function startAdminLogin() {
+export async function startAdminLogin(returnTo = "") {
   const config = requireAuthConfig();
   // Start with fresh credentials and a new one-time login transaction.
   clearAdminSession();
   const verifier = randomUrlSafe(64);
   const state = randomUrlSafe(24);
   const challenge = await sha256Base64Url(verifier);
-  const transaction = { state, verifier, createdAt: Date.now() };
+  const transaction = { state, verifier, returnTo, createdAt: Date.now() };
   sessionStorage.setItem(PKCE_VERIFIER_KEY, verifier);
   sessionStorage.setItem(OAUTH_STATE_KEY, state);
+  if (returnTo) sessionStorage.setItem(RETURN_TO_KEY, returnTo);
   writeOAuthTransaction(transaction);
 
   const url = new URL(`${config.cognitoDomain}/oauth2/authorize`);
@@ -181,7 +184,7 @@ export async function startAdminLogin() {
 
 /**
  * Complete a Cognito authorization-code callback when `?code=` is present.
- * @returns {Promise<{ handled: boolean, error?: string }>}
+ * @returns {Promise<{ handled: boolean, error?: string, returnTo?: string }>}
  */
 export async function completeAdminLoginFromUrl() {
   const params = new URLSearchParams(location.search);
@@ -194,6 +197,10 @@ export async function completeAdminLoginFromUrl() {
   const transaction = readOAuthTransaction(state);
   const expectedState = transaction?.state || "";
   const verifier = transaction?.verifier || "";
+  // Only a login that succeeds goes back, so a failed one stays on its error.
+  const done = transaction?.returnTo
+    ? { handled: true, returnTo: transaction.returnTo }
+    : { handled: true };
   if (!state || state !== expectedState || !verifier) {
     // A stale callback must not cancel a newer login in progress.
     clearCallbackParameters();
@@ -231,7 +238,7 @@ export async function completeAdminLoginFromUrl() {
       accessExpiresAt: Date.now() + Number(token.expires_in || 3600) * 1000,
       expiresAt: Date.now() + SESSION_TTL_MS,
     });
-    return { handled: true };
+    return done;
   }
   // Existing clients without a refresh token retain their tab-scoped session.
   sessionStorage.setItem(ACCESS_TOKEN_KEY, token.access_token);
@@ -240,14 +247,14 @@ export async function completeAdminLoginFromUrl() {
     EXPIRES_AT_KEY,
     String(Date.now() + Number(token.expires_in || 3600) * 1000),
   );
-  return { handled: true };
+  return done;
 }
 
 /**
  * Keep the PKCE transaction across Cognito's MFA navigation.
  * localStorage is a fallback for
  * browsers that replace the session context during the hosted-login journey.
- * @param {{ state: string, verifier: string, createdAt: number }} transaction
+ * @param {{ state: string, verifier: string, returnTo: string, createdAt: number }} transaction
  */
 function writeOAuthTransaction(transaction) {
   try {
@@ -259,13 +266,17 @@ function writeOAuthTransaction(transaction) {
 
 /**
  * @param {string} state
- * @returns {{ state: string, verifier: string } | null}
+ * @returns {{ state: string, verifier: string, returnTo: string } | null}
  */
 function readOAuthTransaction(state) {
   const sessionState = sessionStorage.getItem(OAUTH_STATE_KEY) || "";
   const sessionVerifier = sessionStorage.getItem(PKCE_VERIFIER_KEY) || "";
   if (state && sessionState === state && sessionVerifier) {
-    return { state: sessionState, verifier: sessionVerifier };
+    return {
+      state: sessionState,
+      verifier: sessionVerifier,
+      returnTo: sessionStorage.getItem(RETURN_TO_KEY) || "",
+    };
   }
   try {
     const value = JSON.parse(
@@ -278,7 +289,11 @@ function readOAuthTransaction(state) {
       Number.isFinite(value?.createdAt) &&
       Date.now() - value.createdAt <= OAUTH_TRANSACTION_TTL_MS
     ) {
-      return { state: value.state, verifier: value.verifier };
+      return {
+        state: value.state,
+        verifier: value.verifier,
+        returnTo: typeof value.returnTo === "string" ? value.returnTo : "",
+      };
     }
   } catch {
     // Malformed or inaccessible storage is treated as an invalid transaction.
@@ -291,6 +306,7 @@ function removeOAuthTransaction(state) {
   if (!state || sessionStorage.getItem(OAUTH_STATE_KEY) === state) {
     sessionStorage.removeItem(PKCE_VERIFIER_KEY);
     sessionStorage.removeItem(OAUTH_STATE_KEY);
+    sessionStorage.removeItem(RETURN_TO_KEY);
   }
   try {
     if (

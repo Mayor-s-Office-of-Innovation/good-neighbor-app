@@ -6,6 +6,10 @@ Accepted (2026-09-16). Supersedes the Tier-2 read-plane **tooling** sketched in
 [dynamodb-data-model.md](../dynamodb-data-model.md) (Glue catalog → Athena): the lake is
 kept, the query engine is DuckDB. The CQRS split itself stands ([ADR 0002](0002-datastore-dynamodb.md)).
 
+Superseded in part by Insights (#410): the admin Analytics page, its catalog and raw-SQL
+routes, and the ad-hoc query engine were removed, and the `analytics-query` Lambda now
+serves Insights.
+
 ## Context
 
 A citywide dashboard is coming, and it needs cross-site OLAP reports (rankings, group-bys,
@@ -103,3 +107,6 @@ Facts that shaped the choice:
   SQL as `SELECT * FROM (…)`, so the role's read-only lake grant — not SQL parsing — is the
   security boundary. The hive `date` column is read as VARCHAR and exposed as
   `TRY_CAST(date AS DATE)` so a `date=unknown` partition can't flip the column type.
+  (Superseded by Insights, #410: the Analytics page, the catalog and raw-SQL routes and the
+  query engine's lockdown are removed. The `analytics-query` Lambda serves only Insights
+  routes and takes no user SQL. The scheduled reports still run the catalog.)

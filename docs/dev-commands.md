@@ -193,7 +193,6 @@ Runs the **exact Lambda handler + worker code** against local emulators (design 
 | `npm run local:minio -w backend` | Just MinIO (local S3, :9000; console :9001) |
 | `npm run local:sf311 -w backend` | Fake local SF311 CreateSR server (:3999) that records requests without calling HUB |
 | `npm run local:api -w backend` | Just the in-process API router (:3001) |
-| `LAKE_BUCKET=… LAKE_AWS_PROFILE=… npm run local:api -w backend` | Same, with the admin analytics routes reading the real S3 lake (ADR 0013). Set both in `.env.local`; then open the admin console's Analytics page (`admin-frontend/analytics.html`). |
 | `npm run local:worker -w backend` | Just the SQS→worker pump (dispatches analyze messages → analyze worker, others → submission worker) |
 | `npm run local:bootstrap -w backend` | Create the table + queue only (normally not needed — `dev` self-bootstraps) |
 | `npm run analyze:smoke -w backend` | Hand-run live analyzer smoke test (reads `backend/.env`, needs a real API key) |
@@ -331,11 +330,13 @@ boots and tears down every process via `webServer`; the only prerequisite is
 | `npm run e2e -w e2e` | Same, from the `e2e/` workspace |
 | `npm run test:headed -w e2e` | Run **headed** in slow motion — the browser clicks and types at a watchable pace (200 ms/action) |
 | `npx playwright show-trace -w e2e` *(see below)* | Open the failure trace for a dead run |
+| `npm run test:insights:emulator:e2e` | Insights against the real API on MinIO and ElasticMQ. Own ports (`e2e/helpers/ports.js`) and data folder (`e2e/test-results/insights-emulator-minio`), so it can run beside the main suite |
 
 CI runs the main suite in two shards, each with its own emulator stack and one
 worker. The support, task-update, error-state, and offline UI suites run in a
-separate job alongside them. The required **E2E (Playwright)** check passes only
-when all three jobs pass.
+separate job alongside them, and the admin suite and the Insights emulator
+suite each run in a job of their own. The required **E2E (Playwright)** check
+passes only when all of them pass.
 
 To reproduce one shard locally, use `npm run e2e -w e2e -- --shard=1/2` (or
 `--shard=2/2`). Run them one at a time locally; they use the same test ports.
@@ -455,6 +456,81 @@ removed. Restart the backend afterward and refresh the dashboard. Without
 CSV, use the explicit reset command. Existing local databases are not sanitized
 by changing this fixture; reset them explicitly to replace previously imported contacts. Leave `LOCAL_SITE_ADMIN_SEED` unset for the
 original device-login fixtures used by the existing local/E2E harness.
+
+### Insights test data (a synthetic year)
+
+Insights pages need a year of records to test against. One command makes a
+seeded year of synthetic staff-app records, writes them in the PITR export's
+file format (`--via-dynamodb` loads and scans DynamoDB Local instead, which is
+slow above a few dozen Sites), runs the real analytics
+converter and the Insights projection, and checks the projection's totals
+against what the generator meant to create:
+
+```sh
+npm run insights:data -w backend
+# options: -- --sites 24 --seed 410 --out <empty folder> --keep --via-dynamodb
+```
+
+It starts its own disk-backed DynamoDB Local and a throwaway MinIO on ports 8461
+and 9461 (set `INSIGHTS_DDB_PORT` / `INSIGHTS_S3_PORT` to move them), so the dev
+stack's data is untouched. It needs Java 17+ and the binaries that
+`npm run local:services -w backend` installs. Extracts land in
+`backend/.local/insights-data/projection/` (`site_days`, `issues`,
+`site_contacts`, `sites`, `checks`, `checks_owed` as Parquet, plus
+`manifest.json`); `check.json` lists any total that differs, read back from the written Parquet. Each run replaces
+its output folder, so `--out` refuses a folder this command didn't write.
+`--keep` leaves the emulators running.
+
+Sites follow the patterns a compliance manager looks for: steady Checks, missed
+days and gaps, repeated severe Issues, late and overdue responses, Issues open
+for months, missing contacts, mid-year openings and closures, and records with
+no response time. Each Site but one has compliance terms, some with their own
+number of Checks a day, and the run checks the Checks each Site owed every
+month. Each task carries a real Guidance rule and its response
+window, including "Call 911" rules with no window. The data spans both DST
+changes. Names are numbered, emails use `example.org` and phones use the
+`415-555-01xx` range kept for fiction.
+
+The local API serves the Insights reporting endpoints (`/admin/v1/reporting/*`
+and `/admin/v1/reports/*`) from that folder; set `INSIGHTS_PROJECTION_DIR` to
+read another. Export and report files go to the local MinIO bucket
+`gnp-local-insights-jobs` (or `INSIGHTS_JOBS_BUCKET`), and jobs run in the same
+process. To time every endpoint against the year and check that Overview, the
+Issues list and a CSV export agree:
+
+```sh
+npm run insights:load -w backend
+# options: -- --copies 21 (about 500 Sites) --rounds 20 --parallel 10
+```
+
+To time the read design picked for Insights (DuckDB querying the Parquet
+files per request) at larger sizes, with the cold time, warm time and peak
+memory of each query in its own 2 GB Node process:
+
+```sh
+npm run insights:bench -w backend
+# options: -- --sites 500,1000 --years 1,2 --runs 30
+```
+
+Sizes are copies of the `insights:data` Sites and year, built once into
+`backend/.local/insights-bench/` and rebuilt when `insights:data` reruns.
+
+Options:
+
+- `--dir`: the `insights:data` output folder (default `backend/.local/insights-data`)
+- `--sites`: Site counts, comma-separated (default 500,1000)
+- `--years`: years of data, comma-separated (default 1,2)
+- `--runs`: warm runs per query after the first answer (default 30)
+- `--rebuild`: rebuild the sized files even if the input is unchanged
+- `--json`: also write every result to this file
+
+Columns:
+
+- `cold ms`: process start to the first answer, including imports, opening the files and the query
+- `peak RSS`: the process's peak resident memory, including DuckDB's native buffers
+- `peak heap`: the largest V8 heap in use, sampled after each answer
+- `warm p50` and `warm p95`: the median and 95th percentile time per answer over `--runs` answers in the same process (at most 5 for the export and report, which take seconds)
+- `files MB`: bytes on disk of the files the query reads
 
 ### Compliance letter email testing
 

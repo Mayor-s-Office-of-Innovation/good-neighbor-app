@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   addDays,
   addMonthsToFirst,
+  dayCountBetween,
   dayKeysBetween,
   isDayKey,
   pacificDateKey,
   pacificDayStartIso,
+  pacificWallTimeIso,
   periodContaining,
   previousPeriod,
   weekdayIndex,
@@ -53,6 +55,23 @@ describe("day arithmetic", () => {
     expect(dayKeysBetween("2026-09-29", "2026-09-29")).toEqual([]);
   });
 
+  it("counts the days of a half-open range as dayKeysBetween lists them", () => {
+    expect(
+      [
+        ["2026-09-29", "2026-10-02"],
+        ["2026-09-29", "2026-09-29"],
+        ["2026-10-02", "2026-09-29"],
+        // Across the March DST change, still whole days.
+        ["2026-03-01", "2026-04-01"],
+      ].map(([a, b]) => [dayCountBetween(a, b), dayKeysBetween(a, b).length]),
+    ).toEqual([
+      [3, 3],
+      [0, 0],
+      [0, 0],
+      [31, 31],
+    ]);
+  });
+
   it("knows the weekday", () => {
     expect(weekdayIndex("2026-09-27")).toBe(0); // Sunday
     expect(weekdayIndex("2026-09-30")).toBe(3); // Wednesday
@@ -71,6 +90,32 @@ describe("pacificDayStartIso", () => {
     expect(pacificDayStartIso("2026-03-09")).toBe("2026-03-09T07:00:00.000Z");
     expect(pacificDayStartIso("2026-11-01")).toBe("2026-11-01T07:00:00.000Z");
     expect(pacificDayStartIso("2026-11-02")).toBe("2026-11-02T08:00:00.000Z");
+  });
+});
+
+describe("pacificWallTimeIso", () => {
+  it("converts local noon on the fall-back day to the standard-time instant", () => {
+    expect(pacificWallTimeIso("2026-11-01", 12 * 3_600_000)).toBe(
+      "2026-11-01T20:00:00.000Z",
+    );
+  });
+
+  it("converts a summer afternoon using daylight time", () => {
+    expect(pacificWallTimeIso("2026-07-01", 12 * 3_600_000)).toBe(
+      "2026-07-01T19:00:00.000Z",
+    );
+  });
+
+  it("moves a time the spring-forward skips an hour later, as clocks do", () => {
+    expect(pacificWallTimeIso("2026-03-08", 2.5 * 3_600_000)).toBe(
+      "2026-03-08T10:30:00.000Z",
+    );
+  });
+
+  it("takes the second 1:30 on the fall-back day", () => {
+    expect(pacificWallTimeIso("2026-11-01", 1.5 * 3_600_000)).toBe(
+      "2026-11-01T09:30:00.000Z",
+    );
   });
 });
 

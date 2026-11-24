@@ -1428,9 +1428,15 @@ resource "aws_wafv2_web_acl" "web" {
         vendor_name = "AWS"
 
         # Keep detection/labels, then restore blocking outside the exact
-        # evaluation and CSV preview routes below. Other rules still enforce.
+        # evaluation, CSV preview and Insights routes below. Other rules still enforce.
         rule_action_override {
           name = "SizeRestrictions_BODY"
+          action_to_use {
+            count {}
+          }
+        }
+        rule_action_override {
+          name = "SizeRestrictions_QUERYSTRING"
           action_to_use {
             count {}
           }
@@ -1445,10 +1451,8 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
-  # Assessments and CSV previews exceed the managed 8 KiB body limit.
-  # Only these exact POST routes are exempt; their handlers enforce decoded
-  # limits of 64 KiB and 1 MiB / 500 rows respectively. Preserve the rule name
-  # and metric for existing dashboards and log queries.
+  # Only these exact POST routes may pass 8 KiB; their handlers set their own limits.
+  # Dashboards and log queries use this rule's name and metric.
   rule {
     name     = "BodySizeRestrictionsOutsideAssessmentEvaluation"
     priority = 10
@@ -1542,12 +1546,181 @@ resource "aws_wafv2_web_acl" "web" {
             }
           }
         }
+        statement {
+          not_statement {
+            statement {
+              and_statement {
+                statement {
+                  byte_match_statement {
+                    positional_constraint = "EXACTLY"
+                    search_string         = "/admin/v1/reports/insights"
+                    field_to_match {
+                      uri_path {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+                statement {
+                  byte_match_statement {
+                    positional_constraint = "EXACTLY"
+                    search_string         = "POST"
+                    field_to_match {
+                      method {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        statement {
+          not_statement {
+            statement {
+              and_statement {
+                statement {
+                  byte_match_statement {
+                    positional_constraint = "EXACTLY"
+                    search_string         = "/admin/v1/reporting/trends"
+                    field_to_match {
+                      uri_path {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+                statement {
+                  byte_match_statement {
+                    positional_constraint = "EXACTLY"
+                    search_string         = "POST"
+                    field_to_match {
+                      method {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
 
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "${local.name_prefix}-body-size-outside-evaluation"
+      sampled_requests_enabled   = false
+    }
+  }
+
+  # 100 Site IDs can pass 2 KB; requests.js caps every param these GET routes read.
+  rule {
+    name     = "QueryStringSizeRestrictionsOutsideInsightsReads"
+    priority = 11
+
+    action {
+      block {
+        custom_response {
+          response_code            = 413
+          custom_response_body_key = "request-too-large"
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
+    }
+
+    statement {
+      and_statement {
+        statement {
+          label_match_statement {
+            scope = "LABEL"
+            key   = "awswaf:managed:aws:core-rule-set:SizeRestrictions_QueryString"
+          }
+        }
+        # Plain reporting GETs only, since % or .. in the path could disguise another route.
+        statement {
+          or_statement {
+            statement {
+              not_statement {
+                statement {
+                  byte_match_statement {
+                    positional_constraint = "STARTS_WITH"
+                    search_string         = "/admin/v1/reporting/"
+                    field_to_match {
+                      uri_path {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+              }
+            }
+            statement {
+              not_statement {
+                statement {
+                  byte_match_statement {
+                    positional_constraint = "EXACTLY"
+                    search_string         = "GET"
+                    field_to_match {
+                      method {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+              }
+            }
+            statement {
+              byte_match_statement {
+                positional_constraint = "CONTAINS"
+                search_string         = "%"
+                field_to_match {
+                  uri_path {}
+                }
+                text_transformation {
+                  priority = 0
+                  type     = "NONE"
+                }
+              }
+            }
+            statement {
+              byte_match_statement {
+                positional_constraint = "CONTAINS"
+                search_string         = ".."
+                field_to_match {
+                  uri_path {}
+                }
+                text_transformation {
+                  priority = 0
+                  type     = "NONE"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-query-size-outside-insights"
       sampled_requests_enabled   = false
     }
   }

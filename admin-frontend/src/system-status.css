@@ -82,6 +82,10 @@
   flex-direction: column;
   white-space: normal;
   min-height: 6rem;
+  /* Web Awesome fixes button height, which clipped the tile's time line. */
+  height: auto;
+  /* The pill radius of other buttons draws an oval around a tall tile. */
+  border-radius: var(--wa-border-radius-m);
 }
 .status-tile img {
   width: 100%;

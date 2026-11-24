@@ -5,4 +5,5 @@ window.GOOD_NEIGHBOR_ADMIN_CONFIG = {
   logoutUri: "https://admin.goodneighborsf.org/",
   apiBase: "",
   localDebugAdmin: false,
+  insightsEnabled: false,
 };

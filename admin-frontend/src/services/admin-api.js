@@ -3,6 +3,7 @@ import { parseRetryAfter } from "../../../frontend/src/lib/retry-after.js";
 import { createReadRequests } from "./read-requests.js";
 import { localRoleHeaders } from "../local-role.js";
 import { getFreshAdminToken, startAdminLogin } from "./admin-auth.js";
+import { signInReturnPath } from "../pages/insights/insights-routes.js";
 import { getAdminConfig } from "../config.js";
 import { appMessageError } from "../admin-error-messages.js";
 
@@ -11,7 +12,10 @@ let loginRedirect = null;
 
 function redirectToLogin() {
   if (!loginRedirect) {
-    loginRedirect = startAdminLogin()
+    // An expired session is the usual way back to sign-in, so it returns to the Insights page too.
+    loginRedirect = startAdminLogin(
+      signInReturnPath(location.pathname + location.search),
+    )
       // Navigation replaces this page. Keep its operations pending so their
       // success/error handlers cannot render a banner or toast during redirect.
       .then(() => new Promise(() => {}))
@@ -64,7 +68,10 @@ function adminFetch(path, init = {}) {
     parseAdminResponse(path, init).catch(async (error) => {
       if (error.name === "TimeoutError") {
         const { t } = await import("../../../frontend/src/i18n/i18n.js");
-        throw appMessageError(t("admin.errors.requestTimeout"));
+        const timeout = appMessageError(t("admin.errors.requestTimeout"));
+        // The message is a sentence; pages that word their own read the code.
+        /** @type {any} */ (timeout).code = "request_timeout";
+        throw timeout;
       }
       throw error;
     });
@@ -95,10 +102,6 @@ async function parseAdminResponse(path, init) {
     /** @type {any} */ (err).retryAfterMs = parseRetryAfter(
       res.headers?.get?.("retry-after"),
     );
-    // Some routes (analytics) explain the failure; surface it for the UI.
-    if (typeof body?.message === "string") {
-      /** @type {any} */ (err).detail = body.message;
-    }
     throw err;
   }
   return body;
@@ -567,30 +570,66 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify({ siteIds, confirmation }),
     }),
-  // Analytics (ADR 0013): the reporting lake, never the app database.
-  /** The canned query catalog. */
-  analyticsCatalog: () => adminFetch("/admin/v1/analytics/queries"),
-  /**
-   * Run one catalog query with parameters.
-   * @param {string} queryId
-   * @param {Record<string, string | number>} params
-   * @returns {Promise<{ columns: string[], rows: unknown[][], truncated: boolean, elapsedMs: number, asOf: string | null }>}
-   */
-  analyticsRun: (queryId, params, signal = undefined) =>
-    adminFetch(`/admin/v1/analytics/queries/${encodeURIComponent(queryId)}`, {
+  // Insights: fixed reporting endpoints on the analytics Lambda.
+  /** @param {Record<string, string>} params @param {AbortSignal} [signal] */
+  reportingOverview: (params, signal) =>
+    adminFetch(`/admin/v1/reporting/overview${queryOf(params)}`, { signal }),
+  /** @param {string} siteId @param {Record<string, string>} params @param {AbortSignal} [signal] */
+  reportingSite: (siteId, params, signal) =>
+    adminFetch(
+      `/admin/v1/reporting/sites/${encodeURIComponent(siteId)}${queryOf(params)}`,
+      { signal },
+    ),
+  /** @param {Record<string, string>} params @param {AbortSignal} [signal] */
+  reportingIssues: (params, signal) =>
+    adminFetch(`/admin/v1/reporting/issues${queryOf(params)}`, { signal }),
+  /** @param {string} issueId @param {Record<string, string>} params @param {AbortSignal} [signal] */
+  reportingIssue: (issueId, params, signal) =>
+    adminFetch(
+      `/admin/v1/reporting/issues/${encodeURIComponent(issueId)}${queryOf(params)}`,
+      { signal },
+    ),
+  /** @param {Record<string, string>} params @param {AbortSignal} [signal] */
+  reportingChecks: (params, signal) =>
+    adminFetch(`/admin/v1/reporting/checks${queryOf(params)}`, { signal }),
+  /** @param {string} checkId @param {Record<string, string>} params @param {AbortSignal} [signal] */
+  reportingCheck: (checkId, params, signal) =>
+    adminFetch(
+      `/admin/v1/reporting/checks/${encodeURIComponent(checkId)}${queryOf(params)}`,
+      { signal },
+    ),
+  /** @param {string} siteId @param {{ checkId: string } | { issueId: string }} params @param {AbortSignal} [signal] */
+  recordPhotos: (siteId, params, signal) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/record-photos${queryOf(params)}`,
+      { signal },
+    ),
+  /** @param {Record<string, string>} [params] `include: "sites"` adds each Site's name */
+  reportingScopeOptions: (params = {}) =>
+    adminFetch(`/admin/v1/reporting/scope-options${queryOf(params)}`),
+  /** @param {Record<string, unknown>} body from exportBody @param {string} idempotencyKey the server makes one export per key */
+  createReportingExport: (body, idempotencyKey) =>
+    adminFetch("/admin/v1/reporting/exports", {
       method: "POST",
-      body: JSON.stringify({ params }),
-      signal,
+      body: JSON.stringify(body),
+      headers: { "idempotency-key": idempotencyKey },
     }),
-  /**
-   * Run raw read-only SQL (the advanced panel).
-   * @param {string} sql
-   * @returns {Promise<{ columns: string[], rows: unknown[][], truncated: boolean, elapsedMs: number, asOf: string | null }>}
-   */
-  analyticsQuery: (sql, signal = undefined) =>
-    adminFetch("/admin/v1/analytics/query", {
+  /** @param {Record<string, unknown>} body @param {string} idempotencyKey the server makes one report per key */
+  createInsightsReport: (body, idempotencyKey) =>
+    adminFetch("/admin/v1/reports/insights", {
       method: "POST",
-      body: JSON.stringify({ sql }),
-      signal,
+      body: JSON.stringify(body),
+      headers: { "idempotency-key": idempotencyKey },
+    }),
+  /** @param {string} jobId */
+  getReportJob: (jobId) =>
+    adminFetch(`/admin/v1/reports/${encodeURIComponent(jobId)}`, {
+      cache: "no-store",
     }),
 };
+
+/** @param {Record<string, string>} params @returns {string} "" or "?…" */
+function queryOf(params) {
+  const query = new URLSearchParams(params).toString();
+  return query ? `?${query}` : "";
+}

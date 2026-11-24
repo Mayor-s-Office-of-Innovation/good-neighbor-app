@@ -258,6 +258,7 @@ jobs:
             logoutUri: location.origin + "/",
             apiBase: "",
             localDebugAdmin: false,
+            insightsEnabled: ${{ vars.ADMIN_INSIGHTS_ENABLED == 'true' }},
           };
           CONFIG
 

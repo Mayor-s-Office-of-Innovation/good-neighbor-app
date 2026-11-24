@@ -18,8 +18,8 @@ const {
   ENTITIES,
   createViews,
   emptyViewSql,
+  installHttpfs,
   lakeViewSql,
-  lockdown,
   stripTrailingSemicolon,
 } = await import("./lake-views.js");
 const { ENTITY_COLUMNS } = await import("./convert.js");
@@ -283,28 +283,47 @@ describe("createViews", () => {
   });
 });
 
-describe("lockdown", () => {
-  it("blocks local filesystem reads and configuration changes on every connection, but still allows views", async () => {
-    await lockdown(conn);
-    await expect(
-      conn.run("SELECT content FROM read_text('/etc/hosts')"),
-    ).rejects.toThrow(/LocalFileSystem has been disabled/);
-    await expect(conn.run("SET threads = 1")).rejects.toThrow(/locked/);
-    await expect(
-      conn.run("SET GLOBAL disabled_filesystems = ''"),
-    ).rejects.toThrow(/locked/);
+describe("installHttpfs", () => {
+  /** @returns {{ run: (sql: string) => Promise<void>, secret: () => string | undefined }} */
+  const recorder = () => {
+    /** @type {string[]} */
+    const statements = [];
+    return {
+      run: async (sql) => {
+        statements.push(sql);
+      },
+      secret: () => statements.find((sql) => sql.includes("SECRET")),
+    };
+  };
 
-    // A second connection on the same instance is locked too.
-    const other = await db.connect();
-    try {
-      await expect(
-        other.run("SELECT content FROM read_text('/etc/hosts')"),
-      ).rejects.toThrow(/LocalFileSystem has been disabled/);
-      await other.run("CREATE OR REPLACE VIEW v AS SELECT 1 AS x");
-    } finally {
-      other.closeSync();
-    }
-    expect(await rows("SELECT x FROM v")).toEqual([[1]]);
+  it("uses the credential chain and AWS's own hosts by default", async () => {
+    const fake = recorder();
+    await installHttpfs(fake);
+    expect(fake.secret()).toBe(
+      "CREATE OR REPLACE SECRET gn_lake (TYPE S3, PROVIDER CREDENTIAL_CHAIN);",
+    );
+  });
+
+  it.each([
+    ["http://localhost:9020", "'localhost:9020'", "false"],
+    ["https://s3.example.org", "'s3.example.org'", "true"],
+  ])("points the secret at an emulator on %s", async (endpoint, host, ssl) => {
+    const fake = recorder();
+    await installHttpfs(fake, { endpoint });
+    expect(fake.secret()).toContain(
+      `PROVIDER CREDENTIAL_CHAIN, ENDPOINT ${host}, URL_STYLE 'path', USE_SSL ${ssl});`,
+    );
+  });
+
+  it("keeps the emulator endpoint when credentials are passed too", async () => {
+    const fake = recorder();
+    await installHttpfs(fake, {
+      endpoint: "http://localhost:9020",
+      credentials: async () => ({ accessKeyId: "k", secretAccessKey: "s" }),
+    });
+    expect(fake.secret()).toContain(
+      "ENDPOINT 'localhost:9020', URL_STYLE 'path', USE_SSL false);",
+    );
   });
 });
 

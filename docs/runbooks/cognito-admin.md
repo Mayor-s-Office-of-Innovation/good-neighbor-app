@@ -33,6 +33,8 @@ the same app. The provider app keeps its separate security policy.
 Both environment roots export the pool, client, login domain, bucket, and
 CloudFront identifiers. The deploy workflow rejects missing outputs before
 publishing and generates runtime `config.js` with `localDebugAdmin: false`.
+It sets `insightsEnabled` from the `ADMIN_INSIGHTS_ENABLED` environment
+variable, so Insights stays hidden until that variable is `true`.
 The prod resources are provisioned through the standard production CI deploy;
 there is no production Cognito pool until that deployment.
 

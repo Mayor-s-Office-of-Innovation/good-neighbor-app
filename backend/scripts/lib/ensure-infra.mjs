@@ -25,6 +25,8 @@ import {
   HeadBucketCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { seedSiteCodes } from "./site-code-seeds.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -68,6 +70,44 @@ async function waitForService(probe, label) {
       await sleep(POLL_INTERVAL_MS);
     }
   }
+}
+
+// Insights export and report files; private, like the lake bucket they mimic.
+export const LOCAL_INSIGHTS_JOBS_BUCKET = "gnp-local-insights-jobs";
+
+/**
+ * Shared by the local API and worker, so both look for snapshots and job files
+ * in the same place. The default is the synthetic year `npm run insights:data` writes.
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function applyLocalInsightsEnv(env = process.env) {
+  env.INSIGHTS_PROJECTION_DIR ??= fileURLToPath(
+    new URL("../../.local/insights-data/projection", import.meta.url),
+  );
+  env.INSIGHTS_JOBS_BUCKET ||= LOCAL_INSIGHTS_JOBS_BUCKET;
+}
+
+/**
+ * `npm run insights:data` writes names.json and records.jsonl beside the projection.
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {string | null} null when the lake is in MinIO and there are no seed files
+ */
+export function insightsSeedDir(env) {
+  return env.INSIGHTS_PROJECTION_DIR
+    ? dirname(env.INSIGHTS_PROJECTION_DIR)
+    : null;
+}
+
+/**
+ * A blank INSIGHTS_PROJECTION_DIR means the lake lives in MinIO. Otherwise
+ * LAKE_BUCKET may name a real AWS lake, which local startup mustn't try to create.
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {string[]}
+ */
+export function emulatedLakeBuckets(env) {
+  return env.INSIGHTS_PROJECTION_DIR === "" && env.LAKE_BUCKET
+    ? [env.LAKE_BUCKET]
+    : [];
 }
 
 export const TABLE_SCHEMA = {
@@ -249,6 +289,8 @@ export async function ensureLocalInfra() {
       uploadBucket,
       complaintBucket,
       complianceLetterBucket,
+      process.env.INSIGHTS_JOBS_BUCKET || LOCAL_INSIGHTS_JOBS_BUCKET,
+      ...emulatedLakeBuckets(process.env),
     ]) {
       try {
         await s3.send(new CreateBucketCommand({ Bucket: bucket }));

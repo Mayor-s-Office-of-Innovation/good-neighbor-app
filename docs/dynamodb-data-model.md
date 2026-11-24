@@ -187,7 +187,7 @@ as task update events and every GSI sort key.
 
 | Entity | `pk` | `sk` | Notes |
 |---|---|---|---|
-| Site config | `SITE#<siteId>` | `#META` | `type`/`entityType`, name, optional `siteType` (`permanent_supportive_housing`, `shelter`, `drop_in`, or `other`), `address` + `addressParts`, `location` (lat/lng) + `geocodedAddress`, `providerId` / `providerName` / `providerSiteId`, `status`, `publicContact` (public email/phone/extension shared by the dashboard and field app), legacy `contactPerson`, admin-managed `oversight` / `compliance` / `perimeter` / `complianceLetters`, runtime presentation `featureFlags` (currently `duplicateDetection`, boolean, default true), `providerShortCode`, `siteShortCode`. New Sites have no active perimeter-check period. Site `compliance` is a write-side snapshot; canonical effective-dated `COMPLIANCE_TERMS#` records determine requirement status, report duties, and the current/past classification of version-linked letters. A missing canonical period never implies a default requirement. Site compliance stores `underEnhancedMonitoring` as a boolean, set from the enhanced-monitoring reason when saving a requirement and cleared when that requirement is ended. Each compliance period snapshots the flag for history. `perimeter` is a plain-text description editable by the dashboard and Site Manager app (not geometry or a geofence), with `perimeterUpdatedAt` and `perimeterUpdatedBy` edit metadata. Compliance letters keep a private S3 key. The site response for devices mints short-lived download URLs. |
+| Site config | `SITE#<siteId>` | `#META` | `type`/`entityType`, name, optional `siteType` (`permanent_supportive_housing`, `shelter`, `drop_in`, or `other`), `address` + `addressParts`, `location` (lat/lng) + `geocodedAddress`, `providerId` / `providerName` / `providerSiteId`, `status`, `deactivatedAt` (set when the Site is deactivated, so reports stop owing Checks on that day even after later edits move `updatedAt`), `publicContact` (public email/phone/extension shared by the dashboard and field app), legacy `contactPerson`, admin-managed `oversight` / `compliance` / `perimeter` / `complianceLetters`, runtime presentation `featureFlags` (currently `duplicateDetection`, boolean, default true), `providerShortCode`, `siteShortCode`. New Sites have no active perimeter-check period. Site `compliance` is a write-side snapshot; canonical effective-dated `COMPLIANCE_TERMS#` records determine requirement status, report duties, and the current/past classification of version-linked letters. A missing canonical period never implies a default requirement. Site compliance stores `underEnhancedMonitoring` as a boolean, set from the enhanced-monitoring reason when saving a requirement and cleared when that requirement is ended. Each compliance period snapshots the flag for history. `perimeter` is a plain-text description editable by the dashboard and Site Manager app (not geometry or a geofence), with `perimeterUpdatedAt` and `perimeterUpdatedBy` edit metadata. Compliance letters keep a private S3 key. The site response for devices mints short-lived download URLs. |
 | Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | Compatibility projection for authorization and refresh: label, physical-device ID, lastSeenAt, lifecycle/expiry fields, `tokenGeneration`, `refreshJti`, optional `primarySessionKind` / `primarySessionStatus` / `primaryLastSeenAt`, and a bounded `sessions` map (up to eight live Home Screen contexts with independent generation, refresh JTI, status, activity and expiry). A stable `sessionStartGeneration` floor distinguishes replacement enrollments/reactivated sessions from refreshes; legacy sessions omit it until replacement. Each session may hold one encrypted `refreshRecovery` receipt with a five-minute enforced expiry; see [ADR 0020](./adr/0020-retryable-refresh-recovery.md). Signed JWT `sid` selects a slot; tokens without it use the primary fields. All contexts share parent revocation and authority. See ADR 0019. Also stores canonical `accessLevel` (`general` or `manager`). |
 | Legacy code/master contact | `SITE#<siteId>` | `CODE_CONTACT#<emailHash>` / `MASTER_CONTACT#<emailHash>` | Retired. Master contacts are migrated to Site manager memberships in dev; these records no longer authorize setup-code requests. |
 | Manager membership | `SITE#<siteId>` | `MANAGER_MEMBERSHIP#<membershipId>` | One email-based Site Manager role at exactly one Site. Stores normalized `email`, keyed verifier in `emailHash`, optional source `programId` / `userId`, `status`, `role=manager`, and a generation advanced on removal so later bindings can fail closed. Contact edits update the email-directory pointers transactionally without revoking active bindings. |
@@ -634,13 +634,15 @@ components from the original design are **retired**. See
 An incremental DynamoDB export to S3 runs every 6 hours. It needs point-in-time recovery,
 which is on. The export is converted to Parquet files split by entity, and DuckDB runs SQL
 over them for any set of sites or time grain. The pipeline lives in
-`infra/modules/app/analytics.tf`:
+`infra/modules/app/analytics.tf` and `infra/modules/app/insights.tf`:
 
 | Lambda | Trigger | Role |
 |---|---|---|
 | `analytics-export` | EventBridge `rate(6 hours)` | incremental export, starting from the `ANALYTICS#EXPORT` / `#WATERMARK` cursor, into the analytics lake bucket |
 | `analytics-convert` | export completion | rewrites the export as Parquet, split by entity |
-| `analytics-query` | `GET/POST /admin/v1/analytics/*`, behind the admin JWT authorizer | runs DuckDB over the Parquet lake and serves the named query catalog (`backend/src/analytics/catalog.js`) |
+| `analytics-projection` | each successful `analytics-convert` run | builds the Insights snapshot from the Parquet lake and publishes it under `projections/` |
+| `analytics-query` | Insights admin routes, behind the admin JWT authorizer | serves Insights reads and starts CSV exports and PDF reports from the snapshot |
+| `insights-jobs` | the Insights job queue | same bundle as `analytics-query`, with a longer timeout: builds CSV exports and PDF reports |
 | `analytics-report` | EventBridge `cron(0 14 * * ? *)`, 14:00 UTC (06:00 Pacific standard time, 07:00 Pacific daylight time) | builds the daily citywide report |
 
 ADR 0013 replaced the Glue and Athena tooling we first sketched. Athena could still be
@@ -653,19 +655,20 @@ needs. The 6-hour export is the design.
 All of it is Terraform. Nothing is set up by hand.
 
 - **Built:** DynamoDB Streams on the table (shared outbox/System Status mapping and a feature-gated duplicate mapping), the S3 analytics lake bucket
-  (KMS, lifecycle rules), the four Lambdas, and the two EventBridge schedules above.
+  (KMS, lifecycle rules), the six Lambdas, the two EventBridge schedules above, and the Insights job queue and jobs bucket.
 - **Not built:** the Tier-1 Streams aggregator and the `#STATS#` counter items. No
-  Firehose (see T2b above). The admin Analytics page already renders query results; System Status uses its
-  separate operational projections, not the lake or the proposed Tier-1 counters.
+  Firehose (see T2b above). System Status uses its separate operational projections,
+  not the lake or the proposed Tier-1 counters.
 
 Tier-1 buildout is post-MVP and tracked on the issue tracker.
 
 ## Metric definitions
 
 Settled 2026-08-12 as a product decision. "Best cleanliness record" and "regularity" are
-defined below. Both are computed **when read**, never stored. Today that happens in the
-Tier-2 DuckDB SQL (`backend/src/analytics/catalog.js`; the compliance rule is the
-`COALESCE(c.checks, 0) >= 3` filter). The shared `scoring` module planned for Tier 1 does
+defined below. Both are computed **when read**, never stored. Today the Tier-2 daily
+reports compute cleanliness (`backend/src/analytics/catalog.js`), and Insights computes
+regularity from the Checks each Site owed under its own terms (`checks_owed` in
+`backend/src/reporting/projection.js`). The shared `scoring` module planned for Tier 1 does
 not exist yet. When Tier 1 lands, the module and the SQL must agree. Neither tier stores
 a score, so there is nothing to migrate.
 
@@ -683,14 +686,13 @@ a score, so there is nothing to migrate.
 - **Evidence mix is not a score input.** The header's `evidenceKind` (`photos`,
   `description`, `mixed`, or `none`) and its `photoCount` / `textCount` are stamped once at
   `complete`. They let us report how often staff use text instead of photos.
-- **Lake regularity uses a fixed three-check threshold.** It lives as the literal
-  `>= 3` in the analytics SQL. This is not the Site-specific compliance calculation:
-  manager reports use effective-dated terms and Pacific days (AP27), with a default
-  of three only when cadence is unconfigured. The lake query uses UTC dates. There is **no grace period** for device outages. The duty is per day, so
-  compliance is per day and yes-or-no: a day is **compliant if it had 3 or more checks**.
-  Compliance over a window is `compliant_days / total_days`. A flat ratio of
-  `completed ÷ (3 × days)` was rejected. It would let extra checks on one day hide a
-  missed day.
+- **Regularity uses each Site's own terms.** Insights and the manager reports use
+  effective-dated terms and Pacific days (AP27), with a default of three Checks a day only
+  when cadence is unconfigured. The lake reports no longer compute it. There is **no grace period** for device outages.
+  Insights flags **Few Checks** when a Site's average Checks per owed day, rounded to one
+  decimal, is under the average it owed on those days. Days it owed nothing don't count.
+  It does not judge each day met or missed, so extra Checks on one day can cover a
+  short day in the same window.
 
 **Easy to change later.** These defaults are simple on purpose. Counters hold raw
 components, never a baked score. The formula lives in one place per tier. Test data is
@@ -702,8 +704,8 @@ migration cost.
 | # | Limitation | Status | Mitigation |
 |---|---|---|---|
 | **R1** | The city needs a **cross-site** view, which breaks per-site partitioning | Deferred post-MVP | A sparse `ESCALATION#<status>` partition on GSI3 (the index already built for the expiry sweep) would collect `city_escalation` tasks across sites. Toxic escalations are rare, so the `ESCALATION#open` partition stays small. Shard the key later only if volume demands it. |
-| **R2** | **Cross-site analytics** for city-wide reports. See [City-wide reporting](#city-wide-reporting-and-analytics). | Tier 2 built; Tier 1 deferred post-MVP | The Tier 2 lake (S3 export → Parquet → DuckDB, [ADR 0013](./adr/0013-analytics-read-plane.md)) serves the admin analytics routes today. Tier 1 live counters (Streams → counter items) are design only. Cheap at this volume. |
-| **R3** | Detecting a **missing** check (a site did fewer than N today). You cannot query for something that was never written. | Per site: built (AP27). Cross-site: not built | Per site, the manager reports derive the gap at read time: one GSI1 range query per period, counted per Pacific day against the site's own `requiredChecksPerDay`. A cross-site sweep (EventBridge over the site registry) is still the design for city-wide alerting; the daily Tier 2 lake report answers it after the fact today, in UTC days. |
+| **R2** | **Cross-site analytics** for city-wide reports. See [City-wide reporting](#city-wide-reporting-and-analytics). | Tier 2 built; Tier 1 deferred post-MVP | The Tier 2 lake (S3 export → Parquet → DuckDB, [ADR 0013](./adr/0013-analytics-read-plane.md)) feeds the daily reports and Insights today. Tier 1 live counters (Streams → counter items) are design only. Cheap at this volume. |
+| **R3** | Detecting a **missing** check (a site did fewer than N today). You cannot query for something that was never written. | Per site: built (AP27). Cross-site: not built | Per site, the manager reports derive the gap at read time: one GSI1 range query per period, counted per Pacific day against the site's own `requiredChecksPerDay`. A cross-site sweep (EventBridge over the site registry) is still the design for city-wide alerting; Insights answers it after the fact today. |
 | **R4** | Photos/audio exceed the **400 KB item limit** | Handled by design | Check/task blobs go to the S3 uploads bucket and complaint evidence goes to its dedicated S3 bucket. Items store the S3 key and use presigned URLs. Never store media in the item. |
 | **R5** | Tenant isolation must be **airtight** across 400 tenants | **Runtime authorization and negative tests enforced; shared-role IAM cannot express caller-dynamic scoping.** | Every protected route authenticates, derives `siteId` from the verified principal, and builds partition keys server-side. Media also uses exact server-owned keys and refuses to sign a stored pointer outside that Site/check. A `LeadingKeys = SITE#${custom:siteId}` condition cannot be applied to the shared API Lambda execution role: DynamoDB sees the Lambda role, not the JWT/device principal, and central-admin operations intentionally access global partitions. A future platform backstop requires a separate tenant-only data-plane function/role or per-request tagged-role assumption; do not add a misleading `SITE#*` condition. |
 | **R6** | Anonymous staff, so **no per-person attribution** | By design | Attribution is site + device. If per-person is ever needed, add a device-local PIN or roster. Not required now. |
@@ -964,8 +966,36 @@ refresh, and discovery compare it with the canonical Site value (missing means z
 
 `backend/src/analytics/entity-keys.js` defines the reporting allowlist by complete
 partition and sort-key shape. Task/check headers must have bare `TASK#<id>` or
-`CHECK#<id>` keys. Update events, update-ID pointers, task media, check update-media
-pointers and unknown children are excluded. Current ART keys and legacy ART keys
+`CHECK#<id>` keys. Update-ID pointers, task media, check update-media pointers and
+unknown children are excluded. Task update events are their own `task_updates`
+entity, so Insights can read first-response times; `DUP_LINK#` and `DUP_OVERRIDE#`
+rows are `duplicate_links` and `duplicate_overrides`, and `PROGRAM#…/#META` is
+`programs`. `COMPLIANCE_TERMS#` versions are `compliance_terms`, so Insights owes
+Checks by the same terms as the Check report; their raw JSON keeps only the
+terms fields, not the letter's email or names. Site and compliance manager assignments stay out: they are removed by
+deleting the row, which an incremental export can't see. A `DUP_LINK#` row is deleted
+only in the same transaction that supersedes its task, so a stale link in the lake
+never merges a live Issue. `task_updates.raw` and `programs.raw` keep only
+listed fields, so update text, notes, photo keys, the actor and Program contacts
+stay out of the lake. The converter records its format version in
+`readings/_converter/state.json` (`FORMAT_VERSION` in `convert.js`). The first
+conversion after the version changes starts one full DynamoDB export into `raw/`,
+which converts like any other export, so items unchanged since before the 30-day
+`raw/` window reach the lake in the new format. It also re-converts every `raw/`
+export still kept (30 days), once, oldest first and at each export's own time, which
+covers items deleted in those 30 days that the full export no longer holds. An export
+that fails is logged and passed, so later exports still convert; the old version stays
+until a later run converts it or it expires. A run stops when the next export's
+estimated time, from its data files' size, plus two minutes passes the time left, and
+resumes on the next export. The new version is recorded only once the full export has
+converted and no re-conversion failed; if the full export fails, or completes but
+`raw/` expires its files before they convert, a later run logs an error and starts
+another. Converters that run at once write the state file with `IfMatch` and merge
+each other's progress, so a recorded version never goes back. The backfill runs only
+when `ANALYTICS_BACKFILL_ENABLED=true`, which `analytics.tf` sets on the converter with
+the grants it needs: list the lake, read the state file, and start, describe and write
+table exports.
+Current ART keys and legacy ART keys
 with a place segment remain supported. Assessment/condition and device shapes are
 also matched explicitly; identifiers need not be UUIDs.
 

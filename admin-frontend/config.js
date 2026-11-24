@@ -5,4 +5,5 @@ window.GOOD_NEIGHBOR_ADMIN_CONFIG = {
   logoutUri: "",
   apiBase: "http://localhost:3001",
   localDebugAdmin: true,
+  insightsEnabled: false,
 };

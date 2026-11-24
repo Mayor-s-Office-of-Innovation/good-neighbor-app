@@ -71,6 +71,50 @@ The temporary cross-job artifact is retained for one day. GitHub environment sec
 different `AWS_DEPLOY_ROLE_ARN` in each job: the export job uses `dev`; the migration job uses
 `prod`. Never use the DEV role to create or operate the PROD backend.
 
+## Reading a dev plan before it applies
+
+**Plan dev** (`plan-dev.yml`) shows what a deploy of the chosen branch would change, without
+changing anything. Run it from the Actions tab; the summary lists the action and address of each
+changed resource, and the names of the attributes an update changes. It publishes no values: this
+repo is public, and the role can read Lambda environment values, so the plan's text stays on the
+runner. Error text can quote state, so the Init and Plan steps print only:
+
+- each error or warning's level (`error` or `warning`);
+- its resource address, with any `[...]` key cut (plan only);
+- its relative `.tf` file and line, where Terraform gives them;
+- its AWS error class, such as `AccessDenied`;
+- the provider versions init chose, and any lock file change. A version that doesn't look like a
+  release shows as `(version withheld)`.
+
+Init makes one attempt, with no retry, so re-run Plan dev after a network error such as a registry
+reset.
+
+When a step fails, a fixed line on how to read these follows. Config errors, such as a typo or an
+invalid argument, reproduce with a local plan on dev credentials. A permission failure shows the
+denial class but not the action it was denied; find the action from the class and the resource
+address. It uses the read-only role in `infra/modules/app/plan-role.tf`, through a `dev-plan`
+GitHub Environment that holds the secrets `AWS_ACCOUNT_ID` and `AWS_PLAN_ROLE_ARN` (the
+`terraform_plan_role_arn` output), and the variable `AWS_REGION`.
+
+**Before creating `AWS_PLAN_ROLE_ARN`, give the `dev-plan` Environment required reviewers.** The
+role can read the dev state file, which holds secrets such as the support origin token, and Lambda
+environment values. Any run of a job in `dev-plan` can assume it, from any branch, and a branch can
+edit the workflow or add Terraform that runs its own code in that job. So a maintainer approving
+each run, after checking the branch, is the only gate. Turn on **Prevent self-review** too, so
+whoever started a run can't approve it. `npm ci` and the Lambda build run in a job
+with no `id-token` permission, which stops a package script from taking the role, but not a
+branch's own changes.
+
+It skips the cost-tag state step in `deploy.yml`, because that writes state. The plan also shows
+the Cognito email key policy changing to name the plan role, since its
+`AllowDeployRoleCreateCognitoGrant` statement names whoever runs Terraform; a deploy from
+`deploy.yml` won't make that change.
+
+The first plan may fail with AccessDenied while refreshing the CloudWatch Omni access grants
+(`omni.tf`), because `ReadOnlyAccess` may not cover that service. The log shows the error class
+and resource address but not the action, so work out the action from that `omni.tf` resource
+and add it to the `plan` policy in `plan-role.tf`.
+
 ## Production DNS bootstrap
 
 The **Provision goodneighbor.sf.gov DNS zone** and
@@ -182,6 +226,22 @@ Each env root configures **two AWS providers** and passes both into the `app` mo
 
 Omitting the `aws.us_east_1` provider (or dropping it from the module's `providers = { … }` map)
 fails on first apply.
+
+## Building the first Insights snapshot
+
+The projection Lambda runs after each analytics convert, every 6 hours. Until one finishes,
+Insights says its data isn't ready, and the same happens after a `CONTRACT_VERSION` bump, because
+readers refuse the older snapshot. To avoid the wait, start a build once by hand after the deploy,
+with credentials that may invoke the function:
+
+```bash
+aws lambda invoke --function-name good-neighbor-app-<env>-analytics-projection \
+  --invocation-type Event /dev/null
+```
+
+Then check its log group for an `InsightsProjectionPublished` line. The
+`insights-projection-stalled` alarm fires right after each first deploy, since it has no data yet;
+this build clears it.
 
 ## What the module provisions
 

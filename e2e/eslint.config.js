@@ -8,6 +8,7 @@ export default [
         console: "readonly",
         process: "readonly",
         URL: "readonly",
+        URLSearchParams: "readonly",
         Buffer: "readonly",
         setTimeout: "readonly",
         fetch: "readonly",

@@ -8,7 +8,15 @@ import {
   createPerson,
   updatePerson,
 } from "../src/handlers/admin-people.js";
-import { seedLocalSiteAdmin } from "./lib/site-admin-seed.mjs";
+import {
+  assertLocalSeedTarget,
+  seedLocalSiteAdmin,
+} from "./lib/site-admin-seed.mjs";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import { ddb } from "../src/db.js";
 import {
   getDuplicateLinks,
   separateDuplicate,
@@ -33,7 +41,11 @@ import {
 
 import { handler as supportHandler } from "../src/support/handler.js";
 import { createServer } from "node:http";
-import { ensureLocalInfra } from "./lib/ensure-infra.mjs";
+import {
+  applyLocalInsightsEnv,
+  ensureLocalInfra,
+  insightsSeedDir,
+} from "./lib/ensure-infra.mjs";
 import { resolveDeviceClaims } from "./lib/local-device-auth.mjs";
 import { buildProxyEvent } from "./lib/proxy-event.mjs";
 import {
@@ -236,15 +248,14 @@ import {
   getStatusMedia,
   getStatusDuplicate,
 } from "../src/handlers/system-status.js";
-import {
-  listAnalyticsQueries,
-  runAnalyticsCatalogQuery,
-  runAnalyticsQuery,
-} from "../src/handlers/admin-analytics.js";
+import { getRecordPhotos } from "../src/handlers/record-photos.js";
+import { seedInsightsRecords } from "./lib/insights-records-seed.mjs";
+import { reportingRoutes } from "../src/handlers/admin-reporting.js";
 
 import { get311Media } from "../src/integrations/sf311-media.js";
 
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
+applyLocalInsightsEnv();
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
 // Stub-only requests (no Bearer token) always carry a site claim: the
 // principal fails closed when an authorizer is present without one.
@@ -446,6 +457,7 @@ const routes = [
     "/admin/v1/system-status/{siteId}/media/{checkId}/{artifactId}",
     getStatusMedia,
   ),
+  route("GET", "/admin/v1/sites/{siteId}/record-photos", getRecordPhotos),
   route(
     "GET",
     "/admin/v1/system-status/{siteId}/duplicates/{taskId}",
@@ -671,13 +683,10 @@ const routes = [
     "/admin/v1/emergency-site-revocations",
     startEmergencySiteRevocation,
   ),
-  route("GET", "/admin/v1/analytics/queries", listAnalyticsQueries),
-  route(
-    "POST",
-    "/admin/v1/analytics/queries/{queryId}",
-    runAnalyticsCatalogQuery,
-  ),
-  route("POST", "/admin/v1/analytics/query", runAnalyticsQuery),
+  ...Object.entries(reportingRoutes).map(([key, handler]) => {
+    const [method, pattern] = key.split(" ");
+    return route(method, pattern, handler);
+  }),
 ];
 
 /**
@@ -833,9 +842,29 @@ const server = createServer(async (req, res) => {
   }
 });
 
+// Insights takes names from Manage's lists, so the synthetic ones must be there.
+/** @param {string} seedDir */
+async function seedInsightsNames(seedDir) {
+  const file = join(seedDir, "names.json");
+  if (!existsSync(file)) return;
+  assertLocalSeedTarget();
+  const items = JSON.parse(await readFile(file, "utf8"));
+  for (const Item of items)
+    await ddb.send(
+      new PutCommand({ TableName: process.env.DYNAMO_TABLE, Item }),
+    );
+  console.log(`[api] loaded ${items.length} Insights names from ${file}`);
+}
+
 async function main() {
   await ensureLocalInfra();
   if (process.env.LOCAL_SITE_ADMIN_SEED === "true") await seedLocalSiteAdmin();
+  const seedDir = insightsSeedDir(process.env);
+  if (seedDir) {
+    await seedInsightsNames(seedDir);
+    // The record panels read photos and notes from the table, not the snapshot.
+    await seedInsightsRecords(join(seedDir, "records.jsonl"));
+  }
   server.listen(PORT, "127.0.0.1", () => {
     console.log(`[api] listening on http://localhost:${PORT}`);
     console.log(

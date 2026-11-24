@@ -263,6 +263,25 @@ describe("requiredOnResolver", () => {
     expect(required("2027-01-01")).toBe(4); // open-ended
   });
 
+  it("lets the later-made of two versions starting the same day win, whatever order they come in", () => {
+    const older = {
+      effectiveStart: "2026-09-30",
+      createdAt: "2026-09-30T16:00:00.000Z",
+      requiredChecksPerDay: 2,
+      status: "expired",
+    };
+    const newer = {
+      effectiveStart: "2026-09-30",
+      createdAt: "2026-09-30T18:00:00.000Z",
+      requiredChecksPerDay: 6,
+      status: "active",
+    };
+    expect([
+      requiredOnResolver(THREE_A_DAY, [older, newer])("2026-10-01"),
+      requiredOnResolver(THREE_A_DAY, [newer, older])("2026-10-01"),
+    ]).toEqual([6, 6]);
+  });
+
   it("falls back to the projection when the site has no terms", () => {
     const required = requiredOnResolver(
       { ...THREE_A_DAY, periodStart: "2026-09-02" },
