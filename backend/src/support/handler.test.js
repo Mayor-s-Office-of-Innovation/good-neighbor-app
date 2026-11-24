@@ -120,6 +120,33 @@ describe("support boundary", () => {
         })(event())
       ).statusCode,
     ).toBe(403);
+    const secretLookup = vi.fn().mockResolvedValue("edge-only-test");
+    expect(
+      (
+        await createSupportHandler({
+          env: {
+            ...env,
+            SUPPORT_ORIGIN_TOKEN: "",
+            SUPPORT_ORIGIN_TOKEN_SECRET_ARN: "arn:aws:secretsmanager:test",
+          },
+          invoke: vi.fn().mockResolvedValue(model()),
+          resolveOriginToken: secretLookup,
+        })(event())
+      ).statusCode,
+    ).toBe(200);
+    expect(secretLookup).toHaveBeenCalledOnce();
+    expect(
+      (
+        await createSupportHandler({
+          env: { ...env, SUPPORT_ORIGIN_TOKEN: "" },
+          invoke,
+          log: vi.fn(),
+          resolveOriginToken: vi
+            .fn()
+            .mockRejectedValue(new Error("secrets unavailable")),
+        })(event())
+      ).statusCode,
+    ).toBe(503);
     expect(invoke).not.toHaveBeenCalled();
   });
 

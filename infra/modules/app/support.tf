@@ -96,6 +96,16 @@ data "aws_iam_policy_document" "support" {
     actions   = ["kms:Decrypt"]
     resources = [aws_kms_key.app.arn]
   }
+  statement {
+    sid       = "ReadSupportOriginSecret"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.support_origin.arn]
+  }
+  statement {
+    sid       = "DecryptSupportOriginSecret"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.support_origin.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "support" {
@@ -122,9 +132,9 @@ resource "aws_lambda_function" "support" {
   kms_key_arn                    = aws_kms_key.app.arn
   environment {
     variables = {
-      SUPPORT_ENABLED      = tostring(var.enable_support_chat)
-      SUPPORT_MODEL_ID     = var.support_model_id
-      SUPPORT_ORIGIN_TOKEN = aws_secretsmanager_secret_version.support_origin.secret_string
+      SUPPORT_ENABLED                 = tostring(var.enable_support_chat)
+      SUPPORT_MODEL_ID                = var.support_model_id
+      SUPPORT_ORIGIN_TOKEN_SECRET_ARN = aws_secretsmanager_secret.support_origin.arn
     }
   }
   depends_on = [aws_cloudwatch_log_group.support, aws_iam_role_policy.support]

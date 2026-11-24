@@ -253,6 +253,20 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
+    sid       = "ReadSupportOriginSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.support_origin.arn]
+  }
+
+  statement {
+    sid       = "DecryptSupportOriginSecret"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.support_origin.arn]
+  }
+
+  statement {
     sid    = "InvokeBedrockDescriptionValidator"
     effect = "Allow"
     actions = [

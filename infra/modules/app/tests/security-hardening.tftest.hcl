@@ -116,6 +116,10 @@ run "storage_and_transport_hardening" {
       aws_cognito_user_pool.users,
       aws_cognito_user_pool_client.admin,
       aws_dynamodb_table.app,
+      aws_iam_role_policy.api,
+      aws_iam_role_policy.support,
+      aws_lambda_function.api,
+      aws_lambda_function.support,
       aws_s3_bucket_ownership_controls.access_logs,
       aws_s3_bucket_server_side_encryption_configuration.access_logs,
       aws_s3_bucket_policy.access_logs,
@@ -243,6 +247,32 @@ run "storage_and_transport_hardening" {
   assert {
     condition     = !contains(aws_cognito_user_pool_client.admin.write_attributes, "email") && !contains(aws_cognito_user_pool_client.admin.write_attributes, "email_verified")
     error_message = "The admin Cognito app client must not allow self-service writes to email or email_verified."
+  }
+
+  assert {
+    condition = (
+      !contains(keys(aws_lambda_function.support.environment[0].variables), "SUPPORT_ORIGIN_TOKEN")
+      && contains(keys(aws_lambda_function.support.environment[0].variables), "SUPPORT_ORIGIN_TOKEN_SECRET_ARN")
+      && !contains(keys(aws_lambda_function.api.environment[0].variables), "SHORT_CODE_ORIGIN_TOKEN")
+      && contains(keys(aws_lambda_function.api.environment[0].variables), "SHORT_CODE_ORIGIN_TOKEN_SECRET_ARN")
+    )
+    error_message = "Origin verification tokens must be referenced by Secrets Manager ARN, never passed as plaintext Lambda environment variables."
+  }
+
+  assert {
+    condition = alltrue([
+      for doc in [data.aws_iam_policy_document.support, data.aws_iam_policy_document.api] : (
+        anytrue([
+          for s in doc.statement :
+          contains(s.actions, "secretsmanager:GetSecretValue") && contains(s.resources, aws_secretsmanager_secret.support_origin.arn)
+        ])
+        && anytrue([
+          for s in doc.statement :
+          contains(s.actions, "kms:Decrypt") && contains(s.resources, aws_kms_key.support_origin.arn)
+        ])
+      )
+    ])
+    error_message = "Both support and api Lambda roles must be granted GetSecretValue and kms:Decrypt on the support_origin secret and key."
   }
 
   assert {
