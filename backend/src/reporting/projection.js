@@ -174,6 +174,17 @@ export const TABLE_SCHEMAS = {
     hasPerimeter: B,
     createdAt: V,
   },
+  checks: {
+    checkId: V,
+    siteId: V,
+    source: V,
+    state: V,
+    startedAt: V,
+    completedAt: V,
+    activityAt: V,
+    day: "DATE",
+    issues: I,
+  },
 };
 for (const schema of Object.values(TABLE_SCHEMAS))
   assertNoJudgementFields(Object.keys(schema));
@@ -243,6 +254,7 @@ const SQL_TABLES = {
   issues: "p_issues",
   site_contacts: "p_site_contacts",
   sites: "p_sites",
+  checks: "p_checks",
 };
 
 /**

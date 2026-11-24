@@ -3,6 +3,9 @@
 /** Bump when a projection table gains, loses or renames a column. */
 export const CONTRACT_VERSION = "insights-v1";
 
+/** Bump when an endpoint's reply gains, loses or renames a field. */
+export const API_VERSION = "reporting-v1";
+
 /** Bump when a counting rule changes, even if no column does. */
 export const RULE_VERSION = "2026-11-06";
 

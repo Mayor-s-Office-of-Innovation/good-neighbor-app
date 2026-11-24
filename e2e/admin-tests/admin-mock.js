@@ -3,6 +3,7 @@
 import { test as base, expect } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
+import { insightsReply } from "./insights-mock.js";
 
 /**
  * @typedef {{ method: string, path: string, search: string, body: any, headers: Record<string, string> }} AdminRequest
@@ -290,6 +291,9 @@ function defaultReply(data, role, request) {
   };
   if (!supervisor && supervisorRoutes.some((re) => re.test(`${method} ${p}`)))
     return supervisorRequired;
+  // Both admin roles read Insights, so the reply doesn't depend on role.
+  const insights = insightsReply(request);
+  if (insights) return insights;
   if (method !== "GET") return writeReply(data, request, exec);
   if (p === "session")
     return {

@@ -49,6 +49,10 @@ Object.assign(process.env, {
   LOCAL_MINIO_DATA_DIR: fileURLToPath(
     new URL("../backend/.local/minio-data-e2e", import.meta.url),
   ),
+  // The local API would otherwise load `npm run insights:data` output into gnp-local-e2e.
+  INSIGHTS_PROJECTION_DIR: fileURLToPath(
+    new URL("../backend/.local/insights-data-e2e/projection", import.meta.url),
+  ),
   AWS_ENDPOINT_URL_DYNAMODB: E2E_URLS.ddb,
   DYNAMO_ENDPOINT: E2E_URLS.ddb,
   AWS_ENDPOINT_URL_SQS: E2E_URLS.mq,

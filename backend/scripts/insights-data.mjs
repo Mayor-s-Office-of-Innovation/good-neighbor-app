@@ -518,15 +518,50 @@ try {
         `SELECT * FROM ${sqlString(join(projectionDir, `${name}.parquet`))}`,
       )
     ).getRowObjectsJS();
+  // The Checks list must hold exactly the Checks the day totals count.
+  const checkRows = Number(
+    (
+      await conn.runAndReadAll(
+        `SELECT count(*) FROM ${sqlString(join(projectionDir, "checks.parquet"))}`,
+      )
+    ).getRowsJS()[0][0],
+  );
   conn.closeSync();
 
   const result = compareWithAnswers(
     /** @type {any} */ (extracts),
     generated.answers,
   );
+  const dayChecks = extracts.site_days.reduce(
+    (n, d) =>
+      n +
+      d.completedPerimeterChecks +
+      d.singleIssueReports +
+      d.unfinishedChecks,
+    0,
+  );
+  result.checked += 1;
+  if (checkRows !== dayChecks)
+    result.mismatches.push(
+      `checks table has ${checkRows} rows; day totals count ${dayChecks} Checks`,
+    );
   await writeFile(
     join(outDir, "answers.json"),
     JSON.stringify(generated.answers, null, 2),
+  );
+  // The local API copies these into the dev table, so Insights shows names.
+  await writeFile(
+    join(outDir, "names.json"),
+    JSON.stringify(
+      generated.items.filter(
+        (item) =>
+          item.pk === "ADMIN_DIRECTORY#PROGRAM_MANAGERS" ||
+          item.pk === "PROVIDER_SEARCH#ACTIVE" ||
+          (item.pk.startsWith("PROVIDER#") && item.sk === "#META"),
+      ),
+      null,
+      2,
+    ),
   );
   // The local API loads these, so record panels show photos and notes.
   // One row per line: the whole file as one string passes V8's limit at 500 Sites.
