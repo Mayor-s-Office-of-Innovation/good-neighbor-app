@@ -45,7 +45,13 @@ function event(body = {}, group = "compliance-manager") {
     },
     requestContext: {
       authorizer: {
-        jwt: { claims: { "cognito:groups": group, email: "cm@example.org" } },
+        jwt: {
+          claims: {
+            "cognito:groups": group,
+            sub: "cm-sub",
+            email: "cm@example.org",
+          },
+        },
       },
     },
   });
@@ -72,7 +78,9 @@ it.each(guarded)(
     for (const assignment of [undefined, { status: "inactive" }]) {
       send
         .mockReset()
-        .mockResolvedValueOnce({ Item: { userId: "cm", status: "active" } })
+        .mockResolvedValueOnce({
+          Item: { userId: "cm", status: "active", cognitoSubject: "cm-sub" },
+        })
         .mockResolvedValueOnce({ Item: assignment });
       const result = await call(handler, event());
       expect(result.statusCode).toBe(403);
@@ -89,7 +97,9 @@ it("requires every Site in multi-Site operations, including legacy admin roles",
   for (const group of ["compliance-manager", "central-admin"]) {
     send
       .mockReset()
-      .mockResolvedValueOnce({ Item: { userId: "cm", status: "active" } })
+      .mockResolvedValueOnce({
+        Item: { userId: "cm", status: "active", cognitoSubject: "cm-sub" },
+      })
       .mockResolvedValueOnce({ Item: { status: "active" } })
       .mockResolvedValueOnce({});
     expect(
@@ -104,14 +114,18 @@ it("requires every Site in multi-Site operations, including legacy admin roles",
 });
 it("allows all assigned Sites and refuses empty scope", async () => {
   send
-    .mockResolvedValueOnce({ Item: { userId: "cm", status: "active" } })
+    .mockResolvedValueOnce({
+      Item: { userId: "cm", status: "active", cognitoSubject: "cm-sub" },
+    })
     .mockResolvedValue({ Item: { status: "active" } });
   expect(await authorizeSiteChanges(event(), ["s1", "s2"])).toBeNull();
   expect((await authorizeSiteChanges(event(), []))?.statusCode).toBe(403);
 });
 it("allows assigned managers to create Site manager staff in that Site's lead program", async () => {
   send
-    .mockResolvedValueOnce({ Item: { userId: "cm", status: "active" } })
+    .mockResolvedValueOnce({
+      Item: { userId: "cm", status: "active", cognitoSubject: "cm-sub" },
+    })
     .mockResolvedValueOnce({ Item: { status: "active" } })
     .mockResolvedValueOnce({ Item: { status: "active", leadProgramId: "p1" } })
     .mockResolvedValueOnce({ Item: { status: "active" } })
@@ -134,7 +148,9 @@ it("allows assigned managers to create Site manager staff in that Site's lead pr
 });
 it("rejects a mismatched lead program before creating staff", async () => {
   send
-    .mockResolvedValueOnce({ Item: { userId: "cm", status: "active" } })
+    .mockResolvedValueOnce({
+      Item: { userId: "cm", status: "active", cognitoSubject: "cm-sub" },
+    })
     .mockResolvedValueOnce({ Item: { status: "active" } })
     .mockResolvedValueOnce({
       Item: { status: "active", leadProgramId: "other" },
@@ -147,6 +163,17 @@ it("rejects a mismatched lead program before creating staff", async () => {
 });
 it("does not let assigned managers deactivate Sites", async () => {
   expect((await call(deactivateSite, event()))?.statusCode).toBe(403);
+  expect(send).not.toHaveBeenCalled();
+});
+it("does not let Compliance managers rename Providers", async () => {
+  const { updateProvider } = await import("./admin.js");
+  const req = event({ name: "Renamed" });
+  req.pathParameters.providerId = "prov-1";
+  const res = await call(updateProvider, req);
+  expect(res?.statusCode).toBe(403);
+  expect(JSON.parse(String(res?.body))).toEqual({
+    error: "supervisor_required",
+  });
   expect(send).not.toHaveBeenCalled();
 });
 it("shared staff edits reject an unassigned Site discovered on a later directory page", async () => {
@@ -162,7 +189,9 @@ it("shared staff edits reject an unassigned Site discovered on a later directory
         },
       };
     if (key?.pk === "ADMIN_DIRECTORY#PROGRAM_MANAGERS")
-      return { Item: { userId: "cm", status: "active" } };
+      return {
+        Item: { userId: "cm", status: "active", cognitoSubject: "cm-sub" },
+      };
     if (key?.sk === "COMPLIANCE_MANAGER#cm")
       return key.pk === "SITE#s1" ? { Item: { status: "active" } } : {};
     if (key?.sk === "ASSIGNED_USER#u1") return { Item: { status: "active" } };
@@ -207,7 +236,9 @@ it("shared staff scope retains a Site after both email and Lead program change",
         },
       };
     if (key?.pk === "ADMIN_DIRECTORY#PROGRAM_MANAGERS")
-      return { Item: { userId: "cm", status: "active" } };
+      return {
+        Item: { userId: "cm", status: "active", cognitoSubject: "cm-sub" },
+      };
     if (key?.sk === "COMPLIANCE_MANAGER#cm")
       return key.pk === "SITE#s1" ? { Item: { status: "active" } } : {};
     if (key?.sk === "ASSIGNED_USER#u1") return { Item: { status: "active" } };
@@ -271,7 +302,9 @@ it("emergency revocation cannot partially modify an allowed Site when another Si
     "./admin-multi-site-revocation.js"
   );
   send
-    .mockResolvedValueOnce({ Item: { userId: "cm", status: "active" } })
+    .mockResolvedValueOnce({
+      Item: { userId: "cm", status: "active", cognitoSubject: "cm-sub" },
+    })
     .mockResolvedValueOnce({ Item: { status: "active" } })
     .mockResolvedValueOnce({});
   const result = await call(

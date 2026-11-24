@@ -113,6 +113,8 @@ run "storage_and_transport_hardening" {
   plan_options {
     target = [
       aws_acm_certificate.sf311_media,
+      aws_cognito_user_pool.users,
+      aws_cognito_user_pool_client.admin,
       aws_dynamodb_table.app,
       aws_s3_bucket_ownership_controls.access_logs,
       aws_s3_bucket_server_side_encryption_configuration.access_logs,
@@ -231,6 +233,16 @@ run "storage_and_transport_hardening" {
       if s.Sid == "AllowCloudFormationPublish"
     ])
     error_message = "The primary alarms topic must preserve CloudFormation stack notification publishing."
+  }
+
+  assert {
+    condition     = contains(one(aws_cognito_user_pool.users.user_attribute_update_settings).attributes_require_verification_before_update, "email")
+    error_message = "Cognito user pool must require email verification before updating an email attribute."
+  }
+
+  assert {
+    condition     = !contains(aws_cognito_user_pool_client.admin.write_attributes, "email") && !contains(aws_cognito_user_pool_client.admin.write_attributes, "email_verified")
+    error_message = "The admin Cognito app client must not allow self-service writes to email or email_verified."
   }
 
   assert {

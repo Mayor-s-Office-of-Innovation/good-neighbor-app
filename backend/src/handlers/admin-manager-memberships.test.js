@@ -130,7 +130,9 @@ describe("Site Manager memberships", () => {
 
   it("assigned manager creates one single-Site Manager membership with a uniqueness marker", async () => {
     send
-      .mockResolvedValueOnce({ Item: { userId: "cm", status: "active" } })
+      .mockResolvedValueOnce({
+        Item: { userId: "cm", status: "active", cognitoSubject: "admin-1" },
+      })
       .mockResolvedValueOnce({ Item: { status: "active" } });
     send
       .mockResolvedValueOnce({
@@ -354,7 +356,9 @@ describe("Site Manager memberships", () => {
 
   it("lets managers edit a display name without transferring access", async () => {
     send
-      .mockResolvedValueOnce({ Item: { userId: "cm1", status: "active" } })
+      .mockResolvedValueOnce({
+        Item: { userId: "cm1", status: "active", cognitoSubject: "admin-1" },
+      })
       .mockResolvedValueOnce({ Item: { status: "active" } });
     send
       .mockResolvedValueOnce({
@@ -384,7 +388,9 @@ describe("Site Manager memberships", () => {
 
   it("does not let managers transfer a membership to another email", async () => {
     send
-      .mockResolvedValueOnce({ Item: { userId: "cm1", status: "active" } })
+      .mockResolvedValueOnce({
+        Item: { userId: "cm1", status: "active", cognitoSubject: "admin-1" },
+      })
       .mockResolvedValueOnce({ Item: { status: "active" } });
     send.mockResolvedValueOnce({
       Item: {
@@ -478,7 +484,9 @@ describe("Site Manager memberships", () => {
 
   it("assigned manager deactivates membership, advances its generation, and removes email uniqueness", async () => {
     send
-      .mockResolvedValueOnce({ Item: { userId: "cm", status: "active" } })
+      .mockResolvedValueOnce({
+        Item: { userId: "cm", status: "active", cognitoSubject: "admin-1" },
+      })
       .mockResolvedValueOnce({ Item: { status: "active" } });
     send
       .mockResolvedValueOnce({

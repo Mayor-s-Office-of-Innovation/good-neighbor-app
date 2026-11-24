@@ -1,12 +1,31 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-const { send, presignGet, copyObject } = vi.hoisted(() => ({
+import sharp from "sharp";
+const { send, presignGet, getObjectBytes, putObject } = vi.hoisted(() => ({
   send: vi.fn(),
   presignGet: vi.fn(),
-  copyObject: vi.fn(),
+  getObjectBytes: vi.fn(),
+  putObject: vi.fn(),
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
-vi.mock("../s3.js", () => ({ presignGet, copyObject }));
+vi.mock("../s3.js", () => ({ presignGet, getObjectBytes, putObject }));
 import { create311MediaLink, get311Media } from "./sf311-media.js";
+
+async function sampleJpegWithExif() {
+  return sharp({
+    create: {
+      width: 32,
+      height: 24,
+      channels: 3,
+      background: { r: 120, g: 160, b: 200 },
+    },
+  })
+    .withExif({
+      IFD0: { Make: "TestPhone", Model: "UnitTest 1" },
+      IFD3: { GPSLatitudeRef: "N", GPSLongitudeRef: "W" },
+    })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+}
 
 const config = {
   uploadBucket: "uploads",
@@ -32,6 +51,13 @@ describe("311 media lease", () => {
     vi.stubEnv("S3_UPLOAD_BUCKET", "uploads");
     vi.stubEnv("DYNAMO_TABLE", "table");
     vi.stubEnv("SQS_QUEUE_URL", "queue");
+    const sourceWithExif = await sampleJpegWithExif();
+    expect((await sharp(sourceWithExif).metadata()).exif).toBeDefined();
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: sourceWithExif,
+      contentType: "image/jpeg",
+    });
+    putObject.mockResolvedValueOnce({});
     send.mockResolvedValueOnce({});
     const url = new URL(
       await create311MediaLink({ config, key: "checks/site/check/image" }),
@@ -48,12 +74,21 @@ describe("311 media lease", () => {
     );
     expect(stored.sourceS3Key).toBe("checks/site/check/image");
     expect(stored.s3Key).toMatch(/^sf311-media\/[a-f0-9]{64}$/);
-    expect(copyObject).toHaveBeenCalledWith({
+    expect(getObjectBytes).toHaveBeenCalledWith({
       bucket: "uploads",
-      sourceKey: stored.sourceS3Key,
-      key: stored.s3Key,
+      key: stored.sourceS3Key,
     });
-    expect(copyObject.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(putObject).toHaveBeenCalledWith({
+      bucket: "uploads",
+      key: stored.s3Key,
+      body: expect.any(Buffer),
+      contentType: "image/jpeg",
+      tagging: "",
+    });
+    const writtenMeta = await sharp(putObject.mock.calls[0][0].body).metadata();
+    expect(writtenMeta.format).toBe("jpeg");
+    expect(writtenMeta.exif).toBeUndefined();
+    expect(putObject.mock.invocationCallOrder[0]).toBeLessThan(
       send.mock.invocationCallOrder[0],
     );
     expect(stored.expiresAt).toBe(now.getTime() / 1000 + 172800);
@@ -99,7 +134,11 @@ describe("311 media lease", () => {
     vi.stubEnv("S3_UPLOAD_BUCKET", "uploads");
     vi.stubEnv("DYNAMO_TABLE", "table");
     vi.stubEnv("SQS_QUEUE_URL", "queue");
-    copyObject.mockResolvedValueOnce({});
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: await sampleJpegWithExif(),
+      contentType: "image/jpeg",
+    });
+    putObject.mockResolvedValueOnce({});
     send.mockResolvedValueOnce({});
     const url = new URL(
       await create311MediaLink({ config, key: "checks/day-29/image" }),
@@ -120,11 +159,12 @@ describe("311 media lease", () => {
     expect(stored.s3Key).not.toBe(stored.sourceS3Key);
   });
 
-  it("does not issue a lease if its source image cannot be copied", async () => {
-    copyObject.mockRejectedValueOnce(new Error("NoSuchKey"));
+  it("does not issue a lease if its source image cannot be read or re-encoded", async () => {
+    getObjectBytes.mockRejectedValueOnce(new Error("NoSuchKey"));
     await expect(
       create311MediaLink({ config, key: "missing" }),
     ).rejects.toThrow("NoSuchKey");
+    expect(putObject).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
   });
 

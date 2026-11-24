@@ -4,7 +4,8 @@ import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { jsonResponse } from "../http.js";
 import { logServerError } from "../lib/log-server-error.js";
-import { copyObject, presignGet } from "../s3.js";
+import { downscaleImage } from "../media/downscale.js";
+import { getObjectBytes, presignGet, putObject } from "../s3.js";
 import { emitMetrics } from "../lib/metrics.js";
 
 /** No bearer, lease hash, object key or URL belongs in access diagnostics.
@@ -67,10 +68,19 @@ export async function create311MediaLink({ config, key }) {
   const token = randomBytes(32).toString("hex");
   // Use a separate random id: no object key or stored row contains the bearer.
   const mediaKey = `sf311-media/${randomBytes(32).toString("hex")}`;
-  await copyObject({
+  // Re-encode through downscaleImage so EXIF metadata (GPS, device model,
+  // timestamps) is stripped before SF 311 receives a public attachment link.
+  const source = await getObjectBytes({ bucket: config.uploadBucket, key });
+  const scrubbed = await downscaleImage(
+    source.bytes,
+    String(source.contentType || "image/jpeg"),
+  );
+  await putObject({
     bucket: config.uploadBucket,
-    sourceKey: key,
     key: mediaKey,
+    body: scrubbed.bytes,
+    contentType: scrubbed.contentType,
+    tagging: "",
   });
   await ddb.send(
     new PutCommand({

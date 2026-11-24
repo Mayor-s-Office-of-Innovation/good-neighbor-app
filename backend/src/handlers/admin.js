@@ -290,7 +290,7 @@ export const getProvider = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const updateProvider = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const providerId = event.pathParameters?.providerId ?? "";
     const name = String(body.name ?? "").trim();
     if (!name) return jsonResponse(400, { error: "name_required" });

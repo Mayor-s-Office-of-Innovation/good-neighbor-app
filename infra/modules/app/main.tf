@@ -1116,6 +1116,10 @@ resource "aws_cognito_user_pool" "users" {
 
   auto_verified_attributes = ["email"]
 
+  user_attribute_update_settings {
+    attributes_require_verification_before_update = ["email"]
+  }
+
   dynamic "lambda_config" {
     for_each = var.enable_cognito_custom_email_sender ? [1] : []
     content {
@@ -1211,6 +1215,10 @@ resource "aws_cognito_user_pool_client" "admin" {
   ]
 
   prevent_user_existence_errors = "ENABLED"
+
+  # Prevent signed-in users from changing their own email or custom attributes
+  # via Cognito user tokens; profile updates run server-side via Admin APIs.
+  write_attributes = ["given_name", "family_name", "name", "phone_number"]
 
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]

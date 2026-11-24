@@ -63,6 +63,10 @@ export function adminPrincipal(event) {
     email: String(claims.email ?? "")
       .trim()
       .toLocaleLowerCase("en-US"),
+    emailVerified:
+      claims.email_verified === undefined
+        ? undefined
+        : claims.email_verified === true || claims.email_verified === "true",
     firstName: String(claims.given_name ?? "").trim(),
     lastName: String(claims.family_name ?? "").trim(),
     phone: String(claims.phone_number ?? "").trim(),
@@ -163,6 +167,8 @@ export async function authorizeSiteChanges(event, siteIds) {
   if (principal.role === ADMIN_GROUPS.supervisor) return null;
   if (!siteIds.length || siteIds.some((id) => !id))
     return jsonResponse(403, { error: "site_assignment_required" });
+  if (!principal.subject || principal.emailVerified === false)
+    return jsonResponse(403, { error: "site_assignment_required" });
   const email = (principal.email || principal.username)
     .trim()
     .toLocaleLowerCase("en-US");
@@ -177,7 +183,12 @@ export async function authorizeSiteChanges(event, siteIds) {
       ConsistentRead: true,
     }),
   );
-  if (!directory.Item?.userId || directory.Item.status !== "active") {
+  if (
+    !directory.Item?.userId ||
+    directory.Item.status !== "active" ||
+    !directory.Item.cognitoSubject ||
+    directory.Item.cognitoSubject !== principal.subject
+  ) {
     return jsonResponse(403, { error: "site_assignment_required" });
   }
   for (const siteId of new Set(siteIds)) {

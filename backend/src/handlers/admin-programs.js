@@ -911,7 +911,7 @@ async function removeSiteManager(event, programId, userId, user) {
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const updateProgram = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const programId = event.pathParameters?.programId ?? "";
     const name = clean(body.name);
     if (!name) return jsonResponse(400, { error: "name_required" });

@@ -71,11 +71,15 @@ describe("admin roles", () => {
   it("allows an assigned Compliance manager to mutate that Site", async () => {
     send
       .mockResolvedValueOnce({
-        Item: { userId: "manager-1", status: "active" },
+        Item: {
+          userId: "manager-1",
+          status: "active",
+          cognitoSubject: "sub-manager-1",
+        },
       })
       .mockResolvedValueOnce({ Item: { status: "active" } });
     const response = await siteAdminOnly(
-      event(ADMIN_GROUPS.manager, "manager@sfgov.org"),
+      event(ADMIN_GROUPS.manager, "manager@sfgov.org", "sub-manager-1"),
       "site-1",
       async () => ({ statusCode: 200, body: "ok" }),
     );
@@ -83,12 +87,55 @@ describe("admin roles", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects an inactive Compliance manager with an active Site assignment", async () => {
+  it("rejects a Compliance manager whose Cognito subject does not match the directory row", async () => {
     send.mockResolvedValueOnce({
-      Item: { userId: "manager-1", status: "inactive" },
+      Item: {
+        userId: "manager-1",
+        status: "active",
+        cognitoSubject: "victim-sub",
+      },
     });
     const response = await siteAdminOnly(
-      event(ADMIN_GROUPS.manager, "manager@sfgov.org"),
+      event(ADMIN_GROUPS.manager, "victim@sfgov.org", "attacker-sub"),
+      "site-1",
+      async () => ({ statusCode: 200, body: "ok" }),
+    );
+    expect(response.statusCode).toBe(403);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a Compliance manager when directory cognitoSubject is missing or email is unverified", async () => {
+    send.mockResolvedValueOnce({
+      Item: { userId: "manager-1", status: "active" },
+    });
+    const missingSubject = await siteAdminOnly(
+      event(ADMIN_GROUPS.manager, "manager@sfgov.org", "sub-manager-1"),
+      "site-1",
+      async () => ({ statusCode: 200, body: "ok" }),
+    );
+    expect(missingSubject.statusCode).toBe(403);
+    expect(send).toHaveBeenCalledTimes(1);
+
+    send.mockClear();
+    const unverified = await siteAdminOnly(
+      event(ADMIN_GROUPS.manager, "manager@sfgov.org", "sub-manager-1", false),
+      "site-1",
+      async () => ({ statusCode: 200, body: "ok" }),
+    );
+    expect(unverified.statusCode).toBe(403);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("rejects an inactive Compliance manager with an active Site assignment", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        userId: "manager-1",
+        status: "inactive",
+        cognitoSubject: "sub-manager-1",
+      },
+    });
+    const response = await siteAdminOnly(
+      event(ADMIN_GROUPS.manager, "manager@sfgov.org", "sub-manager-1"),
       "site-1",
       async () => ({ statusCode: 200, body: "ok" }),
     );
@@ -99,11 +146,15 @@ describe("admin roles", () => {
   it("rejects an unassigned Compliance manager but lets a supervisor bypass assignment", async () => {
     send
       .mockResolvedValueOnce({
-        Item: { userId: "manager-1", status: "active" },
+        Item: {
+          userId: "manager-1",
+          status: "active",
+          cognitoSubject: "sub-manager-1",
+        },
       })
       .mockResolvedValueOnce({});
     const denied = await siteAdminOnly(
-      event(ADMIN_GROUPS.manager, "manager@sfgov.org"),
+      event(ADMIN_GROUPS.manager, "manager@sfgov.org", "sub-manager-1"),
       "site-1",
       async () => ({ statusCode: 200 }),
     );
@@ -114,7 +165,7 @@ describe("admin roles", () => {
 
     send.mockClear();
     const allowed = await siteAdminOnly(
-      event(ADMIN_GROUPS.supervisor, "supervisor@sfgov.org"),
+      event(ADMIN_GROUPS.supervisor, "supervisor@sfgov.org", "sub-sup-1"),
       "site-1",
       async () => ({ statusCode: 200 }),
     );
@@ -123,12 +174,24 @@ describe("admin roles", () => {
   });
 });
 
-/** @param {string} group @param {string} [email] */
-function event(group, email = "") {
+/**
+ * @param {string} group
+ * @param {string} [email]
+ * @param {string} [sub]
+ * @param {boolean} [emailVerified]
+ */
+function event(group, email = "", sub = "sub-default", emailVerified = true) {
   return /** @type {any} */ ({
     requestContext: {
       authorizer: {
-        jwt: { claims: { "cognito:groups": group, email } },
+        jwt: {
+          claims: {
+            "cognito:groups": group,
+            email,
+            sub,
+            email_verified: emailVerified,
+          },
+        },
       },
     },
   });

@@ -732,7 +732,9 @@ describe("program administration", () => {
       .mockResolvedValueOnce({ Items: [] })
       .mockResolvedValueOnce({ Item: { status: "active" } })
       .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Item: { userId: "cm1", status: "active" } })
+      .mockResolvedValueOnce({
+        Item: { userId: "cm1", status: "active", cognitoSubject: "admin-1" },
+      })
       .mockResolvedValueOnce({ Item: { status: "active" } })
       .mockResolvedValueOnce({ Attributes: { userId: "user-1" } });
     const response = await call(
@@ -1052,6 +1054,22 @@ describe("program administration", () => {
     });
   });
 
+  it("rejects Compliance managers attempting to rename or edit a program", async () => {
+    const response = await call(
+      updateProgram,
+      event(
+        { name: "Renamed", expectedUpdatedAt: "v1" },
+        { programId: "program-1" },
+        "compliance-manager",
+      ),
+    );
+    expect(response.statusCode).toBe(403);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "supervisor_required",
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("archives only the program and search row", async () => {
     send
       .mockResolvedValueOnce({
@@ -1087,7 +1105,11 @@ function event(
     requestContext: {
       authorizer: {
         jwt: {
-          claims: { "cognito:groups": groups, email: "manager@sfgov.org" },
+          claims: {
+            "cognito:groups": groups,
+            sub: "admin-1",
+            email: "manager@sfgov.org",
+          },
         },
       },
     },
