@@ -9,6 +9,14 @@ resource "aws_route53_zone" "frontend_subdomain" {
   comment = "Delegated hosted zone for the Good Neighbor App dev frontend."
 }
 
+resource "aws_route53_record" "frontend_caa" {
+  zone_id = aws_route53_zone.frontend_subdomain.zone_id
+  name    = local.frontend_domain_name
+  type    = "CAA"
+  ttl     = 300
+  records = ["0 issue \"amazon.com\"", "0 issuewild \";\""]
+}
+
 resource "aws_acm_certificate" "frontend" {
   provider          = aws.us_east_1
   domain_name       = local.frontend_domain_name

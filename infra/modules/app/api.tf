@@ -5,10 +5,11 @@
 # for the anonymous best-effort intakes (intake_routes → the intake Lambda,
 # lambda.tf), isolated so PostHog latency never consumes api concurrency, and
 # Lambda-free ones for client analytics events and error reports
-# (client-events.tf → SQS). No authorizer for
-# MVP — the site-code flow mints no Cognito JWT, so requests resolve to
-# DEMO_SITE_ID (tenant isolation lands with the deferred JWT authorizer). The
-# route set mirrors backend/scripts/local-api.mjs and backend/src/lambda/api.js.
+# (client-events.tf → SQS). Device routes attach the custom device-token
+# authorizer (ADR 0010), admin routes attach the Cognito JWT authorizer, and
+# only the explicit `route_is_open` bootstrap/health/intake routes are
+# anonymous. The route set mirrors backend/scripts/local-api.mjs and
+# backend/src/lambda/api.js.
 
 locals {
   api_routes = [
