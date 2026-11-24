@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../helpers/recovery-test.js";
 
 test("failed photos reload the same URL after reconnect without rerendering", async ({
   page,

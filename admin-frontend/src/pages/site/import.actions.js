@@ -10,7 +10,7 @@ export const siteImportActions = {
    */
   async openSiteImport() {
     const visit = this.visit;
-    // A running apply keeps its own state, so a return only redraws it.
+    // A running preview or apply keeps its state, so a return only redraws it.
     this.focusHeading = !this.state.importBusy;
     if (this.state.importBusy) return true;
     const importId = new URLSearchParams(window.location.search).get(
@@ -93,7 +93,8 @@ export const siteImportActions = {
       );
     } finally {
       this.state.importBusy = false;
-      if (visit === this.visit) this.render();
+      // A returning visit also needs a usable form when the old preview settles.
+      if (this.showing) this.render();
     }
   },
   async applySiteImport() {

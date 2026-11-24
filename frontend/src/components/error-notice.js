@@ -18,7 +18,7 @@ export function showInlineError(message, options = {}) {
     modal?.querySelector("form") ||
     modal ||
     document.querySelector(
-      "dialog[open] form, dialog[open], #view > *, admin-app main, admin-app, admin-analytics",
+      "dialog[open] form, dialog[open], #view > *, admin-app main, admin-app",
     );
   if (!target?.isConnected) return null;
   const key = options.key || "operation";

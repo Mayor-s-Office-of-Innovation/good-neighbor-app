@@ -204,8 +204,8 @@ export function rawTabsView(kind, query) {
 export function rawBarView(kind, state) {
   const group =
     kind === "issues"
-      ? `<label class="insights__sortlabel" for="insights-group">${escapeHtml(t("admin.insights.raw.group"))}</label>
-        <wa-select id="insights-group" value="${escapeHtml(state.group)}" size="s" pill>${[
+      ? `<label class="insights__sortlabel" for="insights-group" aria-hidden="true">${escapeHtml(t("admin.insights.raw.group"))}</label>
+        <wa-select id="insights-group" label="${escapeHtml(t("admin.insights.raw.group"))}" value="${escapeHtml(state.group)}" size="s" pill>${[
           "latest",
           "created",
           "site",

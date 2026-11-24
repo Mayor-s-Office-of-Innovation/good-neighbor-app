@@ -27,6 +27,7 @@ import { insightsOn } from "./pages/insights/insights-page.js";
 import {
   INSIGHTS_ROUTES,
   routeMode,
+  signInReturnPath,
 } from "./pages/insights/insights-routes.js";
 import { modeMemory } from "./pages/insights/mode-memory.js";
 import { modeNav } from "./pages/insights/shell.templates.js";
@@ -54,6 +55,7 @@ const ROUTE_PAGES = {
   ...Object.fromEntries(
     INSIGHTS_ROUTES.map(([name]) => [name, "admin-insights-page"]),
   ),
+  analytics: "admin-insights-page",
 };
 
 // These page elements are thrown away on leaving, so a later visit can't flash the last record.
@@ -119,6 +121,11 @@ export class AdminApp extends HTMLElement {
     if (callback.handled) {
       this.state.hasToken = hasAdminSession();
       this.state.error = errorLineText(callback.error || "", t);
+      // Checked again, since another tab can rewrite the pending login in localStorage.
+      const back = signInReturnPath(
+        /** @type {{ returnTo?: string }} */ (callback).returnTo,
+      );
+      if (back && this.state.hasToken) history.replaceState({}, "", back);
     }
     this.render();
     this.addEventListener("click", this.onClick);
@@ -187,7 +194,10 @@ export class AdminApp extends HTMLElement {
     this.state.authBusy = true;
     this.state.error = "";
     this.render();
-    await startAdminLogin().catch((err) => {
+    // Only Insights pages come back after sign-in; Manage has always opened on the Site list.
+    await startAdminLogin(
+      signInReturnPath(location.pathname + location.search),
+    ).catch((err) => {
       this.state.authBusy = false;
       this.state.error = errorLineText(err, t);
       this.render();

@@ -132,3 +132,8 @@ output "cloudwatch_omni_space_id" {
   description = "CloudWatch Omni space id for this environment; null until enable_cloudwatch_omni is set."
   value       = var.enable_cloudwatch_omni ? aws_cloudformation_stack.omni[0].outputs["SpaceId"] : null
 }
+
+output "terraform_plan_role_arn" {
+  description = "Read-only role for the plan-only workflow; null where it isn't enabled. Goes in the dev-plan GitHub Environment as AWS_PLAN_ROLE_ARN."
+  value       = local.plan_role_enabled ? aws_iam_role.plan[0].arn : null
+}

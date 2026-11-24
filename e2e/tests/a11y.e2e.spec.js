@@ -53,9 +53,8 @@ import {
   visible as warnings.
 
   Exceptions: e2e/a11y-allowlist.json (formerly KNOWN_VIOLATION_PREFIXES in
-  this file) — landmark-unique on .analysis-tray regions (the old filter's
-  prefix covered both new and history trays), and Web Awesome's OTP caret
-  blink looping under reduced motion inside its shadow root, each with a
+  this file) — Web Awesome's OTP caret blink looping under reduced motion
+  inside its shadow root and the compact report picker labels, each with a
   reason and an expiry; an expired entry fails the run by name. ramp-check
   also annotates allowlist entries that stopped matching anything, so a fixed
   product means the entry flags itself for removal.
@@ -274,11 +273,50 @@ matrix(
       },
     );
 
-    // Home's History tab with completed-issue trays. The only scanned
-    // state that renders .analysis-tray--history — required to catch
+    boundA11y(
+      "a11y: check trays with matching day and minute titles",
+      async (/** @type {BoundA11yFixtures} */ { page, a11y }) => {
+        await page.clock.setFixedTime(new Date("2026-11-16T20:00:00Z"));
+        const checks = [
+          "2026-11-16T19:00:55Z", // Recent clear check and two same-minute trays.
+          "2026-11-16T19:00:50Z",
+          "2026-11-16T19:00:20Z",
+          "2026-11-15T19:00:00Z", // Two checks with the same yesterday title.
+          "2026-11-15T18:00:00Z",
+        ].map((completedAt, index) => ({
+          checkId: `landmark-check-${index}`,
+          status: "completed",
+          startedAt: completedAt,
+          completedAt,
+          issueCount: index === 0 ? 0 : 1,
+        }));
+        const tasks = checks.slice(1).map((check, index) => ({
+          taskId: `landmark-task-${index}`,
+          checkId: check.checkId,
+          kind: "action",
+          category: "Litter",
+          ruleId: "LITTER-1",
+          status: "open",
+          createdAt: check.completedAt,
+        }));
+        await page.route("**/v1/guidance/pending*", (route) =>
+          route.fulfill({ json: { guidance: [], nextToken: null } }),
+        );
+        await routeHomeLists(page, {
+          checks,
+          tasks: (status) => (status === "open" ? tasks : []),
+        });
+        await page.goto("/today");
+        await expect(page.locator(".analysis-tray--recent")).toHaveCount(1);
+        await expect(page.locator(".analysis-tray--history")).toHaveCount(4);
+        await a11y.check("check trays with matching day and minute titles");
+      },
+    );
+
+    // Home's History tab with completed-issue trays — required to catch
     // theme-dependent styling on tray surfaces (a dark-mode title/background
     // contrast bug shipped because every other scanned state has no trays),
-    // and the state the landmark-unique allowlist entry scopes to.
+    // as well as landmark names for the compact History groups.
     boundA11y(
       "a11y: home history trays",
       async (/** @type {BoundA11yFixtures} */ { page, a11y }) => {

@@ -352,3 +352,25 @@ variable "cloudwatch_omni_sso_permission_sets" {
     error_message = "Each key must be an IAM Identity Center permission-set name (1-32 characters of letters, digits, and + = , . @ _ -)."
   }
 }
+
+variable "plan_role_github_subject" {
+  description = "OIDC subject of the GitHub Environment allowed to run read-only Terraform plans. Empty creates no plan role."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.plan_role_github_subject == "" || can(regex("^repo:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:environment:[A-Za-z0-9_.-]+$", var.plan_role_github_subject))
+    error_message = "plan_role_github_subject must be empty or match repo:<org>/<repo>:environment:<env> with no wildcards."
+  }
+}
+
+variable "plan_role_state_object" {
+  description = "<bucket>/<key> of this environment's Terraform state, which the plan role reads. Required with plan_role_github_subject."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.plan_role_github_subject == "" || can(regex("^[^/]+/.+$", var.plan_role_state_object))
+    error_message = "With plan_role_github_subject set, plan_role_state_object must be <bucket>/<key>, or the plan role's deny would also block the state file."
+  }
+}

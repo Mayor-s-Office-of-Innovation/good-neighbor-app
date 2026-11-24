@@ -69,3 +69,41 @@ test("when Insights can't download, Manage keeps working", async ({ page }) => {
   await expect(page.locator("#directory-title")).toBeVisible();
   await expect(pageError(page)).toHaveCount(0);
 });
+
+test("an old Analytics bookmark opens Insights", async ({ page }) => {
+  await mockAdmin(page, { insights: true });
+  // The CDN serves .html paths as files, not index.html, so the file itself must redirect.
+  await page.goto("/analytics.html");
+  await expect(page).toHaveURL(/\/insights$/);
+  await expect(heading(page)).toHaveText(t("admin.insights.overview"));
+});
+
+test("signing in from an Insights page comes back to it", async ({ page }) => {
+  await mockAdmin(page, { insights: true });
+  await page.addInitScript(() => {
+    const config = /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG;
+    Object.assign(config, {
+      localDebugAdmin: false,
+      cognitoDomain: "https://auth.example.org",
+      clientId: "example-client",
+      redirectUri: `${window.location.origin}/auth/callback`,
+    });
+  });
+  // Stands in for Cognito: approves at once and sends the code back.
+  await page.route("https://auth.example.org/oauth2/authorize?*", (route) => {
+    const sent = new URL(route.request().url()).searchParams;
+    const back = new URL(sent.get("redirect_uri") ?? "");
+    back.search = new URLSearchParams({
+      code: "c1",
+      state: sent.get("state") ?? "",
+    }).toString();
+    return route.fulfill({ status: 302, headers: { location: back.href } });
+  });
+  await page.route("https://auth.example.org/oauth2/token", (route) =>
+    route.fulfill({ json: { access_token: "token-1", expires_in: 3600 } }),
+  );
+  await page.goto("/insights/trends");
+  await page.locator("#sign-in").click();
+  await expect(page).toHaveURL(/\/insights\/trends$/);
+  await expect(heading(page)).toHaveText(t("admin.insights.trends"));
+});

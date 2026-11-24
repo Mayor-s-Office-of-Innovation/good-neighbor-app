@@ -12,7 +12,7 @@ import {
   text,
   window,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
+import { mountAdmin, waitFor } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 import { insightsDownload } from "./pages/insights/insights-page.js";
@@ -47,7 +47,7 @@ function holdInsightsLoad() {
 }
 
 test("with Insights switched off, no tabs show and Insights links open Sites", async () => {
-  await mountAdmin("/insights/trends");
+  await mountAdmin("/insights/sites/s1");
   assert.equal(url(), "/sites");
   assert.ok(missing("#admin-modes"));
   assert.equal(heading(), t("admin.breadcrumb.admin"));
@@ -409,4 +409,132 @@ test("a new page load, as after signing in again, starts each tab at home", asyn
   );
   await mountAdmin("/sites", { insights: true });
   assert.equal($(insightsTab).getAttribute("href"), "/insights");
+});
+
+test("an old Analytics link opens Insights in its place", async () => {
+  await mountAdmin("/sites", { insights: true });
+  const entries = window.history.length;
+  await routeTo("/analytics");
+  assert.equal(url(), "/insights");
+  assert.equal(heading(), t("admin.insights.overview"));
+  // Replaced, so Back skips the old link instead of bouncing to Insights again.
+  assert.equal(window.history.length, entries + 1);
+});
+
+test("with Insights off, an old Analytics link says so and leads to Manage", async () => {
+  await mountAdmin("/analytics");
+  assert.equal(url(), "/analytics");
+  assert.equal(heading(), t("admin.insights.off.title"));
+  assert.ok(focused("#insights-title"));
+  assert.ok(text("#insights-off").includes(t("admin.insights.off.body")));
+  assert.ok(missing("#admin-modes"));
+  await click("[data-insights-off-manage]");
+  assert.equal(url(), "/sites");
+  assert.equal(heading(), t("admin.breadcrumb.admin"));
+});
+
+const signInConfig = {
+  apiBase: window.location.origin,
+  localDebugAdmin: false,
+  insightsEnabled: true,
+  cognitoDomain: "https://auth.example.org",
+  clientId: "example-client",
+  redirectUri: "http://localhost/auth/callback",
+};
+
+/**
+ * Sign in from `path`, then come back from the login page as Cognito would.
+ * @param {string} path
+ * @param {{ ok?: boolean, insights?: boolean, storedPath?: string }} [options] insights: the deploy switch; storedPath: the return path another tab wrote
+ */
+async function signInFrom(
+  path,
+  { ok = true, insights = true, storedPath = "" } = {},
+) {
+  const assign = vi
+    .spyOn(window.location, "assign")
+    .mockImplementation(() => {});
+  const config = () => {
+    /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG = {
+      ...signInConfig,
+      insightsEnabled: insights,
+    };
+  };
+  await mountAdmin(path, { insights, setup: config });
+  await click("#sign-in");
+  // The PKCE digest runs off the event loop, where settle() can't see it.
+  await waitFor(() => assign.mock.calls.length > 0);
+  await settle();
+  const state = new URL(assign.mock.calls[0][0]).searchParams.get("state");
+  // The login page is another site; the tab keeps its storage while it's there.
+  const kept = { ...window.sessionStorage };
+  await mountAdmin(`/auth/callback?code=c1&state=${state}`, {
+    insights,
+    setup: () => {
+      config();
+      for (const [key, value] of Object.entries(kept))
+        window.sessionStorage.setItem(
+          key,
+          storedPath && value === path ? storedPath : value,
+        );
+    },
+    fetch: (requestUrl) =>
+      requestUrl === "https://auth.example.org/oauth2/token"
+        ? new Response(
+            JSON.stringify(
+              ok
+                ? { access_token: "token-1", expires_in: 3600 }
+                : { error: "invalid_grant" },
+            ),
+            {
+              status: ok ? 200 : 400,
+              headers: { "content-type": "application/json" },
+            },
+          )
+        : undefined,
+  });
+}
+
+test("signing in from an Insights page comes back to it", async () => {
+  await signInFrom("/insights/raw/issues?period=2026-09");
+  assert.equal(url(), "/insights/raw/issues?period=2026-09");
+  assert.equal(heading(), t("admin.insights.raw"));
+});
+
+test("signing in from an old Analytics link comes back to Insights", async () => {
+  await signInFrom("/analytics");
+  assert.equal(url(), "/insights");
+  assert.equal(heading(), t("admin.insights.overview"));
+});
+
+test("signing in from an old Analytics link with Insights off says why", async () => {
+  await signInFrom("/analytics", { insights: false });
+  assert.equal(url(), "/analytics");
+  assert.equal(heading(), t("admin.insights.off.title"));
+});
+
+test("signing in from a page that only redirects comes back to where it leads", async () => {
+  await signInFrom("/insights/raw?period=2026-09");
+  assert.equal(url(), "/insights/raw/issues?period=2026-09");
+});
+
+test("a stored return path that leaves Insights is ignored after sign-in", async () => {
+  await signInFrom("/insights/trends", {
+    storedPath: "https://evil.example/insights",
+  });
+  assert.equal(url(), "/auth/callback");
+  assert.equal(heading(), t("admin.breadcrumb.admin"));
+});
+
+test("signing in from a Manage page still opens the Site list", async () => {
+  await signInFrom("/programs/p1");
+  assert.equal(url(), "/auth/callback");
+  assert.equal(heading(), t("admin.breadcrumb.admin"));
+});
+
+test("a sign-in that fails stays on its error, not the Insights page", async () => {
+  await signInFrom("/insights/trends", { ok: false });
+  assert.equal(url(), "/auth/callback");
+  assert.equal(pageError(), t("admin.errors.loginFailed"));
+  assert.ok(!missing("#sign-in"));
 });

@@ -16,7 +16,12 @@ import {
   assertNoJudgementFields,
 } from "./contract.js";
 import { publicContactState, siteContactState, text } from "./indicators.js";
-import { RULES_SQL, TABLE_ORDER, snapshotMacrosSql } from "./projection-sql.js";
+import {
+  ROW_GROUP_SIZE,
+  RULES_SQL,
+  TABLE_ORDER,
+  snapshotMacrosSql,
+} from "./projection-sql.js";
 
 // Promoted columns where the converter has them, raw JSON otherwise. Copied
 // once into temp tables, since the rules read some inputs more than once.
@@ -462,7 +467,7 @@ async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
       const order = TABLE_ORDER[name] ? `ORDER BY ${TABLE_ORDER[name]}` : "";
       await conn.run(
         `COPY (SELECT ${columns} FROM ${source} ${order})
-         TO ${sqlString(join(partial, `${name}.parquet`))} (FORMAT PARQUET, COMPRESSION ZSTD)`,
+         TO ${sqlString(join(partial, `${name}.parquet`))} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP_SIZE})`,
       );
       names.push(`${name}.parquet`);
     }

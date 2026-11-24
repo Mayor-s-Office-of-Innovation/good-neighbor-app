@@ -193,7 +193,6 @@ Runs the **exact Lambda handler + worker code** against local emulators (design 
 | `npm run local:minio -w backend` | Just MinIO (local S3, :9000; console :9001) |
 | `npm run local:sf311 -w backend` | Fake local SF311 CreateSR server (:3999) that records requests without calling HUB |
 | `npm run local:api -w backend` | Just the in-process API router (:3001) |
-| `LAKE_BUCKET=… LAKE_AWS_PROFILE=… npm run local:api -w backend` | Same, with the admin analytics routes reading the real S3 lake (ADR 0013). Set both in `.env.local`; then open the admin console's Analytics page (`admin-frontend/analytics.html`). |
 | `npm run local:worker -w backend` | Just the SQS→worker pump (dispatches analyze messages → analyze worker, others → submission worker) |
 | `npm run local:bootstrap -w backend` | Create the table + queue only (normally not needed — `dev` self-bootstraps) |
 | `npm run analyze:smoke -w backend` | Hand-run live analyzer smoke test (reads `backend/.env`, needs a real API key) |
@@ -331,11 +330,13 @@ boots and tears down every process via `webServer`; the only prerequisite is
 | `npm run e2e -w e2e` | Same, from the `e2e/` workspace |
 | `npm run test:headed -w e2e` | Run **headed** in slow motion — the browser clicks and types at a watchable pace (200 ms/action) |
 | `npx playwright show-trace -w e2e` *(see below)* | Open the failure trace for a dead run |
+| `npm run test:insights:emulator:e2e` | Insights against the real API on MinIO and ElasticMQ. Own ports (`e2e/helpers/ports.js`) and data folder (`e2e/test-results/insights-emulator-minio`), so it can run beside the main suite |
 
 CI runs the main suite in two shards, each with its own emulator stack and one
 worker. The support, task-update, error-state, and offline UI suites run in a
-separate job alongside them. The required **E2E (Playwright)** check passes only
-when all three jobs pass.
+separate job alongside them, and the admin suite and the Insights emulator
+suite each run in a job of their own. The required **E2E (Playwright)** check
+passes only when all of them pass.
 
 To reproduce one shard locally, use `npm run e2e -w e2e -- --shard=1/2` (or
 `--shard=2/2`). Run them one at a time locally; they use the same test ports.
@@ -508,7 +509,7 @@ memory of each query in its own 2 GB Node process:
 
 ```sh
 npm run insights:bench -w backend
-# options: -- --sites 500,1000 --years 1,2 --runs 30 --threads 1
+# options: -- --sites 500,1000 --years 1,2 --runs 30
 ```
 
 Sizes are copies of the `insights:data` Sites and year, built once into
@@ -520,7 +521,6 @@ Options:
 - `--sites`: Site counts, comma-separated (default 500,1000)
 - `--years`: years of data, comma-separated (default 1,2)
 - `--runs`: warm runs per query after the first answer (default 30)
-- `--threads`: DuckDB threads (default 1; a 2 GB Lambda has about 1.2 vCPUs)
 - `--rebuild`: rebuild the sized files even if the input is unchanged
 - `--json`: also write every result to this file
 
@@ -529,7 +529,7 @@ Columns:
 - `cold ms`: process start to the first answer, including imports, opening the files and the query
 - `peak RSS`: the process's peak resident memory, including DuckDB's native buffers
 - `peak heap`: the largest V8 heap in use, sampled after each answer
-- `warm p50` and `warm p95`: the median and 95th percentile time per answer over `--runs` answers in the same process
+- `warm p50` and `warm p95`: the median and 95th percentile time per answer over `--runs` answers in the same process (at most 5 for the export and report, which take seconds)
 - `files MB`: bytes on disk of the files the query reads
 
 ### Compliance letter email testing
@@ -581,6 +581,20 @@ API with real browser storage and recovery services):
 ```sh
 npm run test:recovery:ui
 ```
+
+This suite starts only Vite on port 5182 and runs two workers. Each test uses
+`e2e/helpers/recovery-test.js`: telemetry is disabled with the app's existing
+opt-outs, and any API request without an explicit mock fails the test with its
+method and path.
+Use the managed `page` / `context` fixtures (and `test.use` for browser options)
+so new pages and unload requests remain inside the mocks. Do not start a backend
+to make this suite pass.
+
+The recovery scenarios advance Playwright's browser clock through the health
+backoff while retaining real probes, queue recovery, uploads and IndexedDB writes.
+The console lists each test and its duration; the JSON timing report is saved to
+`e2e/test-results/recovery-results.json` and included in CI's `playwright-ui-results`
+artifact. Run with `-- --workers=1` to diagnose ordering or resource contention.
 
 
 ### Real-device testing through ngrok (local harness only)

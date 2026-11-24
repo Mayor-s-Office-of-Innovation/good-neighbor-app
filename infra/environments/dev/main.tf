@@ -101,4 +101,8 @@ module "app" {
   media_signing_public_key_pem    = var.media_signing_public_key_pem
   duplicate_alarm_route_confirmed = var.duplicate_alarm_route_confirmed
   posthog_digest_route_confirmed  = var.posthog_digest_route_confirmed
+
+  # Dev only: plan-dev.yml plans dev, and prod plans run in its own deploy job.
+  plan_role_github_subject = "repo:Mayor-s-Office-of-Innovation/good-neighbor-app:environment:dev-plan"
+  plan_role_state_object   = "good-neighbor-app-terraform-state/dev/terraform.tfstate"
 }

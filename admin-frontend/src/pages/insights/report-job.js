@@ -1,8 +1,8 @@
 // Lives outside Overview, so leaving it and coming back still shows how the
 // report is going.
 
-/** @typedef {{ jobId: string, state: string, error: string | null, expiresAt: string, downloadUrl: string | null, downloadSeconds?: number | null, result: { filename: string, rows?: number } | null }} Job */
-/** @typedef {{ phase: "starting" | "queued" | "running" | "succeeded" | "failed" | "cancelled", count: number, job: Job | null, error: string, linkUntil?: number, kept?: boolean }} ReportState count is how many items the job covers; kept once its ready dialog is closed */
+/** @typedef {{ jobId: string, state: string, snapshotId?: string, error: string | null, expiresAt: string, downloadUrl: string | null, downloadSeconds?: number | null, result: { filename: string, rows?: number } | null }} Job */
+/** @typedef {{ phase: "starting" | "queued" | "running" | "succeeded" | "failed" | "cancelled", count: number, job: Job | null, error: string, screenSnapshotId?: string, linkUntil?: number, kept?: boolean }} ReportState count is how many items the job covers; kept once its ready dialog is closed */
 /**
  * @typedef {{
  *   createInsightsReport: (body: Record<string, unknown>, key: string) => Promise<{ job: Job }>,
@@ -74,6 +74,8 @@ const same = (a, b) =>
   a.job?.jobId === b.job?.jobId &&
   a.job?.state === b.job?.state &&
   a.job?.downloadUrl === b.job?.downloadUrl &&
+  a.job?.snapshotId === b.job?.snapshotId &&
+  a.screenSnapshotId === b.screenSnapshotId &&
   a.linkUntil === b.linkUntil &&
   a.kept === b.kept;
 
@@ -96,7 +98,7 @@ export function createReportJobs({
   // Each start gets its own run, so an old poll can't overwrite a new report.
   let run = 0;
   // Kept for Try again, which repeats the ask that failed.
-  /** @type {{ body: Record<string, unknown>, count: number, key: string } | null} */
+  /** @type {{ body: Record<string, unknown>, count: number, key: string, screenSnapshotId: string } | null} */
   let last = null;
 
   /** @param {ReportState} next @param {number} mine */
@@ -128,22 +130,24 @@ export function createReportJobs({
     return now() + life;
   };
 
-  /** @param {Job} job @param {number} count */
-  const ended = (job, count) =>
+  /** @param {Job} job @param {number} count @param {string} [screenSnapshotId] */
+  const ended = (job, count, screenSnapshotId = "") =>
     /** @type {ReportState} */ ({
       phase: job.state,
       count,
       job,
       error: job.error || "",
+      ...(screenSnapshotId ? { screenSnapshotId } : {}),
       linkUntil: linkUntil(job),
     });
 
-  /** @param {Job} job @param {number} count @param {number} mine */
-  const follow = async (job, count, mine) => {
+  /** @param {Job} job @param {number} count @param {number} mine @param {string} screenSnapshotId */
+  const follow = async (job, count, mine, screenSnapshotId) => {
     const giveUpAt = now() + MAX_FOLLOW_MS;
     let latest = job;
     let missed = 0;
     let error = "";
+    const screen = screenSnapshotId ? { screenSnapshotId } : {};
     while (!DONE.has(latest.state)) {
       set(
         {
@@ -151,6 +155,7 @@ export function createReportJobs({
           count,
           job: latest,
           error,
+          ...screen,
         },
         mine,
       );
@@ -165,7 +170,7 @@ export function createReportJobs({
         const code = codeOf(err);
         if (GONE.has(code) || refused(err))
           return set(
-            { phase: "failed", count, job: latest, error: code },
+            { phase: "failed", count, job: latest, error: code, ...screen },
             mine,
           );
         missed += 1;
@@ -173,28 +178,39 @@ export function createReportJobs({
       }
       if (!DONE.has(latest.state) && now() > giveUpAt)
         return set(
-          { phase: "failed", count, job: latest, error: "job_timed_out" },
+          {
+            phase: "failed",
+            count,
+            job: latest,
+            error: "job_timed_out",
+            ...screen,
+          },
           mine,
         );
     }
-    set(ended(latest, count), mine);
+    set(ended(latest, count, screenSnapshotId), mine);
   };
 
-  /** @param {Record<string, unknown>} body @param {number} count @param {string} key */
-  const begin = async (body, count, key) => {
+  /** @param {Record<string, unknown>} body @param {number} count @param {string} key @param {string} [screenSnapshotId] */
+  const begin = async (body, count, key, screenSnapshotId = "") => {
     const mine = ++run;
-    last = { body, count, key };
-    set({ phase: "starting", count, job: null, error: "" }, mine);
+    last = { body, count, key, screenSnapshotId };
+    const screen = screenSnapshotId ? { screenSnapshotId } : {};
+    set({ phase: "starting", count, job: null, error: "", ...screen }, mine);
     try {
       const { job } = await create(body, key);
-      await follow(job, count, mine);
+      await follow(job, count, mine, screenSnapshotId);
     } catch (err) {
-      set({ phase: "failed", count, job: null, error: codeOf(err) }, mine);
+      set(
+        { phase: "failed", count, job: null, error: codeOf(err), ...screen },
+        mine,
+      );
     }
   };
 
-  /** A new key per ask: the server treats a repeated key as the same job. @param {Record<string, unknown>} body @param {number} count */
-  const startWith = (body, count) => begin(body, count, newKey());
+  /** A new key per ask: the server treats a repeated key as the same job. @param {Record<string, unknown>} body @param {number} count @param {string} [screenSnapshotId] */
+  const startWith = (body, count, screenSnapshotId = "") =>
+    begin(body, count, newKey(), screenSnapshotId);
 
   return {
     /** @returns {ReportState | null} */
@@ -206,16 +222,16 @@ export function createReportJobs({
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    /** @param {string[]} siteIds @param {Record<string, string>} period API period params */
-    start: (siteIds, period) =>
-      startWith({ siteIds, ...period }, siteIds.length),
+    /** @param {string[]} siteIds @param {Record<string, string>} period API period params @param {string} [screenSnapshotId] */
+    start: (siteIds, period, screenSnapshotId = "") =>
+      startWith({ siteIds, ...period }, siteIds.length, screenSnapshotId),
     startWith,
     /** The same key, so a job the server made before a lost reply is reused, not made twice. */
     retry() {
       if (!last) return Promise.resolve();
       // The server answers a cancelled job's key with that job, so only a new key starts it again.
       const key = current?.phase === "cancelled" ? newKey() : last.key;
-      return begin(last.body, last.count, key);
+      return begin(last.body, last.count, key, last.screenSnapshotId);
     },
     /** The user has seen how the job ended, so a return to the page doesn't show it again. */
     dismiss() {
@@ -243,7 +259,7 @@ export function createReportJobs({
       const before = current;
       try {
         const fresh = (await api.getReportJob(job.jobId)).job;
-        const next = ended(fresh, count);
+        const next = ended(fresh, count, before.screenSnapshotId);
         // Without a link the Download button would do nothing, so say so.
         if (next.phase === "succeeded" && !fresh.downloadUrl)
           next.error = "link_missing";

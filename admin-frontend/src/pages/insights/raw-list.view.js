@@ -95,9 +95,22 @@ class InsightsRawList extends HTMLElement {
     });
     this.addEventListener("click", this.clicked);
     this.addEventListener("change", this.changed);
-    this.unsubscribe = this.session.exportJobs[this.kind].subscribe(() =>
-      this.drawExport(),
-    );
+    this.jobSnapshotSynced = "";
+    this.unsubscribe = this.session.exportJobs[this.kind].subscribe(() => {
+      this.drawExport();
+      const jobSnap =
+        this.session.exportJobs[this.kind].current?.job?.snapshotId;
+      const screenSnap = this.reply?.meta?.snapshotId;
+      if (
+        jobSnap &&
+        screenSnap &&
+        jobSnap !== screenSnap &&
+        this.jobSnapshotSynced !== jobSnap
+      ) {
+        this.jobSnapshotSynced = jobSnap;
+        void this.load({ notice: t("admin.insights.snapshotUpdated") });
+      }
+    });
     this.drawPeriod();
     this.drawExport();
     void this.loadOptions();
@@ -635,11 +648,12 @@ class InsightsRawList extends HTMLElement {
       this.period ?? periodOf(reply.meta.interval),
     );
     const count = reply.total;
+    const screenSnapshotId = reply.meta?.snapshotId ?? "";
     confirmFirst(this, {
       id: "insights-export-dialog",
       markup: exportDialogView({ kind: this.kind, count }),
       button: "insights-export",
-      confirmed: () => void jobs.startWith(body, count),
+      confirmed: () => void jobs.startWith(body, count, screenSnapshotId),
     });
   }
 }

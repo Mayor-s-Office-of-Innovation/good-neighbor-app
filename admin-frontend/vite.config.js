@@ -16,12 +16,6 @@ export default defineConfig({
   build: {
     outDir: resolve(adminRoot, "dist"),
     emptyOutDir: true,
-    rollupOptions: {
-      input: {
-        index: resolve(adminRoot, "index.html"),
-        analytics: resolve(adminRoot, "analytics.html"),
-      },
-    },
   },
   test: {
     environment: "happy-dom",
