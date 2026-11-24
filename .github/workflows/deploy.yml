@@ -23,16 +23,130 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
+  # Build the field SPA and run PostHog sourcemap injection/upload without
+  # id-token: write or AWS credentials, so external CLI downloads never execute
+  # inside the AWS-credentialed deploy job.
+  build-frontend:
+    name: Build frontend (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Rewrite git protocol for npm git deps
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No VITE_API_BASE: the SPA and the API share one CloudFront distribution,
+      # so the frontend defaults to a same-origin base ("") and makes relative
+      # calls (/site-code, /v1/*). This resolves to whichever origin served the
+      # page — the CloudFront URL or a custom alias like dev.goodneighborsf.org —
+      # so it stays within connect-src 'self' instead of triggering a cross-origin
+      # CSP violation. (api_url is still used for the /health smoke test below.)
+      # RELEASE stamps the build for the error tracker (error-report.js reads
+      # __RELEASE__, defined in vite.config.js) and keys the sourcemap upload.
+      - name: Build frontend
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          VITE_RELEASE_VERSION: ${{ github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name) || 'dev' }}
+        run: npm run build -w @good-neighbor/frontend
+
+      # Upload sourcemaps to the error tracker so client stack traces
+      # symbolicate for contributors. The upload is per-release (the sha the
+      # client sends) and needs POSTHOG_CLI_API_KEY (a personal API key —
+      # per-env GH Environment secret) + POSTHOG_CLI_PROJECT_ID (per-env GH
+      # Environment variable) — the CLI's headless-CI auth variables. The
+      # pipeline is inject → upload: inject stamps the built chunks with
+      # release/chunk metadata (required for the upload to be usable), upload
+      # then associates the maps with the release named after the commit sha.
+      # Best-effort: a failed upload must not fail the deploy (errors just
+      # stay minified until the next green run), hence continue-on-error on
+      # both steps; their actual outcomes are reported in the job summary.
+      - name: Inject PostHog metadata into bundles
+        id: posthog_inject
+        if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
+        env:
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
+          POSTHOG_CLI_HOST: https://us.posthog.com
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          if [[ -z "$POSTHOG_CLI_API_KEY" || -z "$POSTHOG_CLI_PROJECT_ID" ]]; then
+            echo "::error::Set POSTHOG_PERSONAL_API_KEY and POSTHOG_PROJECT_ID in the GitHub deployment environment."
+            exit 1
+          fi
+          npx --yes @posthog/cli@0.19.0 sourcemap inject \
+            --directory frontend/dist
+        continue-on-error: true
+
+      - name: Upload sourcemaps to PostHog
+        id: posthog_upload
+        if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' && steps.posthog_inject.outcome == 'success' }}
+        env:
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
+          POSTHOG_CLI_HOST: https://us.posthog.com
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          npx --yes @posthog/cli@0.19.0 sourcemap upload \
+            --directory frontend/dist \
+            --release-name good-neighbor \
+            --release-version "$RELEASE_SHA"
+        continue-on-error: true
+
+      - name: Report PostHog source-map results
+        if: ${{ always() && vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
+        env:
+          INJECT_OUTCOME: ${{ steps.posthog_inject.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.posthog_upload.outcome }}
+        run: |
+          {
+            echo "### PostHog source maps"
+            echo "Injection: $INJECT_OUTCOME"
+            echo ""
+            echo "Upload: $UPLOAD_OUTCOME"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$INJECT_OUTCOME" != "success" || "$UPLOAD_OUTCOME" != "success" ]]; then
+            echo "::warning::PostHog source-map setup did not complete. See the injection/upload logs; deployment continues without confirmed source maps."
+          fi
+
+      - name: Pack frontend bundle
+        run: tar -czf frontend-dist.tgz frontend/dist
+
+      - name: Upload frontend bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: frontend-dist-${{ inputs.environment }}
+          path: frontend-dist.tgz
+          retention-days: 1
+          if-no-files-found: error
+
   terraform-apply:
     name: Terraform apply (${{ inputs.environment }})
+    needs: build-frontend
     runs-on: ubuntu-latest
     # Gates on the GitHub Environment: account ID + role ARN come from its
     # secrets, region comes from its variable, and prod's required-reviewer
     # approval applies here.
     environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
     concurrency:
       group: deploy-${{ inputs.environment }}
       cancel-in-progress: false
@@ -42,6 +156,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Validate deployment configuration
         env:
@@ -226,26 +342,17 @@ jobs:
           DYNAMO_TABLE: ${{ steps.tf.outputs.dynamo_table }}
         run: npm run seed:dev-site-codes -w @good-neighbor/backend
 
-      # No VITE_API_BASE: the SPA and the API share one CloudFront distribution,
-      # so the frontend defaults to a same-origin base ("") and makes relative
-      # calls (/site-code, /v1/*). This resolves to whichever origin served the
-      # page — the CloudFront URL or a custom alias like dev.goodneighborsf.org —
-      # so it stays within connect-src 'self' instead of triggering a cross-origin
-      # CSP violation. (api_url is still used for the /health smoke test below.)
-      # No VITE_API_BASE: the SPA and the API share one CloudFront distribution,
-      # so the frontend defaults to a same-origin base ("") and makes relative
-      # calls (/site-code, /v1/*). This resolves to whichever origin served the
-      # page — the CloudFront URL or a custom alias like dev.goodneighborsf.org —
-      # so it stays within connect-src 'self' instead of triggering a cross-origin
-      # CSP violation. (api_url is still used for the /health smoke test below.)
-      # RELEASE stamps the build for the error tracker (error-report.js reads
-      # __RELEASE__, defined in vite.config.js) and keys the sourcemap upload.
-      - name: Build frontend
+      # Download the prebuilt field SPA from the credential-free build-frontend
+      # job into runner.temp and unpack only regular files under frontend/dist.
+      - name: Download frontend bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: frontend-dist-${{ inputs.environment }}
+          path: ${{ runner.temp }}/frontend-dist
+
+      - name: Unpack frontend bundle
         working-directory: ${{ github.workspace }}
-        env:
-          RELEASE_SHA: ${{ github.sha }}
-          VITE_RELEASE_VERSION: ${{ github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name) || 'dev' }}
-        run: npm run build -w @good-neighbor/frontend
+        run: bash "$GITHUB_WORKSPACE/infra/scripts/unpack-frontend-dist.sh" "$RUNNER_TEMP/frontend-dist/frontend-dist.tgz" "$GITHUB_WORKSPACE"
 
       - name: Configure admin frontend
         working-directory: ${{ github.workspace }}
@@ -268,69 +375,8 @@ jobs:
           npm run build:admin
           cp admin-frontend/config.js admin-frontend/dist/config.js
 
-      # Upload sourcemaps to the error tracker so client stack traces
-      # symbolicate for contributors. The upload is per-release (the sha the
-      # client sends) and needs POSTHOG_CLI_API_KEY (a personal API key —
-      # per-env GH Environment secret) + POSTHOG_CLI_PROJECT_ID (per-env GH
-      # Environment variable) — the CLI's headless-CI auth variables. The
-      # pipeline is inject → upload: inject stamps the built chunks with
-      # release/chunk metadata (required for the upload to be usable), upload
-      # then associates the maps with the release named after the commit sha.
-      # Best-effort: a failed upload must not fail the deploy (errors just
-      # stay minified until the next green run), hence continue-on-error on
-      # both steps; their actual outcomes are reported in the job summary.
-      - name: Inject PostHog metadata into bundles
-        id: posthog_inject
-        if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
-        working-directory: ${{ github.workspace }}
-        env:
-          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
-          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
-          POSTHOG_CLI_HOST: https://us.posthog.com
-          RELEASE_SHA: ${{ github.sha }}
-        run: |
-          if [[ -z "$POSTHOG_CLI_API_KEY" || -z "$POSTHOG_CLI_PROJECT_ID" ]]; then
-            echo "::error::Set POSTHOG_PERSONAL_API_KEY and POSTHOG_PROJECT_ID in the GitHub deployment environment."
-            exit 1
-          fi
-          npx --yes @posthog/cli@0.19.0 sourcemap inject \
-            --directory frontend/dist
-        continue-on-error: true
-
-      - name: Upload sourcemaps to PostHog
-        id: posthog_upload
-        if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' && steps.posthog_inject.outcome == 'success' }}
-        working-directory: ${{ github.workspace }}
-        env:
-          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
-          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
-          POSTHOG_CLI_HOST: https://us.posthog.com
-          RELEASE_SHA: ${{ github.sha }}
-        run: |
-          npx --yes @posthog/cli@0.19.0 sourcemap upload \
-            --directory frontend/dist \
-            --release-name good-neighbor \
-            --release-version "$RELEASE_SHA"
-        continue-on-error: true
-
-      - name: Report PostHog source-map results
-        if: ${{ always() && vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
-        env:
-          INJECT_OUTCOME: ${{ steps.posthog_inject.outcome }}
-          UPLOAD_OUTCOME: ${{ steps.posthog_upload.outcome }}
-        run: |
-          {
-            echo "### PostHog source maps"
-            echo "Injection: $INJECT_OUTCOME"
-            echo ""
-            echo "Upload: $UPLOAD_OUTCOME"
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [[ "$INJECT_OUTCOME" != "success" || "$UPLOAD_OUTCOME" != "success" ]]; then
-            echo "::warning::PostHog source-map setup did not complete. See the injection/upload logs; deployment continues without confirmed source maps."
-          fi
-
       # Maps must not go public — they'd leak full source. They live in
-      # PostHog (uploaded above) and only there.
+      # PostHog (uploaded in build-frontend) and only there.
       - name: Publish frontend to S3
         working-directory: ${{ github.workspace }}
         run: bash scripts/publish-web-assets.sh frontend/dist "s3://${{ steps.tf.outputs.bucket }}"
