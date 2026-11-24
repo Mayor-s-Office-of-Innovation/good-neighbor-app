@@ -553,6 +553,73 @@ function issueRecord(issueId) {
   };
 }
 
+// A 1×1 image, so no spec waits on a file the fake doesn't serve.
+const PIXEL =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
+
+/**
+ * @param {string} artifactId
+ * @param {"check" | "update"} source
+ * @param {string} takenAt
+ */
+const photo = (artifactId, source, takenAt) => ({
+  artifactId,
+  source,
+  takenAt,
+  thumbnailUrl: PIXEL,
+  url: PIXEL,
+  urlExpiresAt: "2026-11-04T19:05:00.000Z",
+  urlSeconds: 300,
+});
+const CHECK_PHOTO = photo("art-1", "check", "2026-10-02T17:01:00.000Z");
+
+/**
+ * A record's photos and notes, with the refusals the record-photos handler
+ * gives. Only t1 and its Check have any, so the others show the empty state.
+ * @param {string} siteId
+ * @param {URLSearchParams} params
+ * @returns {{ status?: number, json: any }}
+ */
+export function recordPhotosReply(siteId, params) {
+  const checkId = params.get("checkId");
+  const issueId = params.get("issueId");
+  if (Boolean(checkId) === Boolean(issueId))
+    return { status: 400, json: { error: "check_or_issue_required" } };
+  if (checkId)
+    return checkId === check.checkId && siteId === check.siteId
+      ? {
+          json: {
+            photos: [CHECK_PHOTO],
+            notes: [
+              {
+                source: "check",
+                at: "2026-10-02T17:02:00.000Z",
+                text: "Synthetic description",
+              },
+            ],
+          },
+        }
+      : { status: 404, json: { error: "check_not_found" } };
+  if (!ISSUES.some((i) => i.issueId === issueId && i.siteId === siteId))
+    return { status: 404, json: { error: "issue_not_found" } };
+  if (issueId !== issue.issueId) return { json: { photos: [], notes: [] } };
+  return {
+    json: {
+      photos: [
+        CHECK_PHOTO,
+        photo("t1-u2-p1", "update", "2026-10-03T17:00:00.000Z"),
+      ],
+      notes: [
+        {
+          source: "update",
+          at: "2026-10-03T17:00:00.000Z",
+          text: "Synthetic note",
+        },
+      ],
+    },
+  };
+}
+
 /**
  * Issues for a request, filtered, sorted and paged as listIssues does.
  * @param {Record<string, string>} query
@@ -592,6 +659,35 @@ function issuesReply(query) {
       issues: rows.slice(offset, next),
       nextCursor:
         next < rows.length ? encodeCursor(key, SNAPSHOT_ID, next) : null,
+    },
+  };
+}
+
+/**
+ * Checks for a request, filtered as listChecks does; the fake has one Check.
+ * @param {Record<string, string>} query
+ */
+function checksReply(query) {
+  const period = requestedPeriod(query);
+  const filter = parseSiteFilter(query);
+  const { filters } = parseListQuery("checks", query);
+  const sites = new Set(
+    SITES.filter((s) => siteMatches(s, filter)).map((s) => s.siteId),
+  );
+  const rows = [{ ...check, siteName: "Example Site" }].filter(
+    (c) =>
+      sites.has(c.siteId) &&
+      c.day >= period.startDay &&
+      c.day < period.endDay &&
+      (!filters.state || c.state === filters.state) &&
+      (!filters.source || c.source === filters.source),
+  );
+  return {
+    json: {
+      meta: meta(period),
+      total: rows.length,
+      checks: rows,
+      nextCursor: null,
     },
   };
 }
@@ -650,14 +746,7 @@ export const insightsReplies = {
   "GET reporting/issues": issuesReply(OCTOBER_QUERY),
   // The reply the mock really sends, so the shape test checks it.
   "GET reporting/issues/{issueId}": issueRecord("t1"),
-  "GET reporting/checks": {
-    json: {
-      meta: meta(OCTOBER),
-      total: 1,
-      checks: [{ ...check, siteName: "Example Site" }],
-      nextCursor: null,
-    },
-  },
+  "GET reporting/checks": checksReply(OCTOBER_QUERY),
   "GET reporting/checks/{checkId}": {
     json: { meta: meta(null), check, issues: [issue], site: siteRef },
   },
@@ -787,6 +876,7 @@ export function insightsReply(request) {
     if (found.key === "GET reporting/overview")
       return copy(overviewReply(query));
     if (found.key === "GET reporting/issues") return copy(issuesReply(query));
+    if (found.key === "GET reporting/checks") return copy(checksReply(query));
     if (found.key === "GET reporting/sites/{siteId}")
       return copy(siteReply(id, query));
   } catch (err) {

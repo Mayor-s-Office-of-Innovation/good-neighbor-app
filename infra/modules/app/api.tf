@@ -96,6 +96,7 @@ locals {
     "GET /admin/v1/system-status/{siteId}/{kind}",
     "GET /admin/v1/system-status/{siteId}/media/{checkId}/{artifactId}",
     "GET /admin/v1/system-status/{siteId}/duplicates/{taskId}",
+    "GET /admin/v1/sites/{siteId}/record-photos",
     "GET /admin/v1/profile",
     "PUT /admin/v1/profile",
     "GET /admin/v1/admin-users",

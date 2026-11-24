@@ -115,12 +115,13 @@ test("Insights pages keep the period when moving between them", async () => {
 });
 
 test("record pages name their record", async () => {
+  // i1 isn't in the reporting data, so its ID is all there is to name it by.
   await mountAdmin("/insights/raw/issues/i1", { insights: true });
   assert.equal(heading(), t("admin.insights.issue", { id: "i1" }));
   await routeTo("/insights/raw/checks/c1");
   assert.equal(heading(), t("admin.insights.check", { id: "c1" }));
-  // The record sits inside Checks, which isn't this exact page.
-  assert.equal(current('a[data-insights-raw="checks"]'), "true");
+  // A record replaces its list, so only the Raw data tab marks where it sits.
+  assert.ok(missing("a[data-insights-raw]"));
   assert.equal(current('#insights-nav a[data-insights-nav="raw"]'), "true");
   await routeTo("/insights/sites/s1");
   assert.equal(heading(), "Example Site");
@@ -337,6 +338,19 @@ test("ids that need encoding reach the Site and the page title intact", async ()
   assert.equal(api.calls("GET", /^reporting\/sites\/a%2Fb(\?|$)/).length, 1);
   await routeTo("/insights/raw/issues/i%201");
   assert.equal(heading(), t("admin.insights.issue", { id: "i 1" }));
+});
+
+test("a very long Insights address still leaves a way back, with its period", async () => {
+  const long = `/insights/sites/s1?period=2026-10&q=${"a".repeat(4100)}`;
+  await mountAdmin(long, { insights: true });
+  const issue = new URL(
+    $('[data-issue-row="t2"] a').getAttribute("href"),
+    "https://x",
+  );
+  assert.equal(
+    issue.searchParams.get("return"),
+    "/insights/sites/s1?period=2026-10",
+  );
 });
 
 test("leaving Insights before it loads doesn't remember the unseen page", async () => {

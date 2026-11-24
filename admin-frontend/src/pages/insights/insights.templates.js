@@ -9,6 +9,7 @@ import {
   dayInstant,
   dayKeysBetween,
 } from "../../../../frontend/src/domain/reports-periods.js";
+import { rulebookText } from "../../../../frontend/src/i18n/rulebook.js";
 import { escapeHtml } from "../../dom.js";
 import {
   customPeriodError,
@@ -486,6 +487,20 @@ export const severityBand = (severity) =>
 /** @param {number | null} severity */
 export const severityWord = (severity) =>
   t(`admin.insights.severity.${severityBand(severity)}`);
+
+/** @param {string | null} category */
+export const categoryWord = (category) =>
+  category
+    ? rulebookText(category, "rulebook.category")
+    : t("admin.insights.issue.categoryUnknown");
+
+/** The Overview table's open marker, so every openable row looks the same. */
+export const openMarkerCell =
+  '<td role="cell" class="insights__chev" aria-hidden="true" data-open-marker><wa-icon name="chevron-right"></wa-icon></td>';
+
+/** Its header, named for screen readers as on Overview. */
+export const openColumnHead = () =>
+  `<th role="columnheader" scope="col"><span class="visually-hidden">${escapeHtml(t("admin.insights.raw.col.open"))}</span></th>`;
 
 /** @param {string} message already translated @param {string} [retryId] */
 export function failedView(message, retryId = "insights-retry") {

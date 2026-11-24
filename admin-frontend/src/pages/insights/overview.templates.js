@@ -54,18 +54,19 @@ export function optionsView(allLabel, options, selected, me = "") {
 }
 
 /**
+ * label: what it filters, so a chosen value is still announced with its field.
  * @param {string} name
  * @param {string} allLabel
  * @param {Option[]} options
  * @param {string} selected
- * @param {string} [me]
+ * @param {{ label: string, me?: string }} named
  */
-function select(name, allLabel, options, selected, me = "") {
-  return `<wa-select data-filter="${name}" data-all-label="${escapeHtml(allLabel)}" aria-label="${escapeHtml(allLabel)}" placeholder="${escapeHtml(allLabel)}" value="${escapeHtml(selected)}" size="s" pill>${optionsView(allLabel, options, selected, me)}</wa-select>`;
+export function select(name, allLabel, options, selected, { label, me = "" }) {
+  return `<wa-select data-filter="${name}" data-all-label="${escapeHtml(allLabel)}" aria-label="${escapeHtml(label)}" placeholder="${escapeHtml(allLabel)}" value="${escapeHtml(selected)}" size="s" pill>${optionsView(allLabel, options, selected, me)}</wa-select>`;
 }
 
 /** @param {string} key admin.insights.label.* @param {string} body */
-const controlRow = (key, body) =>
+export const controlRow = (key, body) =>
   `<div class="insights__crow"><span class="insights__clabel" id="insights-label-${key}" data-control-label="${key}">${escapeHtml(t(`admin.insights.label.${key}`))}</span><div class="insights__cbody">${body}</div></div>`;
 
 /**
@@ -95,9 +96,9 @@ export function filtersView(state, options, me = "") {
     )}
     ${controlRow(
       "filter",
-      `${select("managerId", t("admin.insights.filter.managerId"), options.managerId, state.managerId, me)}
-      ${select("providerId", t("admin.insights.filter.providerId"), options.providerId, state.providerId)}
-      ${select("department", t("admin.insights.filter.department"), options.department, state.department)}
+      `${select("managerId", t("admin.insights.filter.managerId"), options.managerId, state.managerId, { label: t("admin.insights.field.managerId"), me })}
+      ${select("providerId", t("admin.insights.filter.providerId"), options.providerId, state.providerId, { label: t("admin.insights.field.providerId") })}
+      ${select("department", t("admin.insights.filter.department"), options.department, state.department, { label: t("admin.insights.field.department") })}
       ${helpTip("insights-tip-filter", t("admin.insights.label.filter"), t("admin.insights.filter.help"))}`,
     )}
   </div>`;

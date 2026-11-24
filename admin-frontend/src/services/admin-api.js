@@ -609,9 +609,37 @@ export const adminApi = {
   /** @param {Record<string, string>} params @param {AbortSignal} [signal] */
   reportingIssues: (params, signal) =>
     adminFetch(`/admin/v1/reporting/issues${queryOf(params)}`, { signal }),
+  /** @param {string} issueId @param {Record<string, string>} params @param {AbortSignal} [signal] */
+  reportingIssue: (issueId, params, signal) =>
+    adminFetch(
+      `/admin/v1/reporting/issues/${encodeURIComponent(issueId)}${queryOf(params)}`,
+      { signal },
+    ),
+  /** @param {Record<string, string>} params @param {AbortSignal} [signal] */
+  reportingChecks: (params, signal) =>
+    adminFetch(`/admin/v1/reporting/checks${queryOf(params)}`, { signal }),
+  /** @param {string} checkId @param {Record<string, string>} params @param {AbortSignal} [signal] */
+  reportingCheck: (checkId, params, signal) =>
+    adminFetch(
+      `/admin/v1/reporting/checks/${encodeURIComponent(checkId)}${queryOf(params)}`,
+      { signal },
+    ),
+  /** @param {string} siteId @param {{ checkId: string } | { issueId: string }} params @param {AbortSignal} [signal] */
+  recordPhotos: (siteId, params, signal) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/record-photos${queryOf(params)}`,
+      { signal },
+    ),
   /** @param {Record<string, string>} [params] `include: "sites"` adds each Site's name */
   reportingScopeOptions: (params = {}) =>
     adminFetch(`/admin/v1/reporting/scope-options${queryOf(params)}`),
+  /** @param {Record<string, unknown>} body from exportBody @param {string} idempotencyKey the server makes one export per key */
+  createReportingExport: (body, idempotencyKey) =>
+    adminFetch("/admin/v1/reporting/exports", {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "idempotency-key": idempotencyKey },
+    }),
   /** @param {Record<string, unknown>} body @param {string} idempotencyKey the server makes one report per key */
   createInsightsReport: (body, idempotencyKey) =>
     adminFetch("/admin/v1/reports/insights", {

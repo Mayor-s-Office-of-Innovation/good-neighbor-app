@@ -9,6 +9,7 @@ import {
   getStatusMedia,
   getStatusDuplicate,
 } from "../handlers/system-status.js";
+import { getRecordPhotos } from "../handlers/record-photos.js";
 import {
   listPeople,
   createPerson,
@@ -337,6 +338,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
     getStatusMedia,
   "GET /admin/v1/system-status/{siteId}/duplicates/{taskId}":
     getStatusDuplicate,
+  "GET /admin/v1/sites/{siteId}/record-photos": getRecordPhotos,
   "GET /admin/v1/session": getAdminSession,
   "GET /admin/v1/profile": getMyProfile,
   "PUT /admin/v1/profile": updateMyProfile,

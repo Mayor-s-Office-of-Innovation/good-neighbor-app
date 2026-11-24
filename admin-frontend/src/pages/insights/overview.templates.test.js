@@ -2,7 +2,7 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { readOverview } from "./insights-query.js";
-import { resultsView } from "./overview.templates.js";
+import { filtersView, resultsView } from "./overview.templates.js";
 
 const october = {
   kind: "month",
@@ -114,4 +114,18 @@ test("the view of Unknown Sites is named for the Unknown state the Site page sho
 test("a large late count is grouped, as Raw data's counts are", () => {
   const box = table([row({ response: { overdue: 1200, late: 34 } })]);
   assert.equal(box.querySelector("[data-late-count]")?.textContent, "1,234");
+});
+
+test("each filter is named by its field, so a picked value still says what it filters", () => {
+  const box = document.createElement("div");
+  box.innerHTML = filtersView(readOverview(""), {
+    managerId: [],
+    providerId: [],
+    department: [],
+  });
+  for (const name of ["managerId", "providerId", "department"])
+    assert.equal(
+      box.querySelector(`[data-filter="${name}"]`)?.getAttribute("aria-label"),
+      t(`admin.insights.field.${name}`),
+    );
 });

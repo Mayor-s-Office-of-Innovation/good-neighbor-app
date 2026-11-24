@@ -17,6 +17,7 @@ import {
   readPeriod,
   sortDir,
 } from "./insights-query.js";
+import { confirmFirst } from "./confirm-dialog.js";
 import { carriedQuery } from "./insights-routes.js";
 import { reportSignInError, sessionOf } from "./insights-session.js";
 import { JobAction } from "./job-action.js";
@@ -65,8 +66,6 @@ class InsightsOverview extends HTMLElement {
     this.period = readPeriod(location.search);
     /** @type {Record<string, any> | null} */
     this.reply = null;
-    /** @type {{ siteIds: string[], period: Period } | null} */
-    this.reportAsk = null;
     /** @type {number | null} every Site, for "22 Sites (out of 500)" */
     this.allSites = null;
     /** Site rows drawn; Load more adds a page. */
@@ -112,7 +111,6 @@ class InsightsOverview extends HTMLElement {
     this.addEventListener("click", this.clicked);
     this.addEventListener("input", this.typed);
     this.addEventListener("change", this.changed);
-    this.addEventListener("close", this.dialogClosed, true);
     this.unsubscribe = this.session.reportJobs.subscribe(() =>
       this.drawReport(),
     );
@@ -131,7 +129,6 @@ class InsightsOverview extends HTMLElement {
     this.removeEventListener("click", this.clicked);
     this.removeEventListener("input", this.typed);
     this.removeEventListener("change", this.changed);
-    this.removeEventListener("close", this.dialogClosed, true);
   }
 
   /** @param {string} name @returns {HTMLElement} */
@@ -553,39 +550,17 @@ class InsightsOverview extends HTMLElement {
 
   openReportDialog() {
     if (!this.reply || this.report.off()) return;
-    this.querySelector("#insights-report-dialog")?.remove();
-    // Confirm sends what the dialog counted, even if a load lands meanwhile.
-    this.reportAsk = {
-      siteIds: [...this.state.selected],
-      period: this.period ?? periodOf(this.reply.meta.interval),
-    };
-    this.insertAdjacentHTML(
-      "beforeend",
-      reportDialogView({ count: this.reportAsk.siteIds.length }),
+    const siteIds = [...this.state.selected];
+    const period = periodApiParams(
+      this.period ?? periodOf(this.reply.meta.interval),
     );
-    /** @type {HTMLDialogElement} */ (
-      this.querySelector("#insights-report-dialog")
-    ).showModal();
+    confirmFirst(this, {
+      id: "insights-report-dialog",
+      markup: reportDialogView({ count: siteIds.length }),
+      button: "insights-report",
+      confirmed: () => void this.session.reportJobs.start(siteIds, period),
+    });
   }
-
-  /** @param {Event} event */
-  dialogClosed = (event) => {
-    const dialog = /** @type {HTMLDialogElement} */ (event.target);
-    if (dialog.id !== "insights-report-dialog") return;
-    const confirmed = dialog.returnValue === "confirm";
-    const ask = this.reportAsk;
-    this.reportAsk = null;
-    dialog.remove();
-    if (confirmed && ask)
-      void this.session.reportJobs.start(
-        ask.siteIds,
-        periodApiParams(ask.period),
-      );
-    // The button shows the report's progress, so focus stays on it.
-    /** @type {HTMLElement | null} */ (
-      this.querySelector("#insights-report")
-    )?.focus();
-  };
 }
 
 if (!customElements.get("insights-overview"))

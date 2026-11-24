@@ -1588,7 +1588,120 @@ describe("exportRows", () => {
       list: list("issues", { limit: "1" }),
     });
     expect(res.rows).toHaveLength(4);
-    expect(res.columns).toContain("responseState");
+    expect(res.columns).toContain("Response state");
+  });
+
+  it("writes Issues under plain headers, in the list's order, with words for states", () => {
+    const res = exportRows(snap, {
+      dataset: "issues",
+      interval: october,
+      filter: {},
+      list: list("issues"),
+    });
+    expect(res.columns).toEqual([
+      "Issue ID",
+      "Site",
+      "Site ID",
+      "Category",
+      "Severity (1-5)",
+      "State",
+      "Created",
+      "Response deadline",
+      "First response",
+      "Response state",
+      "Resolved",
+      "Parent check",
+    ]);
+    const byId = Object.fromEntries(res.rows.map((r) => [r["Issue ID"], r]));
+    expect(byId.t2).toMatchObject({
+      Site: "Synthetic Site 1",
+      "Severity (1-5)": 2,
+      State: "Open",
+      "Response state": "Overdue",
+      "First response": null,
+      "Parent check": "c2",
+    });
+    expect(byId.t3).toMatchObject({
+      State: "Resolved",
+      Resolved: "2026-10-22T17:00:00.000Z",
+    });
+  });
+
+  it("writes Checks with the Issue IDs each raised, and no device", () => {
+    const res = exportRows(snap, {
+      dataset: "checks",
+      interval: october,
+      filter: {},
+      list: list("checks", { source: "perimeter" }),
+    });
+    expect(res.columns).toEqual([
+      "Check ID",
+      "Site",
+      "Site ID",
+      "Recorded state",
+      "Completed or started",
+      "Issue IDs",
+    ]);
+    expect(res.rows.find((r) => r["Check ID"] === "c1")).toEqual({
+      "Check ID": "c1",
+      Site: "Synthetic Site 1",
+      "Site ID": "s1",
+      "Recorded state": "Completed",
+      "Completed or started": "2026-10-02T17:00:00.000Z",
+      "Issue IDs": "t1",
+    });
+  });
+
+  it("dates a completed Check with no finish time as the list does", () => {
+    // Apart from the start time, so a CSV that read startedAt would fail.
+    const placedAt = "2026-10-02T16:55:00.000Z";
+    const changed = indexSnapshot({
+      prefix: "p1",
+      manifest,
+      tables: {
+        ...tables,
+        checks: tables.checks.map((c) =>
+          c.checkId === "c1"
+            ? { ...c, completedAt: null, activityAt: placedAt }
+            : c,
+        ),
+      },
+    });
+    const req = {
+      interval: october,
+      filter: {},
+      list: list("checks", { source: "perimeter" }),
+    };
+    const row = exportRows(changed, { dataset: "checks", ...req }).rows.find(
+      (r) => r["Check ID"] === "c1",
+    );
+    const listed = listChecks(changed, { ...req, now: NOW }).checks.find(
+      (c) => c.checkId === "c1",
+    );
+    expect(row?.["Recorded state"]).toBe("Completed");
+    expect(row?.["Completed or started"]).toBe(placedAt);
+    expect(listed?.activityAt).toBe(placedAt);
+  });
+
+  it("labels an Issue the Resolved filter keeps as Resolved, even with an empty time", () => {
+    const changed = indexSnapshot({
+      prefix: "p1",
+      manifest,
+      tables: {
+        ...tables,
+        issues: tables.issues.map((i) =>
+          i.issueId === "t3" ? { ...i, resolvedAt: "" } : i,
+        ),
+      },
+    });
+    const { rows } = exportRows(changed, {
+      dataset: "issues",
+      interval: october,
+      filter: {},
+      list: list("issues", { issueStatus: "resolved" }),
+    });
+    expect(rows.map((r) => r["Issue ID"])).toContain("t3");
+    expect(rows.every((r) => r.State === "Resolved")).toBe(true);
   });
 
   it.each([

@@ -224,7 +224,7 @@
 }
 
 /* Still focusable while its page loads, so a keyboard user's place survives the redraw. */
-[data-load-more][aria-disabled="true"] {
+:is([data-load-more], #insights-load-more)[aria-disabled="true"] {
   cursor: progress;
   opacity: 0.6;
 }
@@ -414,8 +414,10 @@
   min-width: 11rem;
 }
 
-/* Only Overview's Site rows open a page. */
-.insights__table tbody tr[data-site-row] {
+/* Only rows that open a page or record. */
+.insights__table
+  tbody
+  tr:is([data-site-row], [data-issue-row], [data-check-row]) {
   cursor: pointer;
 }
 
@@ -425,12 +427,23 @@
 }
 
 /* A tint under the pointer or keyboard focus shows the whole row opens. */
-.insights__table tbody tr[data-site-row]:is(:hover, :focus-within) {
+.insights__table
+  tbody
+  tr:is([data-site-row], [data-issue-row], [data-check-row]):is(
+    :hover,
+    :focus-within
+  ) {
   background: var(--surface-subtle, #f2f3f5);
 }
 
 /* The row's name cell paints its own white, so it takes the tint too. */
-.insights__table tbody tr[data-site-row]:is(:hover, :focus-within) > * {
+.insights__table
+  tbody
+  tr:is([data-site-row], [data-issue-row], [data-check-row]):is(
+    :hover,
+    :focus-within
+  )
+  > * {
   background: inherit;
 }
 
@@ -762,8 +775,208 @@
   display: block;
 }
 
+.insights__table th.insights__grouphead {
+  padding-top: 16px;
+  font-weight: 600;
+  background: none;
+}
+
+.insights__timeline {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.insights__timeline time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.insights__head {
+  align-items: center;
+}
+
+/* Its own class: insights__stale dims a loading region's children. */
+.insights__stale-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.insights__stale-banner p {
+  margin: 0;
+}
+
+.insights__more {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.insights__more-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+/* Wide screens have room for every filter, so there's nothing to unfold. */
+.insights__filters-toggle {
+  display: none;
+}
+
+.insights__filter-rows {
+  display: contents;
+}
+
+/* Wide screens show the whole trail, so the single back link would repeat it. */
+.insights__trail-back {
+  display: none;
+}
+
+/* A help line, not a missing-data note, so it isn't in italics. */
+insights-raw-list [data-insights-empty="filtered"] {
+  font-style: normal;
+}
+
 .insights__table tbody th .insights__sev {
   margin-right: 8px;
+}
+
+/* Long labels wrap rather than squeeze the times and states they label. */
+.insights__states {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(12ch, 1fr);
+  gap: 8px 24px;
+  margin: 0 0 8px;
+}
+
+.insights__states > div {
+  display: contents;
+}
+
+.insights__states dt {
+  color: var(--muted);
+}
+
+.insights__states dd {
+  margin: 0;
+}
+
+/* A right-side panel over the list, so the list keeps its place. */
+.insights__panel {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: min(520px, 92vw);
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  overflow: auto;
+  background: var(--surface);
+  box-shadow: -8px 0 24px rgb(0 0 0 / 15%);
+}
+
+.insights__panel::backdrop {
+  background: rgb(20 22 30 / 25%);
+}
+
+.insights__panel-bar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  box-sizing: border-box;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 24px;
+  background: inherit;
+  font-size: 0.875rem;
+}
+
+.insights__panel-bar #insights-panel-close {
+  margin-left: auto;
+}
+
+/* Above its heading, so the tip never covers the times it explains. */
+.insights__panel h3 > .insights__tip-body,
+insights-record h2 > .insights__tip-body {
+  position-area: top span-right;
+  /* Below too, so near the top of a phone the tip isn't cut off. */
+  position-try-fallbacks:
+    flip-inline,
+    flip-block,
+    flip-block flip-inline;
+}
+
+/* A Check's Issue table is too wide for the panel, so its Issues show as labelled cards. */
+.insights__panel .insights__table thead {
+  display: none;
+}
+
+.insights__panel .insights__table tr,
+.insights__panel .insights__table td,
+.insights__panel .insights__table tbody th {
+  display: block;
+}
+
+.insights__panel .insights__table tr {
+  border-bottom: 1px solid var(--line);
+  padding: 8px 0;
+}
+
+.insights__panel .insights__table td,
+.insights__panel .insights__table tbody th {
+  border: 0;
+  padding: 2px 0;
+  max-width: none;
+  min-width: 0;
+  overflow: visible;
+  text-align: left;
+}
+
+/* The panel's cards keep the open marker at their right edge. */
+.insights__panel .insights__table tr[data-issue-row] {
+  position: relative;
+  padding-right: 28px;
+}
+
+.insights__panel .insights__table td.insights__chev {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  width: auto;
+  translate: 0 -50%;
+}
+
+.insights__panel .insights__table td[data-label]::before {
+  content: attr(data-label) ": ";
+  display: inline;
+  font-size: inherit;
+  color: var(--muted);
+}
+
+/* The category is the card's heading, so the phone rules' label line would repeat it. */
+.insights__panel .insights__table tbody th[data-label]::before {
+  content: none;
+}
+
+.insights__panel [data-panel-body] {
+  display: grid;
+  gap: 12px;
+  padding: 16px 24px 40px;
+}
+
+.insights__panel h3 {
+  margin: 12px 0 0;
+  font-size: 1rem;
 }
 
 /* Narrow screens show each row as a labelled card, so no column drops. */
@@ -859,13 +1072,39 @@
   }
 }
 
-/* Site Issues on phones: each row is a two-column card, so rows start on the first screen. */
+/* Phones have no room for the trail; one back link to the list replaces it. */
+@media (max-width: 640px) {
+  .insights__trail {
+    display: none;
+  }
+
+  .insights__trail-back {
+    display: inline-flex;
+    margin-bottom: 12px;
+  }
+}
+
+/* Raw data on phones: filters fold away and each row is a two-column card, so rows start on the first screen. */
 @media (max-width: 760px) {
+  .insights__filters-toggle {
+    display: inline-flex;
+    margin: 8px 0;
+  }
+
+  .insights__filter-rows {
+    display: none;
+  }
+
+  .insights__controls[data-open] .insights__filter-rows {
+    display: contents;
+  }
+
   .insights__table--paged thead {
     display: none;
   }
 
-  .insights__table--paged tbody tr[data-issue-row] {
+  .insights__table--paged tbody tr[data-issue-row],
+  .insights__table--paged tbody tr[data-check-row] {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -876,26 +1115,26 @@
 }
 
 /* One gap between every section, so spacing doesn't depend on each block's margins. */
-:is(insights-overview, insights-site) {
+:is(insights-overview, insights-site, insights-raw-list, insights-record) {
   display: flex;
   flex-direction: column;
   gap: var(--wa-space-m, 16px);
 }
 
-:is(insights-overview, insights-site)
-  > [data-region]:not([data-region="head"]) {
+:is(insights-overview, insights-site, insights-raw-list, insights-record)
+  > [data-region]:not([data-region="head"], [data-region="trail"]) {
   display: contents;
 }
 
-:is(insights-overview, insights-site)
-  > [data-region]:not([data-region="head"])
+:is(insights-overview, insights-site, insights-raw-list, insights-record)
+  > [data-region]:not([data-region="head"], [data-region="trail"])
   > * {
   margin-block: 0;
 }
 
 /* An empty live region stays in the page for announcements but takes no gap.
    The count keeps its line, so the bar doesn't jump while it's blank. */
-:is(insights-overview, insights-site)
+:is(insights-overview, insights-site, insights-raw-list, insights-record)
   [role="status"]:empty:not(#insights-count) {
   position: absolute;
 }

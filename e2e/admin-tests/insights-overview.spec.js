@@ -50,6 +50,14 @@ test("a manager picks a view on Overview, opens a Site, sees its Overdue Issues 
     "true",
   );
   await expect(page.locator('[data-issue-row="t2"]')).toBeVisible();
+  // The Issue opens beside the Site, and Esc puts the user back on its row.
+  await page.locator('[data-issue-row="t2"] a').click();
+  await expect(
+    page.getByRole("dialog", { name: t("admin.insights.panel.issue") }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("[data-record-panel]")).toHaveCount(0);
+  await expect(page.locator('[data-issue-row="t2"] a')).toBeFocused();
   await page.locator("#insights-back").click();
   await expect(page).toHaveURL(/\/insights\?period=2026-10&show=all$/);
   await expect(page.locator('[data-site-link="s1"]')).toBeFocused();
