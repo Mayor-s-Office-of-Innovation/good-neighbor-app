@@ -70,6 +70,9 @@ async function waitForService(probe, label) {
   }
 }
 
+// Insights export and report files; private, like the lake bucket they mimic.
+export const LOCAL_INSIGHTS_JOBS_BUCKET = "gnp-local-insights-jobs";
+
 export const TABLE_SCHEMA = {
   BillingMode: "PAY_PER_REQUEST", // matches Terraform; no ProvisionedThroughput anywhere
   AttributeDefinitions: [
@@ -249,6 +252,7 @@ export async function ensureLocalInfra() {
       uploadBucket,
       complaintBucket,
       complianceLetterBucket,
+      process.env.INSIGHTS_JOBS_BUCKET || LOCAL_INSIGHTS_JOBS_BUCKET,
     ]) {
       try {
         await s3.send(new CreateBucketCommand({ Bucket: bucket }));

@@ -305,7 +305,8 @@ body {
   text-decoration: none;
 }
 
-.entity-tabs a[aria-current="page"] {
+.entity-tabs a[aria-current="page"],
+.entity-tabs a[aria-current="true"] {
   border-block-end-color: var(--ink);
   color: var(--text);
 }
@@ -715,6 +716,18 @@ h3 {
   border: 1px solid var(--line);
   background: transparent;
   color: var(--text);
+}
+
+/* No frame of its own, for toggles and tips whose container draws the shape. */
+.btn-plain {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
 }
 
 .perimeter-description {

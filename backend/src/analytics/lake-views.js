@@ -24,7 +24,7 @@
 // transition that needs a rebuild is empty stand-in → real view.
 
 import { ListObjectsV2Command } from "@aws-sdk/client-s3";
-import { ENTITY_COLUMNS, columnSchema } from "./convert.js";
+import { ENTITY_COLUMNS, columnSchema, sqlString } from "./convert.js";
 import { logServerError } from "../lib/log-server-error.js";
 import { ENTITY_KEY_SHAPES } from "./entity-keys.js";
 
@@ -148,7 +148,7 @@ export function lakeViewSql(base, entity) {
              raw->>'$.pk' AS pk,
              raw->>'$.sk' AS sk
       FROM read_parquet(
-        '${base}/${entity}/*/*.parquet',
+        ${sqlString(`${base}/${entity}/*/*.parquet`)},
         hive_partitioning = true,
         union_by_name = true,
         hive_types = {'date': 'VARCHAR'}

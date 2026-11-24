@@ -3,6 +3,7 @@
 import { test as base, expect } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
+import { insightsReply, recordPhotosReply } from "./insights-mock.js";
 
 /**
  * @typedef {{ method: string, path: string, search: string, body: any, headers: Record<string, string> }} AdminRequest
@@ -290,7 +291,16 @@ function defaultReply(data, role, request) {
   };
   if (!supervisor && supervisorRoutes.some((re) => re.test(`${method} ${p}`)))
     return supervisorRequired;
+  // Both admin roles read Insights, so the reply doesn't depend on role.
+  const insights = insightsReply(request);
+  if (insights) return insights;
   if (method !== "GET") return writeReply(data, request, exec);
+  const photos = /^sites\/([^/]+)\/record-photos$/.exec(p);
+  if (photos)
+    return recordPhotosReply(
+      decodeURIComponent(photos[1]),
+      new URLSearchParams(search || ""),
+    );
   if (p === "session")
     return {
       json: {
@@ -466,6 +476,8 @@ const supervisorRoutes = [
   /^[A-Z]+ admin-users(\/|$)/,
   // admin-site-imports.js: every route.
   /^[A-Z]+ site-imports(\/|$)/,
+  // record-photos.js: supervisors only, like the System Status photos.
+  /^GET sites\/[^/]+\/record-photos$/,
 ];
 
 /** @param {string} value */

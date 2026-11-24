@@ -6,7 +6,10 @@ import { convertS3Event } from "../analytics/convert.js";
 
 /**
  * @param {import("aws-lambda").S3Event} event
- * @returns {Promise<{ converted: number, files: number, rows: number }>}
+ * @param {import("aws-lambda").Context} context
+ * @returns {Promise<{ converted: number, files: number, rows: number, backfilled: number }>}
  */
-export const handler = (event) =>
-  withServerErrorsLogged("analytics-convert", () => convertS3Event(event));
+export const handler = (event, context) =>
+  withServerErrorsLogged("analytics-convert", () =>
+    convertS3Event(event, context),
+  );

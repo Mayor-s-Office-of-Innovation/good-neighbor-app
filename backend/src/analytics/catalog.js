@@ -6,8 +6,7 @@
 //
 // Conventions:
 // - SQL is a single SELECT-shaped statement against the lake views
-//   (lake-views.js): checks, tasks, conditions, assessments, artifacts,
-//   analyses, sites, providers, devices. Promoted columns are the
+//   (lake-views.js), one per convert.js ENTITY_COLUMNS key. Promoted columns are the
 //   converter's (convert.js ENTITY_COLUMNS); anything else comes from the raw
 //   JSON column via `raw->>'$.field'`.
 // - Parameters are `$name` placeholders bound through DuckDB prepared
