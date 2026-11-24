@@ -42,6 +42,7 @@ const MINUTE = 60_000;
  * @property {number} [opensAt] share of the range before the Site opens
  * @property {number} [closesAt] share of the range after which it is archived
  * @property {[number, number]} [gap] [share of the range, days] with no Checks
+ * @property {number} [checksOwed] Checks a day its COMPLIANCE_TERMS# item sets, which getChecksReport reads; 3 if unset, 0 for no terms
  */
 
 // Most real Sites are quiet, so a large year makes 9 in 10 Sites this one: under every concern limit.
@@ -117,6 +118,7 @@ export const PROFILES = [
     singleReportRate: 0.2,
     publicContact: true,
     siteContact: true,
+    checksOwed: 4,
   },
   {
     key: "overdue",
@@ -143,6 +145,7 @@ export const PROFILES = [
     singleReportRate: 0.05,
     publicContact: true,
     siteContact: true,
+    checksOwed: 2,
   },
   {
     key: "no-public-contact",
@@ -169,6 +172,7 @@ export const PROFILES = [
     singleReportRate: 0.05,
     publicContact: true,
     siteContact: false,
+    checksOwed: 2,
   },
   {
     key: "reports-only",
@@ -226,7 +230,7 @@ export const PROFILES = [
   },
   {
     key: "legacy-untimed",
-    looksLike: "Answered, but older records lack the time",
+    looksLike: "Answered, but older records lack the time; no compliance terms",
     checksPerDay: [2, 3],
     skipRate: 0.1,
     issueRate: 0.3,
@@ -236,6 +240,7 @@ export const PROFILES = [
     singleReportRate: 0.05,
     publicContact: true,
     siteContact: true,
+    checksOwed: 0,
   },
 ];
 
@@ -362,6 +367,7 @@ const pad = (n) => String(n).padStart(2, "0");
 /**
  * @typedef {object} Answers
  * @property {Record<string, Record<string, number>>} bySiteMonth key `${siteId}|YYYY-MM`
+ * @property {Record<string, number>} owedBySiteMonth key `${siteId}|YYYY-MM`: Checks its terms owed
  * @property {Record<string, { publicContact: string, siteContact: string }>} contacts
  * @property {Record<string, string>} profiles siteId → profile key
  */
@@ -394,7 +400,12 @@ export function generateYear(opts = {}) {
   /** @type {Record<string, any>[]} */
   const items = [];
   /** @type {Answers} */
-  const answers = { bySiteMonth: {}, contacts: {}, profiles: {} };
+  const answers = {
+    bySiteMonth: {},
+    owedBySiteMonth: {},
+    contacts: {},
+    profiles: {},
+  };
   const tally = (
     /** @type {string} */ siteId,
     /** @type {string} */ day,
@@ -497,6 +508,10 @@ export function generateYear(opts = {}) {
       : -1;
     const createdDay = days[first];
     const archived = last !== Infinity;
+    // Archived late on its last day, after that day's Checks.
+    const closedAt = archived
+      ? iso(Math.min(cutoff, Date.parse(at(days[last], 23 * 60 + 30))))
+      : "";
     // One Site keeps a stored contact the app's own check would reject.
     const invalidStored = s === lastWithPublicContact;
     // Some posted contacts lack one part, so pages show which part is missing.
@@ -570,12 +585,36 @@ export function generateYear(opts = {}) {
       },
       // Midnight, so the Site exists before its first day's Checks.
       createdAt: at(createdDay, 0),
-      // Archived late on its last day, after that day's Checks.
-      updatedAt: archived
-        ? iso(Math.min(cutoff, Date.parse(at(days[last], 23 * 60 + 30))))
-        : at(createdDay, 0),
+      ...(archived && { deactivatedAt: closedAt }),
+      updatedAt: archived ? closedAt : at(createdDay, 0),
     });
     answers.profiles[siteId] = profile.key;
+    // Terms from the day the Site opens. Closing a Site leaves them open, as
+    // deactivateSite does, so the projection must stop owing at the close.
+    const owedPerDay = profile.checksOwed ?? 3;
+    if (owedPerDay) {
+      const termsVersionId = `syn-terms-${pad(s + 1)}`;
+      items.push({
+        pk,
+        sk: `COMPLIANCE_TERMS#${createdDay}#${termsVersionId}`,
+        type: "complianceTerms",
+        entityType: "COMPLIANCE_TERMS",
+        siteId,
+        termsVersionId,
+        reasons: ["1"],
+        underEnhancedMonitoring: false,
+        requiredChecksPerDay: owedPerDay,
+        effectiveStart: createdDay,
+        status: "active",
+        createdAt: at(createdDay, 0),
+        createdBy: "syn-admin",
+      });
+      for (const day of days.slice(first, archived ? last + 1 : undefined)) {
+        const k = `${siteId}|${day.slice(0, 7)}`;
+        answers.owedBySiteMonth[k] =
+          (answers.owedBySiteMonth[k] ?? 0) + owedPerDay;
+      }
+    }
     answers.contacts[siteId] = {
       publicContact:
         !profile.publicContact || lacks

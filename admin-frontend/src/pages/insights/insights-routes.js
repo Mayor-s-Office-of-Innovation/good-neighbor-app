@@ -84,3 +84,12 @@ export function safeReturnPath(value) {
   // Re-encoding can lengthen it, and a path this check refuses can't be matched later.
   return path.length > MAX_RETURN_LENGTH ? "" : path;
 }
+
+/**
+ * A way back to this page; past the length cap, this page at its period.
+ * @param {string} pathname
+ * @param {string} search
+ */
+export const returnPathTo = (pathname, search) =>
+  safeReturnPath(`${pathname}${search}`) ||
+  `${pathname}${carriedQuery(search)}`;

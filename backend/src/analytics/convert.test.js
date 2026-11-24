@@ -770,6 +770,10 @@ describe("convertS3Event backfill", () => {
     expect(ddbSend).not.toHaveBeenCalled();
   });
 
+  it("is on format 4, so a lake converted before compliance terms converts again", () => {
+    expect(FORMAT_VERSION).toBe(4);
+  });
+
   it("starts a full export of the table without re-converting the trigger export", async () => {
     process.env.ANALYTICS_BACKFILL_ENABLED = "true";
     lake();

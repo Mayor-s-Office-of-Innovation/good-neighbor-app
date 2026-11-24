@@ -50,7 +50,15 @@ import {
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,128}$/;
 const EXPORT_DATASETS = ["issues", "checks", "sites"];
 // Params a request may carry; anything else is dropped before it's stored.
-const PERIOD_PARAMS = ["period", "month", "year", "startYear", "from", "to"];
+const PERIOD_PARAMS = [
+  "period",
+  "month",
+  "quarter",
+  "year",
+  "startYear",
+  "from",
+  "to",
+];
 const LIST_PARAMS = [
   "siteIds",
   "q",
@@ -59,8 +67,12 @@ const LIST_PARAMS = [
   "responseState",
   "source",
   "issueStatus",
+  "concern",
   "category",
   "state",
+  "show",
+  "publicContact",
+  "siteContact",
   "sort",
   "dir",
 ];
@@ -78,13 +90,20 @@ const pick = (params, keys) =>
  * @param {Snapshot} snap
  * @param {Record<string, unknown>} params
  */
+const intervalFor = (snap, params) =>
+  parsePeriodParams(params, snap.manifest.evaluatedAt, snap.dataDays);
+
+/**
+ * @param {Snapshot} snap
+ * @param {Record<string, unknown>} params
+ */
 function exportRequest(snap, params) {
   const dataset = String(params.dataset ?? "");
   if (!EXPORT_DATASETS.includes(dataset)) throw requestError("invalid_dataset");
   const kind = /** @type {"issues" | "checks" | "sites"} */ (dataset);
   return {
     dataset: kind,
-    interval: parsePeriodParams(params, snap.manifest.evaluatedAt),
+    interval: intervalFor(snap, params),
     filter: parseSiteFilter(params),
     list: parseListQuery(kind, {
       ...params,
@@ -104,7 +123,7 @@ function reportRequest(snap, params) {
     throw requestError("unknown_site");
   return {
     siteIds,
-    interval: parsePeriodParams(params, snap.manifest.evaluatedAt),
+    interval: intervalFor(snap, params),
   };
 }
 
@@ -264,7 +283,7 @@ export function createReportingHandlers({
    * @param {Record<string, unknown>} params
    */
   const listArgs = (kind, snap, params) => ({
-    interval: parsePeriodParams(params, snap.manifest.evaluatedAt),
+    interval: intervalFor(snap, params),
     filter: parseSiteFilter(params),
     list: parseListQuery(kind, params),
     now: now(),
@@ -284,7 +303,7 @@ export function createReportingHandlers({
         const snap = await snapshots.current();
         return {
           body: siteDetail(snap, pathParam(event, "siteId"), {
-            interval: parsePeriodParams(params, snap.manifest.evaluatedAt),
+            interval: intervalFor(snap, params),
             now: now(),
           }),
         };
@@ -330,8 +349,11 @@ export function createReportingHandlers({
 
     /** @param {Event} event */
     getScopeOptions: (event) =>
-      guarded(event, async () => ({
-        body: scopeOptions(await snapshots.current(), { now: now() }),
+      guarded(event, async ({ params }) => ({
+        body: scopeOptions(await snapshots.current(), {
+          now: now(),
+          include: typeof params.include === "string" ? params.include : "",
+        }),
       })),
 
     /** @param {Event} event */
@@ -369,7 +391,7 @@ export function createReportingHandlers({
           throw requestError("invalid_breakdown");
         return {
           body: trends(snap, {
-            interval: parsePeriodParams(params, snap.manifest.evaluatedAt),
+            interval: intervalFor(snap, params),
             scope: { siteIds, groups },
             breakdown,
             now: now(),

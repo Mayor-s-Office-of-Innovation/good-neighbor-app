@@ -149,6 +149,17 @@ export function dayKeysBetween(start, endExclusive) {
 }
 
 /**
+ * How many days `dayKeysBetween` would list, without building the list, so a
+ * count per Site stays cheap across a thousand Sites.
+ * @param {string} start
+ * @param {string} endExclusive
+ * @returns {number}
+ */
+export function dayCountBetween(start, endExclusive) {
+  return Math.max(0, (dayStamp(endExclusive) - dayStamp(start)) / DAY_MS);
+}
+
+/**
  * The UTC instant at which a Pacific calendar day begins. Resolves the
  * zone's offset at that moment, so DST transition days are exact.
  * @param {string} dayKey

@@ -1460,7 +1460,9 @@ export const deactivateSite = (event) =>
             Update: {
               TableName: tableName,
               Key: { pk: `SITE#${siteId}`, sk: "#META" },
-              UpdateExpression: "SET #status = :inactive, updatedAt = :now",
+              // Its own close time: later edits and term sweeps move updatedAt.
+              UpdateExpression:
+                "SET #status = :inactive, deactivatedAt = :now, updatedAt = :now",
               ConditionExpression: "attribute_exists(pk)",
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
@@ -1520,6 +1522,7 @@ export const deactivateSite = (event) =>
       site: {
         ...site,
         status: "inactive",
+        deactivatedAt: now,
         updatedAt: now,
       },
     });

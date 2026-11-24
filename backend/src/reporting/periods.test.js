@@ -47,6 +47,20 @@ describe("resolvePeriod", () => {
     });
   });
 
+  it("bounds a calendar quarter, Q3 being July to September", () => {
+    expect(
+      resolvePeriod({ kind: "quarter", year: 2026, quarter: 3 }, EVALUATED),
+    ).toMatchObject({
+      kind: "quarter",
+      startDay: "2026-07-01",
+      endDay: "2026-10-01",
+      incomplete: false,
+    });
+    expect(
+      resolvePeriod({ kind: "quarter", year: 2026, quarter: 4 }, EVALUATED),
+    ).toMatchObject({ startDay: "2026-10-01", endDay: "2027-01-01" });
+  });
+
   it("bounds a July–June financial year", () => {
     expect(
       resolvePeriod({ kind: "financialYear", startYear: 2025 }, EVALUATED),
@@ -88,7 +102,10 @@ describe("resolvePeriod", () => {
       "invalid_day",
     ],
     [{ kind: "year", year: 2025.5 }, "invalid_year"],
-    [{ kind: "quarter" }, "invalid_kind"],
+    [{ kind: "week" }, "invalid_kind"],
+    [{ kind: "quarter", year: 2026, quarter: 5 }, "invalid_quarter"],
+    [{ kind: "quarter", year: 1999, quarter: 1 }, "invalid_year"],
+    [{ kind: "quarter", year: 2027, quarter: 1 }, "future_period"],
     [{ kind: "month", month: "2026-12" }, "future_period"],
   ])("rejects %j with %s", (spec, code) => {
     // The API answers these as a bad request, not a server error.
@@ -196,6 +213,18 @@ describe("comparisonFor", () => {
     expect(comparisonFor(current, EVALUATED).prior).toMatchObject({
       startDay: "2026-09-30",
       endDay: "2026-10-10",
+    });
+  });
+
+  it("compares a quarter with the quarter before", () => {
+    const q1 = resolvePeriod(
+      { kind: "quarter", year: 2026, quarter: 1 },
+      EVALUATED,
+    );
+    expect(comparisonFor(q1, EVALUATED).prior).toMatchObject({
+      kind: "quarter",
+      startDay: "2025-10-01",
+      endDay: "2026-01-01",
     });
   });
 

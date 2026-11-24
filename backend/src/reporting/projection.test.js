@@ -121,6 +121,70 @@ async function build(evaluatedAt = EVALUATED) {
   return { tables: await readProjection(conn, out), manifest };
 }
 
+describe("Site tables in the projection", () => {
+  it("carries the public contact for reports, but not the Site manager's", async () => {
+    const { tables } = await buildFromRows(
+      {
+        sites: [
+          {
+            siteId: "s1",
+            publicContact: {
+              email: " desk@example.org ",
+              phone: "415-555-0100",
+              phoneExtension: "12",
+            },
+            primaryContact: {
+              email: "lead@example.org",
+              phone: "415-555-0101",
+            },
+          },
+          {
+            siteId: "s2",
+            publicContact: { email: "", phone: "  " },
+            primaryContact: {
+              email: "lead2@example.org",
+              phone: "415-555-0102",
+            },
+          },
+        ],
+      },
+      EVALUATED,
+    );
+    const siteContacts = tables.site_contacts;
+    expect(
+      siteContacts.map((c) => [
+        c.publicEmail,
+        c.publicPhone,
+        c.publicPhoneExtension,
+      ]),
+    ).toEqual([
+      ["desk@example.org", "415-555-0100", "12"],
+      [null, null, null],
+    ]);
+    expect(JSON.stringify(siteContacts)).not.toMatch(
+      /lead2?@example\.org|415-555-010[12]/,
+    );
+  });
+});
+
+/**
+ * One COMPLIANCE_TERMS# version, stored as the app stores it.
+ * @param {string} siteId
+ * @param {string} effectiveStart
+ * @param {Record<string, any>} [extra]
+ */
+const terms = (siteId, effectiveStart, extra = {}) => ({
+  pk: `SITE#${siteId}`,
+  sk: `COMPLIANCE_TERMS#${effectiveStart}#v-${effectiveStart}`,
+  siteId,
+  termsVersionId: `v-${effectiveStart}`,
+  effectiveStart,
+  requiredChecksPerDay: 3,
+  status: "active",
+  createdAt: `${effectiveStart}T16:00:00.000Z`,
+  ...extra,
+});
+
 describe("buildProjection over a lake written like an export", () => {
   it("counts one Check and one Issue despite update, media and pointer rows", async () => {
     await writeLocalLake(conn, dir, items, {
@@ -170,6 +234,52 @@ describe("buildProjection over a lake written like an export", () => {
     expect(
       tables.checks.map((c) => [c.checkId, c.state, c.day, c.issues]),
     ).toEqual([["c1", "completed", "2026-10-01", 1]]);
+  });
+
+  it("owes Checks by each Site's terms from the lake, without the letter's email", async () => {
+    await writeLocalLake(
+      conn,
+      dir,
+      [
+        ...items,
+        terms("s1", "2026-10-18", {
+          requiredChecksPerDay: 4,
+          email: { to: ["manager@example.org"] },
+          letterInputs: { siteManagerName: "Synthetic Manager" },
+        }),
+      ],
+      { exportedAt: "2026-10-19T18:00:00.000Z", exportId: "e1" },
+    );
+    await createLocalViews(conn, dir);
+    const { tables } = await build();
+    expect(JSON.stringify(tables)).not.toContain("manager@example.org");
+    expect(JSON.stringify(tables)).not.toContain("Synthetic Manager");
+    expect(tables.checks_owed).toEqual([
+      { siteId: "s1", day: "2026-10-18", checksOwed: 4 },
+      { siteId: "s1", day: "2026-10-19", checksOwed: 4 },
+    ]);
+  });
+
+  it("marks each Site with no compliance terms, so terms missing from the lake show", async () => {
+    // Exports only carry changed items, so terms written before the first export never arrive.
+    const count = async (/** @type {Record<string, any>[]} */ kept) => {
+      await writeLocalLake(conn, dir, [...items, ...kept], {
+        exportedAt: "2026-10-19T18:00:00.000Z",
+        exportId: "e1",
+      });
+      await createLocalViews(conn, dir);
+      const { manifest, tables } = await build();
+      return [
+        manifest.dataQuality.openSitesWithoutTerms,
+        tables.sites.map((s) => [s.siteId, s.hasTerms]),
+      ];
+    };
+    expect([await count([]), await count([terms("s1", "2026-10-18")])]).toEqual(
+      [
+        [1, [["s1", false]]],
+        [0, [["s1", true]]],
+      ],
+    );
   });
 
   it("times each Issue by the window its rule stored on the task", async () => {
@@ -481,6 +591,7 @@ describe("buildProjection over a lake written like an export", () => {
     await build();
     expect(readdirSync(out).sort()).toEqual([
       "checks.parquet",
+      "checks_owed.parquet",
       "issues.parquet",
       "manifest.json",
       "site_contacts.parquet",
@@ -566,6 +677,7 @@ describe("buildProjection over a lake written like an export", () => {
       "site_contacts.parquet",
       "sites.parquet",
       "checks.parquet",
+      "checks_owed.parquet",
       "manifest.json",
     ]);
     const reader = await conn.runAndReadAll(

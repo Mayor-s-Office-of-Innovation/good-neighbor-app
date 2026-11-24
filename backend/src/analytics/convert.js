@@ -55,7 +55,7 @@ const GRADE_SCORE = {
 };
 
 // Bump when toRow, ENTITY_COLUMNS or key shapes change, so raw exports re-convert.
-export const FORMAT_VERSION = 3;
+export const FORMAT_VERSION = 4;
 
 // Entities recognized by key shape; see classifyItem(). Anything unrecognized
 // (receipts, counters, pointers, PROVIDER_SEARCH, setup-code items) is
@@ -79,7 +79,9 @@ export function toRow(entity, item, exportedAt) {
         ? updateOnly(item)
         : entity === "programs"
           ? programOnly(item)
-          : item,
+          : entity === "compliance_terms"
+            ? termsOnly(item)
+            : item,
     ),
   };
   switch (entity) {
@@ -217,6 +219,14 @@ export function toRow(entity, item, exportedAt) {
       });
       break;
     }
+    case "compliance_terms": {
+      Object.assign(row, {
+        termsVersionId: str(item.termsVersionId),
+        effectiveStart: str(item.effectiveStart),
+        date: dateFromTimestamp(str(item.createdAt)),
+      });
+      break;
+    }
     case "programs": {
       Object.assign(row, {
         programId: str(item.programId),
@@ -274,6 +284,34 @@ const PROGRAM_FIELDS = ["pk", "sk", "programId", "name", "updatedAt"];
 function programOnly(item) {
   return Object.fromEntries(
     Object.entries(item).filter(([k]) => PROGRAM_FIELDS.includes(k)),
+  );
+}
+
+// The letter's email and names stay out; the lake keeps rows forever.
+const TERMS_FIELDS = [
+  "pk",
+  "sk",
+  "siteId",
+  "termsVersionId",
+  "effectiveStart",
+  "periodEnd",
+  "expiresOnExclusive",
+  "requiredChecksPerDay",
+  "underEnhancedMonitoring",
+  "reasons",
+  "status",
+  "endedAt",
+  "endedOn",
+  "createdAt",
+];
+
+/**
+ * @param {Record<string, unknown>} item
+ * @returns {Record<string, unknown>}
+ */
+function termsOnly(item) {
+  return Object.fromEntries(
+    Object.entries(item).filter(([k]) => TERMS_FIELDS.includes(k)),
   );
 }
 
@@ -429,6 +467,13 @@ export const ENTITY_COLUMNS = {
     "raw",
   ],
   programs: ["siteId", "programId", "name", "updatedAt", "exportedAt", "raw"],
+  compliance_terms: [
+    "siteId",
+    "termsVersionId",
+    "effectiveStart",
+    "exportedAt",
+    "raw",
+  ],
 };
 
 /**

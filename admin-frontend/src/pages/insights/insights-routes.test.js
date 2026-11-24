@@ -1,7 +1,12 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
 import { matchRoute } from "../../router.js";
-import { carriedQuery, routeMode, safeReturnPath } from "./insights-routes.js";
+import {
+  carriedQuery,
+  returnPathTo,
+  routeMode,
+  safeReturnPath,
+} from "./insights-routes.js";
 
 test("each Insights page has its own route", () => {
   assert.deepEqual(matchRoute("/insights"), { name: "insights", id: "" });
@@ -135,4 +140,16 @@ test("a return path that grows past 4096 characters when encoded is refused", ()
 
 test("a return path drops its #fragment", () => {
   assert.equal(safeReturnPath("/insights#top"), "/insights");
+});
+
+test("the way back to a page keeps its filters, or only its period past the length cap", () => {
+  assert.equal(
+    returnPathTo("/insights/raw/issues", "?period=2026-10&severityBand=severe"),
+    "/insights/raw/issues?period=2026-10&severityBand=severe",
+  );
+  const long = `?period=2026-10&siteIds=${"s".repeat(4100)}`;
+  assert.equal(
+    returnPathTo("/insights/raw/issues", long),
+    "/insights/raw/issues?period=2026-10",
+  );
 });

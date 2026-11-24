@@ -157,7 +157,7 @@ describe("who may read Insights", () => {
 describe("reads", () => {
   it("answers a bad period with 400 and its code", async () => {
     const { h } = setup();
-    const res = await h.getOverview(event({ query: { period: "quarter" } }));
+    const res = await h.getOverview(event({ query: { period: "week" } }));
     expect([res.statusCode, json(res).error]).toEqual([400, "invalid_period"]);
   });
 
@@ -176,7 +176,7 @@ describe("reads", () => {
 
   it("answers 400 without logging, since the caller's request was wrong", async () => {
     const { h } = setup();
-    await h.getOverview(event({ query: { period: "quarter" } }));
+    await h.getOverview(event({ query: { period: "week" } }));
     expect(logServerError).not.toHaveBeenCalled();
   });
 
@@ -426,6 +426,29 @@ describe("export and report jobs", () => {
     });
   });
 
+  it("exports only the Issues behind a concern flag, as its list shows them", async () => {
+    const { h, started } = setup();
+    const created = json(
+      await h.postExport(
+        event({
+          headers: key,
+          body: {
+            dataset: "issues",
+            period: "month",
+            month: "2026-10",
+            concern: "repeatedSevere",
+          },
+        }),
+      ),
+    );
+    await h.runJob(started[0]);
+    const done = json(
+      await h.getJob(event({ path: { jobId: created.job.jobId } })),
+    ).job;
+    // t1 and t3 are October's Severe Issues.
+    expect(done.result.rows).toBe(2);
+  });
+
   it("builds the CSV the requester downloads, with formulas defused", async () => {
     const { h, started, jobStore, projection } = setup();
     projection.tables.sites[0].name = "=HYPERLINK(1)";
@@ -460,12 +483,12 @@ describe("export and report jobs", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("limits a report to between 1 and 10 Sites", async () => {
+  it("limits a report to between 1 Site and more than the city has", async () => {
     const { h } = setup();
     const none = await h.postReport(
       event({ headers: key, body: { siteIds: [] } }),
     );
-    const eleven = await h.postReport(
+    const tooMany = await h.postReport(
       event({
         headers: key,
         body: {
@@ -476,7 +499,7 @@ describe("export and report jobs", () => {
         },
       }),
     );
-    expect([json(none).error, json(eleven).error]).toEqual([
+    expect([json(none).error, json(tooMany).error]).toEqual([
       "invalid_site_ids",
       "too_many_sites",
     ]);
@@ -488,6 +511,47 @@ describe("export and report jobs", () => {
       event({ headers: key, body: { siteIds: ["s1", "s9"] } }),
     );
     expect(json(res).error).toBe("unknown_site");
+  });
+
+  it("builds a report for a quarter, as the dialog asked", async () => {
+    const { h, started, jobStore } = setup();
+    const res = await h.postReport(
+      event({
+        headers: key,
+        body: {
+          siteIds: ["s1", "s2"],
+          period: "quarter",
+          year: 2026,
+          quarter: 4,
+        },
+      }),
+    );
+    await h.runJob(started[0]);
+    const report = JSON.parse([...jobStore.results.values()][0]);
+    expect(res.statusCode).toBe(202);
+    expect(report.meta.interval).toMatchObject({
+      kind: "quarter",
+      startDay: "2026-10-01",
+      endDay: "2027-01-01",
+    });
+    // s1's November Issue falls inside the quarter, s2's September one outside.
+    expect(
+      report.sites.map(
+        (/** @type {any} */ s) => s.totals.activity.issuesCreated,
+      ),
+    ).toEqual([4, 1]);
+  });
+
+  it("lists only Site IDs and names in scope options, and only when asked", async () => {
+    const { h } = setup();
+    const plain = json(await h.getScopeOptions(event()));
+    const named = json(
+      await h.getScopeOptions(event({ query: { include: "sites" } })),
+    );
+    expect([plain.sites, Object.keys(named.sites[0]).sort()]).toEqual([
+      undefined,
+      ["name", "siteId"],
+    ]);
   });
 
   it("builds a report dataset with the same counts as Site detail", async () => {

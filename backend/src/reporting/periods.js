@@ -13,6 +13,7 @@ import {
 
 /**
  * @typedef {{ kind: "month", month: string }
+ *   | { kind: "quarter", year: number, quarter: number }
  *   | { kind: "year", year: number }
  *   | { kind: "financialYear", startYear: number }
  *   | { kind: "custom", startDay: string, endDay: string }} PeriodSpec
@@ -111,6 +112,13 @@ export function resolvePeriod(spec, evaluatedAt) {
     )
       throw periodError("invalid_month");
     days = [start, addMonthsToFirst(start, 1)];
+  } else if (spec?.kind === "quarter") {
+    if (!isYear(spec.year)) throw periodError("invalid_year");
+    if (![1, 2, 3, 4].includes(spec.quarter))
+      throw periodError("invalid_quarter");
+    // Calendar quarters, as the field app's reports use: Q3 is July to September.
+    const start = `${spec.year}-${String(spec.quarter * 3 - 2).padStart(2, "0")}-01`;
+    days = [start, addMonthsToFirst(start, 3)];
   } else if (spec?.kind === "year") {
     if (!isYear(spec.year)) throw periodError("invalid_year");
     days = [`${spec.year}-01-01`, `${spec.year + 1}-01-01`];
@@ -145,6 +153,13 @@ export function previousOf(current, evaluatedAt) {
     return interval(
       "month",
       addMonthsToFirst(current.startDay, -1),
+      current.startDay,
+      evaluatedAt,
+    );
+  if (current.kind === "quarter")
+    return interval(
+      "quarter",
+      addMonthsToFirst(current.startDay, -3),
       current.startDay,
       evaluatedAt,
     );

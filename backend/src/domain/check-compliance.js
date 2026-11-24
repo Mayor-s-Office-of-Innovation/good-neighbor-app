@@ -90,6 +90,7 @@ export function requiredOn(requirement, dayKey) {
  * @property {string} [expiresOnExclusive] day after the version's last day
  * @property {number} [requiredChecksPerDay]
  * @property {string} [status] a "cancelled" version never applied
+ * @property {string} [createdAt] breaks a tie between same-day versions
  */
 
 /**
@@ -108,7 +109,13 @@ export function requiredOnResolver(requirement, terms = []) {
     .filter(
       (v) => v.status !== "cancelled" && typeof v.effectiveStart === "string",
     )
-    .sort((a, b) => a.effectiveStart.localeCompare(b.effectiveStart));
+    // Of two versions starting the same day, the later-made one wins, as in
+    // the Insights projection; the read order is a random ID's.
+    .sort(
+      (a, b) =>
+        a.effectiveStart.localeCompare(b.effectiveStart) ||
+        String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")),
+    );
   if (!versions.length) return (dayKey) => requiredOn(requirement, dayKey);
   return (dayKey) => {
     let applicable = null;

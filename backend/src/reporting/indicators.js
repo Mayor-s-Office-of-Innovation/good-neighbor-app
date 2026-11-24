@@ -7,7 +7,7 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * @param {unknown} value
  * @returns {string}
  */
-function text(value) {
+export function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
