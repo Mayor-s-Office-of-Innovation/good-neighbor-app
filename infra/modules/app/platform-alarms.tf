@@ -325,6 +325,7 @@ resource "aws_kms_key" "alarms_us_east_1" {
         Condition = {
           StringEquals = {
             "aws:SourceAccount" = "${data.aws_caller_identity.current.account_id}"
+            "kms:ViaService"    = "sns.us-east-1.amazonaws.com"
           }
         }
       }

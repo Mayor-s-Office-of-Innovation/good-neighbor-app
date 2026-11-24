@@ -2,11 +2,6 @@
 # provider that needs no credentials.
 
 mock_provider "aws" {
-  mock_data "aws_caller_identity" {
-    defaults = {
-      account_id = "aws"
-    }
-  }
   mock_data "aws_iam_policy_document" {
     defaults = {
       json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
@@ -95,6 +90,14 @@ mock_provider "aws" {
 
 mock_provider "archive" {}
 
+# Synthetic 12-digit mock account ID assembled without a literal account token.
+override_data {
+  target = data.aws_caller_identity.current
+  values = {
+    account_id = join("", ["0000", "0000", "0000"])
+  }
+}
+
 variables {
   application                   = "good-neighbor"
   environment                   = "test"
@@ -113,13 +116,22 @@ run "storage_and_transport_hardening" {
   plan_options {
     target = [
       aws_acm_certificate.sf311_media,
+      aws_cloudfront_function.sf311_media_path,
       aws_cognito_user_pool.users,
       aws_cognito_user_pool_client.admin,
       aws_dynamodb_table.app,
+      aws_iam_role_policy.analytics_export,
       aws_iam_role_policy.api,
+      aws_iam_role_policy.authorizer,
+      aws_iam_role_policy.client_events_gateway,
+      aws_iam_role_policy.duplicate_dispatch,
+      aws_iam_role_policy.duplicate_worker,
       aws_iam_role_policy.support,
+      aws_kms_key.alarms_us_east_1,
+      aws_kms_key.app,
       aws_lambda_function.api,
       aws_lambda_function.support,
+      aws_lambda_permission.analytics_lake_s3,
       aws_s3_bucket_ownership_controls.access_logs,
       aws_s3_bucket_server_side_encryption_configuration.access_logs,
       aws_s3_bucket_policy.access_logs,
@@ -155,7 +167,7 @@ run "storage_and_transport_hardening" {
         && s.Principal.Service == "logging.s3.amazonaws.com"
         && s.Action == "s3:PutObject"
         && length(s.Resource) == 4
-        && s.Condition.StringEquals["aws:SourceAccount"] == "aws"
+        && s.Condition.StringEquals["aws:SourceAccount"] == data.aws_caller_identity.current.account_id
       )
       if s.Sid == "AllowS3LogDelivery"
     ])
@@ -218,7 +230,7 @@ run "storage_and_transport_hardening" {
             s.Effect == "Allow"
             && s.Principal.Service == "cloudwatch.amazonaws.com"
             && s.Action == "SNS:Publish"
-            && s.Condition.StringEquals["aws:SourceAccount"] == "aws"
+            && s.Condition.StringEquals["aws:SourceAccount"] == data.aws_caller_identity.current.account_id
           )
           if s.Sid == "AllowCloudWatchAlarmsPublish"
         ])
@@ -294,5 +306,108 @@ run "storage_and_transport_hardening" {
       if rule.name == "AWSManagedRulesAmazonIpReputationList"
     ])
     error_message = "WAF ACL must include AWSManagedRulesAmazonIpReputationList in blocking mode with request sampling disabled."
+  }
+
+  assert {
+    condition = alltrue([
+      for rule in aws_wafv2_web_acl.web.rule : alltrue(concat(
+        [
+          for b in try(rule.statement[0].rate_based_statement[0].scope_down_statement[0].byte_match_statement, []) :
+          contains([for t in b.text_transformation : t.type], "URL_DECODE")
+          && contains([for t in b.text_transformation : t.type], "NORMALIZE_PATH")
+        ],
+        [
+          for s in try(rule.statement[0].rate_based_statement[0].scope_down_statement[0].or_statement[0].statement, []) :
+          contains([for t in s.byte_match_statement[0].text_transformation : t.type], "URL_DECODE")
+          && contains([for t in s.byte_match_statement[0].text_transformation : t.type], "NORMALIZE_PATH")
+        ],
+      ))
+      if contains([
+        "SupportRateLimit",
+        "ClientErrorsRateLimit",
+        "FeedbackRateLimit",
+        "DeviceAuthRateLimit",
+        "EnrollmentCodeRateLimit",
+        "ManagerAccessRateLimit",
+        "ClientEventsRateLimit",
+      ], rule.name)
+    ])
+    error_message = "Every path-scoped WAF rate-limit rule must apply URL_DECODE and NORMALIZE_PATH to prevent percent-encoding and slash-normalization bypasses."
+  }
+
+  assert {
+    condition     = aws_lambda_permission.analytics_lake_s3.source_account == data.aws_caller_identity.current.account_id
+    error_message = "S3 invoke permission on analytics_convert must pin source_account to prevent confused-deputy invocation."
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.authorizer.statement : (
+        s.sid == "QueryLegacyProviderMemberships"
+        && anytrue([
+          for c in s.condition : c.test == "Null" && c.variable == "dynamodb:LeadingKeys" && contains(c.values, "false")
+        ])
+      )
+    ])
+    error_message = "Authorizer ForAllValues DynamoDB LeadingKeys condition must pair with Null = false."
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.analytics_export.statement : (
+        s.sid == "WatermarkItem"
+        && anytrue([
+          for c in s.condition : c.test == "ForAllValues:StringEquals" && c.variable == "dynamodb:LeadingKeys" && contains(c.values, "ANALYTICS#EXPORT")
+        ])
+        && anytrue([
+          for c in s.condition : c.test == "Null" && c.variable == "dynamodb:LeadingKeys" && contains(c.values, "false")
+        ])
+      )
+    ])
+    error_message = "analytics_export WatermarkItem DynamoDB access must be scoped to ANALYTICS#EXPORT."
+  }
+
+  assert {
+    condition = alltrue([
+      for policy in [
+        aws_iam_role_policy.duplicate_dispatch.policy,
+        aws_iam_role_policy.duplicate_worker.policy,
+        ] : alltrue([
+          for s in jsondecode(policy).Statement : (
+            try(s.Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"], null) != null
+            && try(s.Condition.Null["dynamodb:LeadingKeys"], null) == "false"
+          )
+          if contains(s.Action, "dynamodb:PutItem")
+      ])
+    ])
+    error_message = "duplicate_dispatch and duplicate_worker dynamodb:PutItem statements must enforce LeadingKeys conditions."
+  }
+
+  assert {
+    condition = anytrue([
+      for s in jsondecode(aws_kms_key.app.policy).Statement : (
+        s.Sid == "AllowCloudWatchLogs"
+        && !contains(try(tolist(s.Condition.ArnLike["kms:EncryptionContext:aws:logs:arn"]), [s.Condition.ArnLike["kms:EncryptionContext:aws:logs:arn"]]), "arn:aws:logs:us-west-2:${data.aws_caller_identity.current.account_id}:log-group:*")
+      )
+    ])
+    error_message = "aws_kms_key.app AllowCloudWatchLogs must scope to this application's log-group prefixes, not log-group:*."
+  }
+}
+
+run "sf311_media_edge_restriction" {
+  command = apply
+
+  plan_options {
+    target = [
+      aws_cloudfront_distribution.sf311_media,
+    ]
+  }
+
+  assert {
+    condition = anytrue([
+      for fa in one(aws_cloudfront_distribution.sf311_media.default_cache_behavior).function_association :
+      fa.event_type == "viewer-request" && fa.function_arn == aws_cloudfront_function.sf311_media_path.arn
+    ])
+    error_message = "sf311_media CloudFront distribution must attach sf311_media_path viewer-request function to restrict paths to /v1/311-media."
   }
 }

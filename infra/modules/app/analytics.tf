@@ -239,6 +239,18 @@ data "aws_iam_policy_document" "analytics_export" {
     effect    = "Allow"
     actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"]
     resources = ["${aws_dynamodb_table.app.arn}"]
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["ANALYTICS#EXPORT"]
+    }
+
+    condition {
+      test     = "Null"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["false"]
+    }
   }
 
   statement {
@@ -481,11 +493,12 @@ resource "aws_s3_bucket_notification" "analytics_lake" {
 }
 
 resource "aws_lambda_permission" "analytics_lake_s3" {
-  statement_id  = "AllowS3InvokeConvert"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.analytics_convert.function_name
-  principal     = "s3.amazonaws.com"
-  source_arn    = aws_s3_bucket.analytics_lake.arn
+  statement_id   = "AllowS3InvokeConvert"
+  action         = "lambda:InvokeFunction"
+  function_name  = aws_lambda_function.analytics_convert.function_name
+  principal      = "s3.amazonaws.com"
+  source_arn     = aws_s3_bucket.analytics_lake.arn
+  source_account = data.aws_caller_identity.current.account_id
 }
 
 # ---- Report Lambda (DuckDB over the Parquet lake, scheduled) --------------------

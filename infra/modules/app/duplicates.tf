@@ -91,7 +91,15 @@ resource "aws_iam_role_policy" "duplicate_dispatch" {
   policy = jsonencode({ Version = "2012-10-17", Statement = [
     { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },
     { Effect = "Allow", Action = ["dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:ListStreams"], Resource = aws_dynamodb_table.app.stream_arn },
-    { Effect = "Allow", Action = ["dynamodb:PutItem"], Resource = aws_dynamodb_table.app.arn },
+    {
+      Effect   = "Allow",
+      Action   = ["dynamodb:PutItem"],
+      Resource = aws_dynamodb_table.app.arn,
+      Condition = {
+        "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["SITE#?*"] }
+        Null                      = { "dynamodb:LeadingKeys" = "false" }
+      }
+    },
     { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = [aws_sqs_queue.duplicates.arn, aws_sqs_queue.duplicates_dlq.arn] },
     { Effect = "Allow", Action = ["kms:Decrypt", "kms:GenerateDataKey"], Resource = aws_kms_key.app.arn },
     { Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "${aws_cloudwatch_log_group.duplicates["duplicate-dispatch"].arn}:*" }
@@ -102,7 +110,15 @@ resource "aws_iam_role_policy" "duplicate_worker" {
   role = aws_iam_role.duplicate_worker.id
   policy = jsonencode({ Version = "2012-10-17", Statement = [
     { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },
-    { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:ConditionCheckItem"], Resource = aws_dynamodb_table.app.arn },
+    {
+      Effect   = "Allow",
+      Action   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:ConditionCheckItem"],
+      Resource = aws_dynamodb_table.app.arn,
+      Condition = {
+        "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["SITE#?*", "DUP_COMPARISON_PACER"] }
+        Null                      = { "dynamodb:LeadingKeys" = "false" }
+      }
+    },
     { Effect = "Allow", Action = ["dynamodb:UpdateItem"], Resource = aws_dynamodb_table.app.arn,
       Condition = {
         "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = ["DUP_COMPARISON_PACER"] }
