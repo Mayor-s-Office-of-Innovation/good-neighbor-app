@@ -199,3 +199,31 @@ it("durably queues media inserts but does not loop on thumbnail modifications", 
   await handler(input, /** @type {any} */ ({}), () => {});
   expect(sqsSend).toHaveBeenCalledTimes(1);
 });
+
+it("accepts a City note job completed before its dispatch checkpoint", async () => {
+  ddbSend
+    .mockReset()
+    .mockResolvedValueOnce({ Item: { status: "pending" } })
+    .mockRejectedValueOnce(
+      Object.assign(new Error("conflict"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    )
+    .mockResolvedValueOnce({ Item: { status: "complete" } });
+  await handler(
+    event({
+      pk: "SITE#site",
+      sk: "SF311_JOB#task#note-update",
+      entityType: "SF311_OUTBOX",
+      status: "pending",
+      trigger: "city_note",
+      siteId: "site",
+      taskId: "task",
+    }),
+    /** @type {any} */ ({}),
+    () => {},
+  );
+  expect(sqsSend.mock.calls[0][0].input.QueueUrl).toBe(
+    "https://sqs.example/311",
+  );
+});

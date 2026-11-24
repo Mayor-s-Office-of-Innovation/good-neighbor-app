@@ -255,7 +255,7 @@ const ESCALATION_RULES = [
   "BULKY-2",
   "GRAFFITI-2",
 ];
-const NOT_TIMED_RULES = ["MED-1", "DISTRESS-3"];
+const NOT_TIMED_RULES = ["MED-1", "DISTRESS-1"];
 const DEPARTMENTS = ["DPH", "HSH"];
 /** @type {Record<string, string>} */
 const DEPARTMENT_NAMES = {

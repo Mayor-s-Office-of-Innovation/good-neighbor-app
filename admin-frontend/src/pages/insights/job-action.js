@@ -56,6 +56,13 @@ export function jobDoneView(id, job, words) {
   const action = ok
     ? `<a class="btn-primary" id="${id}-download" href="${escapeHtml(job.job?.downloadUrl ?? "")}">${escapeHtml(t("admin.insights.job.download"))}</a>`
     : `<button class="btn-primary" value="retry" id="${id}-retry">${escapeHtml(t("common.retry"))}</button>`;
+  const newerSnapshot =
+    ok &&
+    job.screenSnapshotId &&
+    job.job?.snapshotId &&
+    job.job.snapshotId !== job.screenSnapshotId
+      ? `<p class="places-modal__text muted" data-job-snapshot-notice>${escapeHtml(t("admin.insights.job.newerSnapshot"))}</p>`
+      : "";
   const failed =
     ok && job.error
       ? `<p class="places-modal__text error">${escapeHtml(t(words.refreshFailed))}</p>`
@@ -63,7 +70,7 @@ export function jobDoneView(id, job, words) {
   return `<dialog id="${id}-done" class="places-modal insights__job-done" aria-labelledby="${id}-done-title">
     <form class="places-modal__card" method="dialog">
       <div class="places-modal__copy">
-        <h2 class="places-modal__title" id="${id}-done-title"${ok ? "" : ` data-job-error="${escapeHtml(job.error)}"`}>${escapeHtml(title)}</h2>${failed}
+        <h2 class="places-modal__title" id="${id}-done-title"${ok ? "" : ` data-job-error="${escapeHtml(job.error)}"`}>${escapeHtml(title)}</h2>${newerSnapshot}${failed}
       </div>
       <div class="places-modal__actions">
         <button class="btn-outline" value="close">${escapeHtml(t("common.close"))}</button>

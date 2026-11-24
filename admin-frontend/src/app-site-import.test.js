@@ -674,6 +674,39 @@ test("a preview that finishes after leave() doesn't change the address", async (
   assert.equal(url(), "/sites");
 });
 
+for (const failed of [false, true]) {
+  test(`returning during a ${failed ? "failed" : "successful"} preview restores an upload that can be retried`, async () => {
+    const held = gate();
+    const { api } = await openImportPage((api) => {
+      api.on("POST", /^site-imports\/preview$/, {
+        delay: held.promise,
+        status: failed ? 400 : 200,
+        json: failed ? { error: "unreadable_csv" } : preview,
+      });
+    });
+    const submitButton = '#site-import-form button[type="submit"]';
+    await chooseFile();
+    await submit("#site-import-form");
+    assert.equal(api.calls("POST", /^site-imports\/preview$/).length, 1);
+    await routeTo("/sites");
+    await routeTo("/sites/import");
+    assert.equal($(submitButton).disabled, true);
+
+    held.release();
+    await settle();
+    assert.equal($(submitButton).disabled, false);
+    assert.equal(url(), "/sites/import");
+    assert.ok(missing("#review-title"));
+    assert.equal(pageError(), failed ? t("admin.import.unreadableCsv") : "");
+
+    api.on("POST", /^site-imports\/preview$/, { json: preview });
+    await choosePreview();
+    assert.equal(url(), "/sites/import?importId=i1");
+    assert.equal(api.calls("POST", /^site-imports\/preview$/).length, 2);
+    assert.equal(pageError(), "");
+  });
+}
+
 test("a redraw after the URL moves on still draws the route open() was given", async () => {
   const { page } = await openImportPage();
   window.history.replaceState({}, "", "/not-a-page");

@@ -1,21 +1,17 @@
-// API Gateway (HTTP API v2) entrypoint for the Insights routes and jobs. A
-// dedicated Lambda, separate from the app api function: it carries the DuckDB
-// native binding, needs ~2 GB and a long timeout, and its load must never
-// compete with the operational API's concurrency. The admin JWT authorizer
-// gates every route and the handlers re-check access. The gateway routes, job
-// queue and jobs bucket come with a later infrastructure change.
+// One bundle, two Lambdas: analytics-query answers the Insights routes, insights-jobs
+// runs queued jobs. Kept apart from the api function, so DuckDB's 2 GB can't slow it.
 
 import { reportingRoutes, runReportJob } from "../handlers/admin-reporting.js";
 import { jsonResponse } from "../http.js";
 import { withServerErrorsLogged } from "../lib/log-server-error.js";
 
-// Batch size 1 gives a large file the whole timeout; a bad message goes back
-// to SQS, then the DLQ.
+// The queue sends one message per invocation, so a large file gets the whole
+// timeout; a bad message goes back to SQS, then the DLQ.
 /**
  * @param {{ Records: { messageId: string, body: string }[] }} event
  * @returns {Promise<{ batchItemFailures: { itemIdentifier: string }[] }>}
  */
-async function runJobs(event) {
+export async function runJobs(event) {
   const batchItemFailures = [];
   for (const record of event.Records) {
     let ref;

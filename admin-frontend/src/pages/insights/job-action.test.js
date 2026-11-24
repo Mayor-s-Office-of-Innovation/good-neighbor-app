@@ -109,3 +109,26 @@ test("a click on the switched-off button reaches no page handler", () => {
   /** @type {HTMLButtonElement} */ (host.querySelector("#job")).click();
   assert.equal(clicks, 1);
 });
+
+test("a ready file built on a newer snapshot than the screen explains the refresh", () => {
+  const { host, action } = mount({
+    phase: "succeeded",
+    count: 2,
+    error: "",
+    screenSnapshotId: "snap-old",
+    job: {
+      jobId: "j1",
+      state: "succeeded",
+      snapshotId: "snap-new",
+      error: null,
+      expiresAt: "2026-11-05T00:00:00Z",
+      downloadUrl: "https://example.org/file.csv",
+      result: { filename: "file.csv" },
+    },
+  });
+  action.draw({ label: label(), off: false, why: "" });
+  assert.equal(
+    shown(host, "[data-job-snapshot-notice]"),
+    t("admin.insights.job.newerSnapshot"),
+  );
+});

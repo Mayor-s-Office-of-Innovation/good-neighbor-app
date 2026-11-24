@@ -6,10 +6,13 @@
 //
 // --copies repeats each synthetic Site under new IDs, so 24 Sites become
 // about 500, the city's count. Copies change only the size, not the rules.
+// They're written as Parquet, as insights:bench sizes its data, so the
+// reader reads files the size of the city's.
 // Each round runs --parallel calls at once; a round's time per call is one
 // sample, and the table gives the median and slowest of those samples.
 
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -24,6 +27,7 @@ import {
   createSnapshotStore,
   dirSource,
 } from "../src/reporting/api/snapshot.js";
+import { buildSize } from "./insights-bench.mjs";
 
 /**
  * @param {Record<string, string>} counts option name to its value
@@ -38,31 +42,6 @@ export function wholeCounts(counts) {
       throw new Error(`--${name} must be a whole number of 1 or more`);
     out[name] = n;
   }
-  return out;
-}
-
-/**
- * @param {Record<string, Record<string, any>[]>} tables
- * @param {number} copies
- */
-export function multiply(tables, copies) {
-  if (copies <= 1) return tables;
-  /** @type {Record<string, Record<string, any>[]>} */
-  const out = {};
-  for (const [name, rows] of Object.entries(tables))
-    out[name] = rows.flatMap((row) =>
-      Array.from({ length: copies }, (_, n) =>
-        n === 0
-          ? row
-          : {
-              ...row,
-              siteId: `${row.siteId}-copy${n}`,
-              ...(row.issueId ? { issueId: `${row.issueId}-copy${n}` } : {}),
-              ...(row.checkId ? { checkId: `${row.checkId}-copy${n}` } : {}),
-              ...(name === "sites" ? { name: `${row.name} (copy ${n})` } : {}),
-            },
-      ),
-    );
   return out;
 }
 
@@ -131,24 +110,69 @@ export async function runLoad({
   parallel,
   maxExportRows,
 }) {
-  const source = dirSource(join(dataDir, "projection"));
-  const loadStarted = performance.now();
-  const latest = await source.latest();
+  const input = join(dataDir, "projection");
+  const latest = await dirSource(input).latest();
   if (!latest)
     throw new Error(
       `no projection in ${dataDir}; run npm run insights:data -w backend first`,
     );
-  const loaded = await source.load(latest.prefix);
-  const tables = multiply(loaded.tables, copies);
+  if (copies === 1)
+    return timeEndpoints(input, {
+      dataDir,
+      copies,
+      rounds,
+      parallel,
+      maxExportRows,
+    });
+  const sized = await mkdtemp(join(tmpdir(), "insights-load-"));
+  try {
+    const manifest = JSON.parse(
+      await readFile(join(input, "manifest.json"), "utf8"),
+    );
+    await buildSize(
+      input,
+      join(sized, "projection"),
+      manifest.rowCounts.sites * copies,
+      1,
+    );
+    return await timeEndpoints(join(sized, "projection"), {
+      dataDir,
+      copies,
+      rounds,
+      parallel,
+      maxExportRows,
+    });
+  } finally {
+    await rm(sized, { recursive: true, force: true });
+  }
+}
+
+/**
+ * @param {string} dir the projection folder to read
+ * @param {{ dataDir: string, copies: number, rounds: number, parallel: number, maxExportRows?: number }} opts
+ */
+async function timeEndpoints(dir, opts) {
+  const snapshots = createSnapshotStore({ source: dirSource(dir) });
+  // Closed so the snapshot's copy in the temp folder goes when the run ends.
+  try {
+    return await timeEndpointsOn(snapshots, opts);
+  } finally {
+    await snapshots.close();
+  }
+}
+
+/**
+ * @param {ReturnType<typeof createSnapshotStore>} snapshots
+ * @param {{ dataDir: string, copies: number, rounds: number, parallel: number, maxExportRows?: number }} opts
+ */
+async function timeEndpointsOn(
+  snapshots,
+  { dataDir, copies, rounds, parallel, maxExportRows },
+) {
+  const loadStarted = performance.now();
   /** @type {{ ownerKey: string, jobId: string }[]} */
   const queued = [];
-  const snapshots = createSnapshotStore({
-    source: {
-      latest: async () => latest,
-      load: async () => ({ ...loaded, tables }),
-    },
-  });
-  // Index now, so the time and heap below include the copies' lookups.
+  // Opened now, so the time and heap below include the Sites read into memory.
   const snap = await snapshots.current();
   const loadMs = performance.now() - loadStarted;
   const h = createReportingHandlers({
@@ -175,10 +199,12 @@ export async function runLoad({
       headers: { "idempotency-key": `load-call-${(requestCount += 1)}` },
       ...o,
     });
-  const { today, month, year } = periods(loaded.manifest.evaluatedAt);
-  const firstSite = tables.sites[0].siteId;
-  const firstIssue = tables.issues[0].issueId;
-  const firstCheck = tables.checks[0].checkId;
+  const { today, month, year } = periods(snap.manifest.evaluatedAt);
+  const firstSite = snap.sites[0].siteId;
+  const [{ firstIssue, firstCheck }] = await snap.hold((q) =>
+    q(`SELECT (SELECT issueId FROM issues LIMIT 1) AS firstIssue,
+         (SELECT checkId FROM checks LIMIT 1) AS firstCheck`),
+  );
 
   /** @type {[string, () => Promise<any>][]} */
   const calls = [
@@ -241,7 +267,7 @@ export async function runLoad({
   ];
 
   console.log(
-    `[insights-load] ${tables.sites.length} Sites, ${tables.issues.length} Issues, ${tables.checks.length} Checks; snapshot read and indexed in ${loadMs.toFixed(0)} ms`,
+    `[insights-load] ${snap.sites.length} Sites, ${snap.manifest.rowCounts.issues} Issues, ${snap.manifest.rowCounts.checks} Checks; snapshot opened in ${loadMs.toFixed(0)} ms`,
   );
   console.log(
     `[insights-load] heap after load: ${(process.memoryUsage().heapUsed / 1e6).toFixed(0)} MB`,
@@ -365,7 +391,7 @@ export async function runLoad({
     console.log(
       `[insights-load] export job: ${done.result?.rows} rows, ${((done.result?.bytes ?? 0) / 1e6).toFixed(1)} MB, built in ${exportMs.toFixed(0)} ms`,
     );
-  return { sites: tables.sites.length, timings, problems };
+  return { sites: snap.sites.length, timings, problems };
 }
 
 if (

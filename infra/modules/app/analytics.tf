@@ -6,6 +6,7 @@
 # Deployable bundles come from `npm run build:lambdas` (see backend/scripts/
 # build-lambdas.mjs) — export/convert/report/query entries land in
 # backend/dist/{analytics-export,analytics-convert,analytics-report,analytics-query}/.
+# Insights' own bucket, queue and projection Lambda are in insights.tf.
 #
 # The watermark (previous ExportToTime) lives in the same single table as
 # `ANALYTICS#EXPORT` / `#WATERMARK` — one tiny item, no extra store.
@@ -98,11 +99,30 @@ resource "aws_s3_bucket_lifecycle_configuration" "analytics_lake" {
     }
   }
 
+  # A snapshot this old means builds stopped, so Insights shows "no data", not old numbers.
+  # Its files may go a day before latest.json; snapshot.js reads that as no data too.
+  rule {
+    id     = "expire-projections"
+    status = "Enabled"
+
+    filter {
+      prefix = "projections/"
+    }
+
+    expiration {
+      days = 30
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
   # Bucket-wide catch-all abort rule. CKV_AWS_300 only passes when a rule with
   # an empty filter (whole-bucket scope) carries abort_incomplete_multipart_upload
   # — prefix-scoped rules don't satisfy it, even with the same abort setting. The
-  # two prefix rules above keep their own aborts; this one adds no deletions, so
-  # anything outside raw/ and reports/ is unaffected.
+  # prefix rules above keep their own aborts; this one adds no deletions, so
+  # anything outside their prefixes is unaffected.
   rule {
     id     = "abort-incomplete-uploads"
     status = "Enabled"
@@ -296,6 +316,10 @@ resource "aws_lambda_function" "analytics_convert" {
   environment {
     variables = {
       LAKE_BUCKET = aws_s3_bucket.analytics_lake.bucket
+      # After a format change the converter starts one full export, so history older than raw/'s 30 days converts.
+      ANALYTICS_BACKFILL_ENABLED = "true"
+      DYNAMO_TABLE_ARN           = aws_dynamodb_table.app.arn
+      EXPORT_PREFIX              = "raw" # where analytics_export writes; the tftest pins the match
     }
   }
 
@@ -321,10 +345,50 @@ data "aws_iam_policy_document" "analytics_convert" {
   }
 
   statement {
+    # The backfill lists raw/ to re-convert it; whole bucket so a missing state file is NoSuchKey, not 403.
+    sid       = "ListLake"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.analytics_lake.arn]
+  }
+
+  statement {
+    # The backfill's format version and progress (backend/src/analytics/backfill.js).
+    sid       = "ReadConverterState"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.analytics_lake.arn}/readings/_converter/state.json"]
+  }
+
+  statement {
     sid       = "WriteParquet"
     effect    = "Allow"
     actions   = ["s3:PutObject"]
     resources = ["${aws_s3_bucket.analytics_lake.arn}/readings/*"]
+  }
+
+  statement {
+    # One full export after a format change; same grant as the export role's StartTableExport.
+    sid       = "StartTableExport"
+    effect    = "Allow"
+    actions   = ["dynamodb:ExportTableToPointInTime"]
+    resources = [aws_dynamodb_table.app.arn]
+  }
+
+  statement {
+    # A later run checks the full export and starts another if it failed.
+    sid       = "DescribeTableExport"
+    effect    = "Allow"
+    actions   = ["dynamodb:DescribeExport"]
+    resources = ["${aws_dynamodb_table.app.arn}/export/*"]
+  }
+
+  statement {
+    # DynamoDB writes the export with the requester's permissions, always under <prefix>/AWSDynamoDB/.
+    sid       = "WriteRawExports"
+    effect    = "Allow"
+    actions   = ["s3:AbortMultipartUpload", "s3:PutObject", "s3:PutObjectAcl"]
+    resources = ["${aws_s3_bucket.analytics_lake.arn}/raw/AWSDynamoDB/*"]
   }
 
   statement {
@@ -335,6 +399,15 @@ data "aws_iam_policy_document" "analytics_convert" {
   }
 
   statement {
+    # The success destination in insights.tf runs as this role.
+    sid       = "StartProjectionBuild"
+    effect    = "Allow"
+    actions   = ["lambda:InvokeFunction"]
+    resources = [aws_lambda_function.analytics_projection.arn]
+  }
+
+  statement {
+    # GenerateDataKey lets the full export write raw/ under the lake's KMS key; S3 never calls Encrypt.
     sid       = "UseAppKey"
     effect    = "Allow"
     actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
@@ -561,16 +634,13 @@ resource "aws_cloudwatch_metric_alarm" "analytics_export_stalled" {
   tags = var.tags
 }
 
-# ---- Query Lambda (admin analytics API: catalog + raw SQL over the lake) ------
+# ---- Query Lambda (Insights API) -----------------------------------------------
 #
-# The admin analytics routes (api.tf `analytics_routes`) target this function
-# through their own API Gateway integration. It is deliberately NOT the app api
-# Lambda: DuckDB's native binding, a 2 GB memory footprint and multi-second
-# S3 scans have no place in the operational path, and a burst of dashboard
-# queries must never eat the app's concurrency. The engine locks itself down
-# after building views (backend/src/analytics/lake-views.js lockdown): no local
-# filesystem, no configuration changes — so the role's read-only lake grant is
-# the security boundary for the SQL central admins submit.
+# The Insights routes (api.tf `analytics_routes`) target this function through
+# their own API Gateway integration. It is deliberately NOT the app api Lambda:
+# DuckDB's native binding, a 2 GB memory footprint and multi-second S3 reads
+# have no place in the operational path, and a burst of dashboard reads must
+# never eat the app's concurrency.
 
 resource "aws_cloudwatch_log_group" "analytics_query" {
   name              = "/aws/lambda/${local.name_prefix}-analytics-query"
@@ -595,9 +665,8 @@ resource "aws_lambda_function" "analytics_query" {
   # second to answer with its own 504 rather than racing it.
   timeout     = 29
   kms_key_arn = aws_kms_key.app.arn
-  # Allow concurrent admin queries while bounding analytics cost and S3 load.
-  # This shared reservation applies to both dev and prod; queries retain their
-  # existing memory, timeout, and read-only lake permissions.
+  # Allow concurrent admin reads while bounding analytics cost and S3 load.
+  # This shared reservation applies to both dev and prod.
   reserved_concurrent_executions = 10
 
   tracing_config {
@@ -606,8 +675,9 @@ resource "aws_lambda_function" "analytics_query" {
 
   environment {
     variables = {
-      LAKE_BUCKET = aws_s3_bucket.analytics_lake.bucket
-      LAKE_REGION = data.aws_region.current.name
+      LAKE_BUCKET             = aws_s3_bucket.analytics_lake.bucket
+      INSIGHTS_JOBS_BUCKET    = aws_s3_bucket.insights_jobs.bucket
+      INSIGHTS_JOBS_QUEUE_URL = aws_sqs_queue.insights_jobs.url
     }
   }
 
@@ -626,19 +696,43 @@ resource "aws_iam_role" "analytics_query" {
 
 data "aws_iam_policy_document" "analytics_query" {
   statement {
-    # Read-only on the converted Parquet only: no raw/ exports, no reports/,
-    # no writes anywhere. ListBucket covers the per-entity prefix probe and
-    # DuckDB's glob expansion.
-    sid       = "ReadParquetLake"
+    # Projections hold no addresses, people or free text. ListBucket (whole bucket) makes
+    # a missing latest.json NoSuchKey, not 403, so "no data yet" isn't a broken role.
+    sid       = "ReadProjections"
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:ListBucket"]
-    resources = [aws_s3_bucket.analytics_lake.arn, "${aws_s3_bucket.analytics_lake.arn}/readings/*"]
+    resources = [aws_s3_bucket.analytics_lake.arn, "${aws_s3_bucket.analytics_lake.arn}/projections/*"]
   }
 
   statement {
+    # GetObject also backs the download links, which this role signs.
+    sid       = "UseJobFiles"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject"]
+    resources = ["${aws_s3_bucket.insights_jobs.arn}/*"]
+  }
+
+  statement {
+    # Without it S3 answers a missing job with 403, and every new job fails
+    # (backend/src/reporting/api/job-store.js).
+    sid       = "ListJobFiles"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.insights_jobs.arn]
+  }
+
+  statement {
+    sid       = "QueueJobs"
+    effect    = "Allow"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.insights_jobs.arn]
+  }
+
+  statement {
+    # GenerateDataKey covers job files and queue messages, which the app key encrypts.
     sid       = "UseAppKey"
     effect    = "Allow"
-    actions   = ["kms:Decrypt"]
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
     resources = [aws_kms_key.app.arn]
   }
 

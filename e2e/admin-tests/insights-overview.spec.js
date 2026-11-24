@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { test, expect, mockAdmin } from "./admin-mock.js";
 import { t } from "../helpers/i18n.js";
 import { failTimes } from "./directory-helpers.js";
@@ -227,4 +228,76 @@ test("at 1280px, Overview column heads keep their spaces and a Site's month labe
       );
     expect(spill).toEqual([0, 0]);
   }
+});
+
+test("Overview checkboxes and Site detail pass WCAG 2.2 AA Axe checks at desktop and narrow widths", async ({
+  page,
+}) => {
+  await mockAdmin(page, { insights: true });
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/insights?period=2026-10&show=all");
+    await expect(page.locator('[data-site-row="s1"]')).toBeVisible();
+    await expect(
+      page.getByRole("checkbox", { name: t("admin.insights.selectAll") }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("checkbox", {
+        name: t("admin.insights.selectSite", { name: "Example Site" }),
+      }),
+    ).toBeVisible();
+    const overviewAudit = await new AxeBuilder({ page })
+      .include("#main-content")
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+      .analyze();
+    expect(overviewAudit.violations).toEqual([]);
+    await page.goto("/insights/sites/s1?period=2026-10");
+    await expect(page.locator('[data-band="severe"]')).toBeVisible();
+    const siteAudit = await new AxeBuilder({ page })
+      .include("#main-content")
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+      .analyze();
+    expect(siteAudit.violations).toEqual([]);
+  }
+});
+
+test("a Site tile count and its Issue list stay on one snapshot when data refreshes between requests", async ({
+  page,
+}) => {
+  const api = await mockAdmin(page, { insights: true });
+  let siteCalls = 0;
+  api.on("GET", /^reporting\/sites\/s1/, (r) => {
+    siteCalls += 1;
+    const v = api.reply(r);
+    if (siteCalls === 1) {
+      v.json.meta.snapshotId = "snap-old";
+      v.json.totals.severity.severe = 1;
+    } else {
+      v.json.meta.snapshotId = "snap-new";
+      v.json.totals.severity.severe = 2;
+    }
+    return v;
+  });
+  api.on("GET", /^reporting\/issues\?/, (r) => {
+    const v = api.reply(r);
+    v.json.meta.snapshotId = "snap-new";
+    if (new URLSearchParams(r.search).get("severityBand") === "severe") {
+      v.json.issues = [
+        v.json.issues[0],
+        { ...v.json.issues[0], issueId: "added-after-refresh" },
+      ];
+      v.json.total = 2;
+    }
+    return v;
+  });
+  await page.goto("/insights/sites/s1?period=2026-10");
+  await expect(
+    page.locator('[data-list="severity"] [data-issue-row]'),
+  ).toHaveCount(2);
+  await expect(
+    page.locator('[data-band="severe"] [data-band-count]'),
+  ).toHaveText("2");
+  await expect(page.locator("[data-insights-snapshot-notice]")).toHaveText(
+    t("admin.insights.snapshotUpdated"),
+  );
 });

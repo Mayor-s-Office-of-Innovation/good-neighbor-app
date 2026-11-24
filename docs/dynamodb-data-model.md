@@ -235,7 +235,7 @@ as task update events and every GSI sort key.
 | Provider Manager enrollment | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_ENROLLMENT#<enrollmentId>` | Directly addressable root lifecycle record for one physical device's all-or-nothing provider redemption. Stores the membership generation and up to 21 Site/binding pointers so a Supervisor can revoke every still-active projection in one transaction. List responses derive active/partial/revoked state from the authoritative physical-device and binding rows. |
 | Perimeter-check compliance period | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | Immutable effective-dated period containing one or more reason codes, integer checks/day (1–8), a snapshotted `underEnhancedMonitoring` boolean (reason 6 only), and a snapshot of the selected Site manager plus the authenticated generator. The generator—not a client-nominated manager—appears as sender; Compliance managers must be assigned to the Site while supervisors may generate for any Site. Generator phone is required. Start is the server's current Pacific date; the user-facing end date is inclusive and is stored with an exclusive boundary. Reasons 1 or 6 require an end date. Missing expiry means indefinite. A version with an end date carries GSI3 keys (`COMPLIANCE_TERMS#OPEN` / `<expiresOnExclusive>#<siteId>#<versionId>`) until it ends or is superseded. |
 | Global silent 311 control | `SYSTEM#CONTROLS` | `SILENT_311` | `enabled` (missing defaults true), optimistic `revision`, `epochStartedAt`, and authenticated `updatedBy`. Every transition advances the epoch; only new silent task workflows after enablement are eligible. No backlog replay. |
-| SF311 job | `SITE#<siteId>` | `SF311_JOB#<taskId>#<phase>` | `SF311_OUTBOX`, committed with task creation, action override, resolution, a "File 311 ticket" tap (phase `filed-<id>`, `trigger: "user_confirmed"`, `actorId`), or a "City help no longer needed" note (phase `note-<updateId>`, `trigger: "city_note"`, `updateId`, `updateOccurredAt`; final status may carry `failureReason`). Streams dispatches to SQS; status tracks pending/dispatched/retry/complete/failed and results retain ticket checkpoints. Suppressed silent jobs finish `complete` with `suppressionReason: "silent_filing_disabled"`. |
+| SF311 job | `SITE#<siteId>` | `SF311_JOB#<taskId>#<phase>` | `SF311_OUTBOX`, committed with task creation, action override, resolution, a "File 311 ticket" tap (phase `filed-<id>`, `trigger: "user_confirmed"`, `actorId`), or a "City help no longer needed" note (phase `note-<updateId>`, `trigger: "city_note"`, `updateSk`; legacy jobs use `updateId` / `updateOccurredAt`; final status may carry `failureReason`). Streams dispatches to SQS; status tracks pending/dispatched/retry/complete/failed and results retain ticket checkpoints. Suppressed silent jobs finish `complete` with `suppressionReason: "silent_filing_disabled"`. |
 | SF311 worker state | `SITE#<siteId>` | `SF311_LOCK#<taskId>` | Expiring worker lease plus durable integration results shared across jobs. Separate from task snapshots so foreground updates cannot erase a filing checkpoint. |
 | Compliance-letter generation job | `SITE#<siteId>` | `LETTER_JOB#<createdAt>#<jobId>` | Transactional outbox item (`COMPLIANCE_LETTER_OUTBOX`) created with a perimeter-check period. DynamoDB Streams dispatches it to SQS; the worker renders the PDF, stores it in S3, and advances the Site letter state idempotently. |
 | Requirement-ended notice | `SITE#<siteId>` | `LETTER_JOB#ended-<termsVersionId>` | `COMPLIANCE_LETTER_OUTBOX`, `noticeOnly: true`; created atomically with manual cancellation or scheduled expiry. Copies the period's original email To/CC snapshot. Uses the existing delivery claim/receipt safeguards without a PDF or letter-history counter. |
@@ -327,24 +327,24 @@ site's name and the first filed SR shown on the card. It uses HUB UpdateSR's
 Add Notes contract (`UpdateType: 5`, `NumericSubType: 2`), not a closure update;
 the task remains in progress until the external resolution flow completes.
 
-The event and task are saved atomically before note delivery. With
-`GNP_311_ASYNC_FILING` on, the same transaction writes an `SF311_JOB#<taskId>#note-<updateId>`
-job and the request makes no HUB call; the 311 worker delivers the note under the
-task's `SF311_LOCK`, using the rules below. A replay of the request answers from the
-saved update and writes the job if it is missing (notes saved before queuing). The
-worker retries with the usual backoff. A HUB rejection marks the note terminal
-`failed` with no retry. On the fifth delivery a note that was never sent becomes
-`failed`; one that may have arrived stays `unknown` for an operator. Both alert.
-With the flag off, the API sends the note inline as described next.
-`cityNoteStatus` tracks `pending`, `sending`, `sent`, `unknown`, or terminal
-`suppressed` or `failed`; `cityNoteLeaseExpiresAt` gives
+The event, task, and `SF311_OUTBOX` job are saved atomically before note delivery.
+The job uses `SF311_JOB#<taskId>#note-<updateId>`, `trigger: city_note`, and
+`updateSk` to reference the immutable timeline payload. Streams dispatches it to
+the dedicated 311 queue. Resolution events use a `cityNotes` array with the same
+per-ticket payloads and checkpoints for all eligible open City tickets. `cityNoteStatus`
+tracks `pending`, `sending`, `sent`, `unknown`, or terminal `suppressed` or `failed`; `cityNoteLeaseExpiresAt` gives
 one sender a 60-second lease. The client reuses the same idempotency key when
 retrying an unchanged draft. Successful retries reuse the event and do not
-resend the note. Explicit HUB validation rejections return to `pending`.
+resend the note. The worker holds the task’s `SF311_LOCK` during delivery. Explicit HUB
+validation rejections mark the affected note terminal `failed`. On the fifth delivery,
+never-sent notes become `failed`; uncertain notes remain `unknown` for operator
+review. Both outcomes alert. Readers accept legacy `updateId` / `updateOccurredAt`
+job pointers as well as `updateSk`.
 Timeouts, ambiguous responses, and expired attempts are reconciled against the
-City feed using the SR, sending agency, note text, and effective time. If delivery
-cannot be confirmed, the API returns `502` with `updateSaved: true`; it does not
-blindly resend an uncertain note. Such records may need operational investigation
+City feed using the SR, sending agency, note text, and effective time. The API
+returns success after the local transaction; the worker independently retries
+unconfirmed delivery and marks exhausted jobs failed with an alert. It does not blindly
+resend an uncertain note. Such records may need operational investigation
 if the City feed never exposes the matching update. Sending respects
 `GNP_311_SUBMISSION_ENABLED`. Suppressed silent notes are never replayed or
 reported as sent. Suppression clears an owned or expired lease conditionally and
@@ -634,13 +634,15 @@ components from the original design are **retired**. See
 An incremental DynamoDB export to S3 runs every 6 hours. It needs point-in-time recovery,
 which is on. The export is converted to Parquet files split by entity, and DuckDB runs SQL
 over them for any set of sites or time grain. The pipeline lives in
-`infra/modules/app/analytics.tf`:
+`infra/modules/app/analytics.tf` and `infra/modules/app/insights.tf`:
 
 | Lambda | Trigger | Role |
 |---|---|---|
 | `analytics-export` | EventBridge `rate(6 hours)` | incremental export, starting from the `ANALYTICS#EXPORT` / `#WATERMARK` cursor, into the analytics lake bucket |
 | `analytics-convert` | export completion | rewrites the export as Parquet, split by entity |
-| `analytics-query` | Insights admin routes, behind the admin JWT authorizer, and the Insights job queue (both wired by a later infrastructure change) | runs DuckDB over the Parquet lake for Insights reads, CSV exports and PDF reports |
+| `analytics-projection` | each successful `analytics-convert` run | builds the Insights snapshot from the Parquet lake and publishes it under `projections/` |
+| `analytics-query` | Insights admin routes, behind the admin JWT authorizer | serves Insights reads and starts CSV exports and PDF reports from the snapshot |
+| `insights-jobs` | the Insights job queue | same bundle as `analytics-query`, with a longer timeout: builds CSV exports and PDF reports |
 | `analytics-report` | EventBridge `cron(0 14 * * ? *)`, 14:00 UTC (06:00 Pacific standard time, 07:00 Pacific daylight time) | builds the daily citywide report |
 
 ADR 0013 replaced the Glue and Athena tooling we first sketched. Athena could still be
@@ -653,11 +655,10 @@ needs. The 6-hour export is the design.
 All of it is Terraform. Nothing is set up by hand.
 
 - **Built:** DynamoDB Streams on the table (shared outbox/System Status mapping and a feature-gated duplicate mapping), the S3 analytics lake bucket
-  (KMS, lifecycle rules), the four Lambdas, and the two EventBridge schedules above.
+  (KMS, lifecycle rules), the six Lambdas, the two EventBridge schedules above, and the Insights job queue and jobs bucket.
 - **Not built:** the Tier-1 Streams aggregator and the `#STATS#` counter items. No
-  Firehose (see T2b above). The gateway routes, job queue and jobs bucket that let Insights read the lake
-  through `analytics-query` come with a later infrastructure change. System Status uses its
-  separate operational projections, not the lake or the proposed Tier-1 counters.
+  Firehose (see T2b above). System Status uses its separate operational projections,
+  not the lake or the proposed Tier-1 counters.
 
 Tier-1 buildout is post-MVP and tracked on the issue tracker.
 
@@ -990,9 +991,10 @@ resumes on the next export. The new version is recorded only once the full expor
 converted and no re-conversion failed; if the full export fails, or completes but
 `raw/` expires its files before they convert, a later run logs an error and starts
 another. Converters that run at once write the state file with `IfMatch` and merge
-each other's progress, so a recorded version never goes back. The backfill runs only when `ANALYTICS_BACKFILL_ENABLED=true`, which waits on
-the converter role being allowed to list `raw/`, read the state file, and start and
-describe table exports.
+each other's progress, so a recorded version never goes back. The backfill runs only
+when `ANALYTICS_BACKFILL_ENABLED=true`, which `analytics.tf` sets on the converter with
+the grants it needs: list the lake, read the state file, and start, describe and write
+table exports.
 Current ART keys and legacy ART keys
 with a place segment remain supported. Assessment/condition and device shapes are
 also matched explicitly; identifiers need not be UUIDs.

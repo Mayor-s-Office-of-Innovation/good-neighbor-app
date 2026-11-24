@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { test, expect, mockAdmin } from "./admin-mock.js";
 import { t } from "../helpers/i18n.js";
 import { setControl } from "./directory-helpers.js";
@@ -117,7 +118,7 @@ test("on a phone, a Check's panel shows each Issue card's open marker and every 
     // The category is the card's heading, so a "Category" line above it would repeat it.
     const label = await card
       .locator("th[data-label]")
-      .evaluate((th) => getComputedStyle(th, "::before").content);
+      .evaluate((th) => window.getComputedStyle(th, "::before").content);
     expect(label).toBe("none");
     // Each field reads "Label: value" on one line, so the card stays short.
     const stacked = await card
@@ -125,7 +126,8 @@ test("on a phone, a Check's panel shows each Issue card's open marker and every 
       .evaluateAll(
         (cells) =>
           cells.filter(
-            (td) => getComputedStyle(td, "::before").display !== "inline",
+            (td) =>
+              window.getComputedStyle(td, "::before").display !== "inline",
           ).length,
       );
     expect(stacked).toBe(0);
@@ -140,5 +142,42 @@ test("on a phone, a Check's panel shows each Issue card's open marker and every 
         part.x >= box.x &&
         part.x + part.width <= box.x + box.width,
     ).toBe(true);
+  }
+});
+
+test("Raw Issues Group by control is named and Raw pages pass WCAG 2.2 AA Axe checks at desktop and narrow widths", async ({
+  page,
+}) => {
+  await mockAdmin(page, { insights: true, role: "compliance-manager" });
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/insights/raw/issues?period=2026-10");
+    await expect(page.locator("[data-insights-freshness]")).toContainText(
+      "Nov",
+    );
+    await expect(
+      page.getByRole("combobox", { name: t("admin.insights.raw.group") }),
+    ).toBeVisible();
+    for (const route of [
+      "/insights/raw/issues?period=2026-10",
+      "/insights/raw/checks?period=2026-10",
+      "/insights/raw/issues/t1?siteId=s1&period=2026-10",
+    ]) {
+      if (route !== "/insights/raw/issues?period=2026-10") {
+        await page.goto(route);
+        await expect(page.locator("[data-insights-freshness]")).toContainText(
+          "Nov",
+        );
+      }
+      const audit = await new AxeBuilder({ page })
+        .include("#main-content")
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+        .analyze();
+      expect(audit.violations).toEqual([]);
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth > window.innerWidth,
+      );
+      expect(overflow).toBe(false);
+    }
   }
 });

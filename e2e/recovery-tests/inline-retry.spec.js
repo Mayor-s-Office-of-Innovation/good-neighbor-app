@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../helpers/recovery-test.js";
 import { t } from "../helpers/i18n.js";
 
 test("inline retries expose progress, reject repeated activation, and restore after failure", async ({

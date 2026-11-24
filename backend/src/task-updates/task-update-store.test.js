@@ -5,6 +5,7 @@ const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
 const {
+  ensureCityNoteJob,
   claimTaskResolution,
   readTimeline,
   readTaskUpdateMediaRegistration,
@@ -12,10 +13,31 @@ const {
   readUpdatePointer,
   releaseTaskResolution,
   writeTaskTransition,
+  writeDocumentedUpdate,
 } = await import("./task-update-store.js");
 
 describe("task update store", () => {
   beforeEach(() => send.mockReset());
+
+  it("does not overwrite concurrent City-note checkpoints when documenting resolution", async () => {
+    send.mockResolvedValue({});
+    const cityNotes = [
+      { cityNoteStatus: "sending", cityNotePayload: { SRnum: "123" } },
+    ];
+    await writeDocumentedUpdate("tasks", {
+      pk: "SITE#site-1",
+      sk: "event",
+      taskId: "task-1",
+      type: "issue_resolved",
+      documentationState: "closed",
+      cityNotes,
+      notes: [],
+      photoKeys: [],
+    });
+    const put = send.mock.calls[0][0].input.TransactItems[0].Put;
+    expect(put.ConditionExpression).toContain("cityNotes = :cityNotes");
+    expect(put.ExpressionAttributeValues[":cityNotes"]).toEqual(cityNotes);
+  });
 
   it("returns a bounded page and round-trips its cursor", async () => {
     const lastKey = {
@@ -233,4 +255,86 @@ describe("resolution closure jobs", () => {
       }
     },
   );
+});
+
+it.each(["single", "multiple"])(
+  "commits %s City notes and their delivery job atomically",
+  async (shape) => {
+    send.mockReset().mockResolvedValue({});
+    const note = {
+      cityNotePayload: { SRnum: "123" },
+      cityNoteStatus: "pending",
+    };
+    await writeTaskTransition({
+      tableName: "tasks",
+      siteId: "site",
+      taskId: "task",
+      occurredAt: "2026-11-06T12:00:00Z",
+      expectedStatus: "in_progress",
+      expectedUpdatedAt: "prior",
+      task: { pk: "SITE#site", sk: "TASK#task", status: "in_progress" },
+      update: {
+        taskId: "task",
+        updateId: "update",
+        type: "additional_action",
+        ...(shape === "single" ? note : { cityNotes: [note] }),
+      },
+    });
+    const writes = send.mock.calls[0][0].input.TransactItems;
+    const job = writes.find(
+      (/** @type {any} */ entry) => entry.Put?.Item?.trigger === "city_note",
+    ).Put;
+    const timeline = writes.find(
+      (/** @type {any} */ entry) =>
+        entry.Put?.Item?.updateId === "update" && entry.Put.Item.type,
+    ).Put;
+    expect(job.Item).toMatchObject({
+      entityType: "SF311_OUTBOX",
+      status: "pending",
+      siteId: "site",
+      taskId: "task",
+      updateSk: timeline.Item.sk,
+    });
+    expect(job.ConditionExpression).toBe("attribute_not_exists(pk)");
+    expect(send).toHaveBeenCalledOnce();
+  },
+);
+
+it("recovers pre-outbox notes without resetting existing jobs or delivery checkpoints", async () => {
+  const update = {
+    taskId: "task",
+    updateId: "old",
+    occurredAt: "2026-11-06T12:00:00Z",
+    cityNotePayload: { SRnum: "123" },
+    cityNoteStatus: "unknown",
+  };
+  send.mockReset().mockResolvedValue({});
+  await ensureCityNoteJob("table", "site", update);
+  expect(send.mock.calls[0][0].input).toMatchObject({
+    Item: {
+      sk: "SF311_JOB#task#note-old",
+      trigger: "city_note",
+      updateSk: "TASK#task#UPDATE#2026-11-06T12:00:00Z#old",
+    },
+    ConditionExpression: "attribute_not_exists(pk)",
+  });
+  send.mockRejectedValueOnce(
+    Object.assign(new Error("exists"), {
+      name: "ConditionalCheckFailedException",
+    }),
+  );
+  await expect(
+    ensureCityNoteJob("table", "site", update),
+  ).resolves.toBeUndefined();
+  expect(update.cityNoteStatus).toBe("unknown");
+  send.mockRejectedValueOnce(new Error("Unavailable"));
+  await expect(ensureCityNoteJob("table", "site", update)).rejects.toThrow(
+    "Unavailable",
+  );
+  send.mockClear();
+  await ensureCityNoteJob("table", "site", {
+    ...update,
+    cityNoteStatus: "sent",
+  });
+  expect(send).not.toHaveBeenCalled();
 });

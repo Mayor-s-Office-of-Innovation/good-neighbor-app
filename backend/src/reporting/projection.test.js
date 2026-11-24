@@ -12,6 +12,7 @@ import { DuckDBInstance } from "@duckdb/node-api";
 import { sqlString, toRow, writeEntityParquet } from "../analytics/convert.js";
 import { createLocalViews, writeLocalLake } from "./local-lake.js";
 import { buildProjection } from "./projection.js";
+import { ROW_GROUP_SIZE } from "./projection-sql.js";
 import { buildFromRows, readProjection } from "./test-build.js";
 
 const EVALUATED = "2026-10-20T00:00:00.000Z";
@@ -656,6 +657,41 @@ describe("buildProjection over a lake written like an export", () => {
       [0, "BOOLEAN", "n/a"],
       [0, "DATE", "INTEGER"],
     ]);
+  });
+
+  it("writes each dated table day first, in row groups a period can skip", async () => {
+    // 120 Sites owing Checks since January: about two groups' worth of days.
+    const sites = Array.from({ length: 120 }, (_, i) => ({
+      siteId: `s${String(i).padStart(3, "0")}`,
+      status: "active",
+    }));
+    const out = join(dir, "projection");
+    await buildProjection(conn, out, {
+      evaluatedAt: EVALUATED,
+      snapshotId: "groups",
+      inputs: {
+        sites,
+        terms: sites.map((s) => ({
+          siteId: s.siteId,
+          termsVersionId: `v-${s.siteId}`,
+          effectiveStart: "2026-01-01",
+          requiredChecksPerDay: "3",
+          status: "active",
+        })),
+      },
+    });
+    const groups = (
+      await conn.runAndReadAll(
+        `SELECT row_group_num_rows::INTEGER, stats_min, stats_max
+         FROM parquet_metadata(${sqlString(join(out, "checks_owed.parquet"))})
+         WHERE path_in_schema = 'day' ORDER BY row_group_id`,
+      )
+    ).getRowsJS();
+    expect(groups.length).toBeGreaterThan(1);
+    expect(groups[0][0]).toBe(ROW_GROUP_SIZE);
+    // Each group starts on or after the day the one before it ends.
+    for (let g = 1; g < groups.length; g++)
+      expect(String(groups[g][1]) >= String(groups[g - 1][2])).toBe(true);
   });
 
   it("writes Parquet tables a reader gets the same totals back from", async () => {

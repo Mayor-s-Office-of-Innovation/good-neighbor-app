@@ -3,6 +3,7 @@
 import { test as base, expect } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
+import { blankConfigJs, collectPageErrors } from "../helpers/admin-page.js";
 import { insightsReply, recordPhotosReply } from "./insights-mock.js";
 
 /**
@@ -18,12 +19,7 @@ const mockFailuresByPage = new WeakMap();
 
 export const test = base.extend({
   page: async ({ page }, use, testInfo) => {
-    /** @type {string[]} */
-    const pageErrors = [];
-    // The URL names the route that threw, when one test visits several.
-    page.on("pageerror", (error) =>
-      pageErrors.push(`${page.url()}: ${error.message}`),
-    );
+    const pageErrors = collectPageErrors(page);
     await (coverageDir
       ? withCoverage(coverageDir, page, use, testInfo)
       : use(page));
@@ -1169,11 +1165,7 @@ export async function mockAdmin(page, options = {}) {
       insightsEnabled,
     };
   }, options.insights === true);
-  await page.route(/\/config\.js$/, (route) =>
-    new URL(route.request().url()).pathname === "/config.js"
-      ? route.fulfill({ contentType: "application/javascript", body: "" })
-      : route.fallback(),
-  );
+  await blankConfigJs(page);
   await page.route("**/admin/v1/**", async (route) => {
     const url = new URL(route.request().url());
     // settle()'s probe request; not logged, so api.calls() counts only the admin pages' requests.

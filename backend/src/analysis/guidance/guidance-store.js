@@ -2062,8 +2062,15 @@ export async function supersedeOpenTasksForCondition(opts) {
     .filter((taskId) => typeof taskId === "string" && taskId)
     .map((taskId) => String(taskId));
 
-  for (let start = 0; start < tasks.length; start += MAX_TRANSACTION_ITEMS) {
-    let pending = tasks.slice(start, start + MAX_TRANSACTION_ITEMS);
+  for (
+    let start = 0;
+    start < tasks.length;
+    start += Math.floor(MAX_TRANSACTION_ITEMS / 2)
+  ) {
+    let pending = tasks.slice(
+      start,
+      start + Math.floor(MAX_TRANSACTION_ITEMS / 2),
+    );
     for (let attempt = 0; pending.length > 0; attempt += 1) {
       try {
         await ddb.send(
@@ -2102,7 +2109,7 @@ export async function supersedeOpenTasksForCondition(opts) {
  * @returns {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>}
  */
 function supersedeTaskWrites(tasks, opts, now) {
-  return tasks.map((task) => {
+  return tasks.flatMap((task) => {
     const taskId = String(task.taskId);
     const updated = {
       ...task,
@@ -2121,15 +2128,20 @@ function supersedeTaskWrites(tasks, opts, now) {
         taskId,
       ),
     };
-    return {
-      Put: {
-        TableName: opts.tableName,
-        Item: updated,
-        ConditionExpression: "#status = :open",
-        ExpressionAttributeNames: { "#status": "status" },
-        ExpressionAttributeValues: { ":open": "open" },
+    return [
+      ...(opts.reason === "analysis_condition_rejected"
+        ? sf311Job(opts.tableName, opts.siteId, updated, "deleted")
+        : []),
+      {
+        Put: {
+          TableName: opts.tableName,
+          Item: updated,
+          ConditionExpression: "#status = :open",
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: { ":open": "open" },
+        },
       },
-    };
+    ];
   });
 }
 

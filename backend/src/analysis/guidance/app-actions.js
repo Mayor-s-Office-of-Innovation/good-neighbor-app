@@ -1279,6 +1279,10 @@ async function execute311ClosureAction({
   onCheckpoint,
 }) {
   const now = nowDate.toISOString();
+  const closedReasonCode =
+    action.payload?.closedReasonCode === "3"
+      ? "3"
+      : SILENT_TICKET_CLOSED_REASON;
   const priorClosuresByServiceCode =
     priorClosuresFromPriorResults(priorResults);
   const eligible = eligibleTicketsForClosure(priorResults);
@@ -1337,12 +1341,13 @@ async function execute311ClosureAction({
       const payload = buildCloseSrPayload({
         srNum: String(ticket.srNum),
         now: nowDate,
+        closedReasonCode,
       });
       const response = await sf311.updateServiceRequest(payload);
       closures.push({
         serviceCode,
         srNum: String(ticket.srNum),
-        closedReasonCode: SILENT_TICKET_CLOSED_REASON,
+        closedReasonCode,
         status: "closed",
         ...(response.updateId ? { updateId: response.updateId } : {}),
       });
@@ -1354,7 +1359,7 @@ async function execute311ClosureAction({
       closures.push({
         serviceCode,
         srNum: String(ticket.srNum),
-        closedReasonCode: SILENT_TICKET_CLOSED_REASON,
+        closedReasonCode,
         status: "failed",
         reason: appActionErrorReason(error),
         ...(appActionErrorDiagnostics(error)
