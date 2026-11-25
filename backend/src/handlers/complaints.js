@@ -283,6 +283,32 @@ export async function presignComplaintArtifact(event) {
   });
 }
 
+/**
+ * Whether an upload still belongs to a draft complaint and has no artifact row.
+ * @param {string} siteId
+ * @param {string} complaintId
+ * @param {string} artifactId
+ */
+async function isUnregisteredDraftUpload(siteId, complaintId, artifactId) {
+  const [complaint, artifact] = await Promise.all([
+    ddb.send(
+      new GetCommand({
+        TableName: getConfig().dynamoTable,
+        Key: complaintKey(siteId, complaintId),
+        ConsistentRead: true,
+      }),
+    ),
+    ddb.send(
+      new GetCommand({
+        TableName: getConfig().dynamoTable,
+        Key: complaintArtifactKey(siteId, complaintId, artifactId),
+        ConsistentRead: true,
+      }),
+    ),
+  ]);
+  return complaint.Item?.status === "draft" && !artifact.Item;
+}
+
 export async function registerComplaintArtifact(event) {
   const siteId = deriveSiteId(event);
   const { complaintId } = params(event);
@@ -311,11 +337,16 @@ export async function registerComplaintArtifact(event) {
     head.contentLength > maxBytesFor(body.contentType) ||
     head.metadata?.["declared-bytes"] !== String(body.contentLength)
   ) {
-    await setObjectTags({
-      bucket: getComplaintBucket(),
-      key: expected,
-      tags: { state: "rejected" },
-    }).catch(() => {});
+    // Expire the bad upload only while it is an unregistered draft upload.
+    // Anyone on the Site can send this request with known ids, so it must
+    // never retag registered or submitted evidence ("rejected" expires in a day).
+    if (await isUnregisteredDraftUpload(siteId, complaintId, body.artifactId)) {
+      await setObjectTags({
+        bucket: getComplaintBucket(),
+        key: expected,
+        tags: { state: "rejected" },
+      }).catch(() => {});
+    }
     return jsonResponse(400, { error: "media_mismatch" });
   }
   const object = await getObjectBytes({

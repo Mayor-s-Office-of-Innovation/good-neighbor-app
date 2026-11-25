@@ -515,12 +515,26 @@ describe("complaint image thumbnails", () => {
     expect(put).not.toHaveProperty("thumbS3Key");
   });
 
-  it("rejects complaint artifacts whose uploaded size differs from presigned declared-bytes", async () => {
+  /**
+   * Answer the two reads the mismatch path makes.
+   * @param {{ complaintStatus: string, registered: boolean }} state
+   */
+  const mismatchReads = ({ complaintStatus, registered }) =>
+    ddbSend.mockImplementation(async (/** @type {any} */ command) =>
+      String(command.input.Key?.sk ?? "").includes(ARTIFACT_ID)
+        ? { Item: registered ? artifactRow() : undefined }
+        : { Item: { status: complaintStatus } },
+    );
+  const mismatchedUpload = () =>
     headObject.mockResolvedValueOnce({
       contentType: "image/jpeg",
       contentLength: 1024,
       metadata: { "declared-bytes": "1" },
     });
+
+  it("rejects complaint artifacts whose uploaded size differs from presigned declared-bytes", async () => {
+    mismatchedUpload();
+    mismatchReads({ complaintStatus: "draft", registered: false });
     const response = await registerComplaintArtifact(
       event({ body: { ...imageBody, contentLength: 1024 } }),
     );
@@ -531,8 +545,30 @@ describe("complaint image thumbnails", () => {
       key: KEY,
       tags: { state: "rejected" },
     });
-    expect(ddbSend).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [
+      "an already registered artifact",
+      { complaintStatus: "draft", registered: true },
+    ],
+    [
+      "a submitted complaint",
+      { complaintStatus: "submitted", registered: true },
+    ],
+  ])(
+    "never marks %s for deletion on a mismatched request",
+    async (_, state) => {
+      mismatchedUpload();
+      mismatchReads(state);
+      const response = await registerComplaintArtifact(
+        event({ body: { ...imageBody, contentLength: 1024 } }),
+      );
+      expect(response.statusCode).toBe(400);
+      expect(JSON.parse(response.body)).toEqual({ error: "media_mismatch" });
+      expect(setObjectTags).not.toHaveBeenCalled();
+    },
+  );
 
   it("retags the thumbnail with its original when the complaint is submitted", async () => {
     ddbSend

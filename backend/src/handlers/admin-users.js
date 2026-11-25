@@ -577,16 +577,12 @@ export const updateAdminUserRole = (event) =>
           }
         }
       }
-      if (role !== ADMIN_GROUPS.supervisor) {
-        await cognito.send(
-          new AdminUserGlobalSignOutCommand({
-            UserPoolId: pool,
-            Username: username,
-          }),
-        );
-      }
+      const signedOut =
+        role === ADMIN_GROUPS.supervisor ||
+        (await signOutEverywhere(pool, username));
       return jsonResponse(200, {
         user: publicUser(target, role),
+        ...(signedOut ? {} : { signOut: "failed" }),
         ...(cleanupFailures.length
           ? { warning: "role_cleanup_incomplete", cleanupFailures }
           : {}),
@@ -653,6 +649,35 @@ export const resetAdminUserPassword = (event) =>
     return jsonResponse(200, { user: publicUser(target, target.role) });
   });
 
+/**
+ * Revoke a user's refresh tokens after a suspension or demotion. The change
+ * itself has already succeeded, so a failure here must not turn the response
+ * into an error: the user's 15-minute access tokens still expire on their own,
+ * and a disabled user can't refresh. Logged without the username.
+ * @param {string} pool
+ * @param {string} username
+ * @returns {Promise<boolean>} whether the sign-out succeeded
+ */
+async function signOutEverywhere(pool, username) {
+  try {
+    await cognito.send(
+      new AdminUserGlobalSignOutCommand({
+        UserPoolId: pool,
+        Username: username,
+      }),
+    );
+    return true;
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        marker: "AdminSignOutFailed",
+        reason: error instanceof Error ? error.name : "unknown",
+      }),
+    );
+    return false;
+  }
+}
+
 /** @param {import("aws-lambda").APIGatewayProxyEventV2} event @param {boolean} enabled */
 async function setEnabled(event, enabled) {
   const pool = configuredPool();
@@ -670,16 +695,10 @@ async function setEnabled(event, enabled) {
       return jsonResponse(409, { error: "last_active_supervisor" });
     const Command = enabled ? AdminEnableUserCommand : AdminDisableUserCommand;
     await cognito.send(new Command({ UserPoolId: pool, Username: username }));
-    if (!enabled) {
-      await cognito.send(
-        new AdminUserGlobalSignOutCommand({
-          UserPoolId: pool,
-          Username: username,
-        }),
-      );
-    }
+    const signedOut = enabled || (await signOutEverywhere(pool, username));
     return jsonResponse(200, {
       user: publicUser({ ...target, Enabled: enabled }, ""),
+      ...(signedOut ? {} : { signOut: "failed" }),
     });
   };
   return enabled ? changeEnabled() : withSupervisorMutationLock(changeEnabled);

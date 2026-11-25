@@ -626,6 +626,50 @@ describe("Compliance administrator lifecycle", () => {
     ).toHaveLength(1);
   });
 
+  it("reports a suspension as done when only the follow-up sign-out fails", async () => {
+    ddbSend.mockResolvedValue({});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    cognitoSend.mockImplementation(async (command) => {
+      if (command instanceof AdminGetUserCommand) {
+        const username = String(command.input.Username);
+        return user(username, `${username}-sub`);
+      }
+      if (command instanceof ListUsersInGroupCommand) {
+        return {
+          Users: [
+            user("one@example.org", "one@example.org-sub"),
+            user("two@example.org", "two@example.org-sub"),
+          ],
+        };
+      }
+      if (command instanceof AdminUserGlobalSignOutCommand) {
+        throw Object.assign(new Error("throttled"), {
+          name: "TooManyRequestsException",
+        });
+      }
+      return {};
+    });
+
+    const response = await call(
+      suspendAdminUser,
+      event(undefined, { username: "one@example.org" }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body))).toMatchObject({
+      user: { enabled: false },
+      signOut: "failed",
+    });
+    expect(
+      cognitoSend.mock.calls.filter(
+        ([command]) => command instanceof AdminDisableUserCommand,
+      ),
+    ).toHaveLength(1);
+    const logged = JSON.stringify(vi.mocked(console.error).mock.calls);
+    expect(logged).toContain("AdminSignOutFailed");
+    expect(logged).not.toContain("one@example.org");
+  });
+
   it("blocks self-reinstate and self-promotion to supervisor", async () => {
     cognitoSend.mockResolvedValue(user("caller@example.org", "caller-sub"));
     const selfReinstate = await call(
