@@ -1,3 +1,4 @@
+import { assignmentPointerPut } from "../lib/assignment-pointers.js";
 import { registerPeopleChanges } from "../lib/people.js";
 import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import {
@@ -697,6 +698,12 @@ async function applyOneRow(importId, row) {
         status: "active",
         createdAt: now,
         updatedAt: now,
+      }),
+      assignmentPointerPut(tableName, {
+        programId: plan.program.id,
+        userId: plan.contact.id,
+        siteId: plan.site.id,
+        now,
       }),
     );
   }

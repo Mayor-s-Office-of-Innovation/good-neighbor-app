@@ -1,3 +1,4 @@
+import { assignmentPointerPut } from "../lib/assignment-pointers.js";
 import { perimeterAttribution } from "../lib/perimeter-attribution.js";
 import { readSiteParts, boundedReads } from "../lib/admin-site-reads.js";
 import { loadAdminDirectory } from "./admin-users.js";
@@ -43,6 +44,7 @@ import {
   supervisorOnly,
   authorizeSiteChanges,
   adminPrincipal,
+  isComplianceSupervisor,
   ADMIN_GROUPS,
 } from "../lib/admin-auth.js";
 
@@ -552,6 +554,12 @@ export const createSite = (event) =>
               "attribute_not_exists(pk) AND attribute_not_exists(sk)",
           },
         },
+        assignmentPointerPut(tableName, {
+          programId: leadProgramId,
+          userId: primaryContactUserId,
+          siteId,
+          now,
+        }),
         {
           Update: {
             TableName: tableName,
@@ -1636,11 +1644,12 @@ export const listDevices = (event) =>
         providerEmails.set(key, Item?.email || "");
       }
     }
+    const includePhysicalDeviceId = isComplianceSupervisor(event);
     /** @param {Record<string, any>} item */
     const describeDevice = (item) => {
       const grant = grants.get(item.enrolledByGrantId);
       return {
-        ...publicDevice(item),
+        ...publicDevice(item, { includePhysicalDeviceId }),
         managerEmail:
           item.authorityScope === "provider"
             ? providerEmails.get(
@@ -2160,13 +2169,18 @@ function slug(provided, fallback) {
   return value || randomUUID();
 }
 
-/** @param {Record<string, any>} item */
-function publicDevice(item) {
+/**
+ * @param {Record<string, any>} item
+ * @param {{ includePhysicalDeviceId?: boolean }} [options]
+ */
+function publicDevice(item, { includePhysicalDeviceId = true } = {}) {
   const bindingId = String(item.bindingId ?? item.deviceId ?? "");
   return {
     bindingId,
     deviceId: bindingId,
-    physicalDeviceId: item.physicalDeviceId,
+    ...(includePhysicalDeviceId
+      ? { physicalDeviceId: item.physicalDeviceId }
+      : {}),
     siteId: item.siteId,
     label: item.label,
     accessLevel: item.accessLevel === "admin" ? "manager" : item.accessLevel,

@@ -1,13 +1,30 @@
 // Only the lazy-loaded webview warning needs URL handoff construction. Keep
 // this separate from browser detection, which is part of normal app startup.
 
+import { pendingSetupCode } from "./pending-setup-code.js";
+
 /**
- * The current page URL to hand off to the real browser, with a `code` param
+ * The current page URL to hand off to the real browser, with the setup code
  * preserved so onboarding can continue after the jump (site-setup reads it).
+ * Setup removes the code from the address bar, so it is added back here as a
+ * `#code=` fragment (never sent to a server) when the URL no longer has it.
  * @returns {string}
  */
 export function handoffUrl() {
-  return typeof location !== "undefined" ? location.href : "";
+  if (typeof location === "undefined") return "";
+  const code = pendingSetupCode();
+  if (!code) return location.href;
+  try {
+    const url = new URL(location.href);
+    const fragment = new URLSearchParams(url.hash.slice(1));
+    if (!url.searchParams.has("code") && !fragment.has("code")) {
+      fragment.set("code", code);
+      url.hash = fragment.toString();
+    }
+    return url.toString();
+  } catch {
+    return location.href;
+  }
 }
 
 /**

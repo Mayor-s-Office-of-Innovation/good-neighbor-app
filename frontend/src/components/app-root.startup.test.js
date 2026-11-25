@@ -5,6 +5,10 @@ const setup = vi.hoisted(() => ({
   backOrNavigate: vi.fn(),
   replaceRoute: vi.fn(),
   clearSite: vi.fn(),
+  resetLocalAppState: vi.fn(),
+  pauseCheck: vi.fn(async () => {}),
+  retireHandoff: vi.fn(async () => {}),
+  stripCodeFromUrl: vi.fn(),
   getSite: vi.fn(),
   getSiteSettings: vi.fn(),
   clearAuthState: vi.fn(),
@@ -30,10 +34,16 @@ vi.mock("../db.js", () => ({
   clearSite: setup.clearSite,
   getSite: setup.getSite,
   hasAdminAccess: vi.fn(),
-  resetLocalAppState: vi.fn(),
+  resetLocalAppState: setup.resetLocalAppState,
   saveDiscoveredBindings: setup.saveDiscoveredBindings,
   saveSiteSettings: setup.saveSiteSettings,
   setSite: setup.setSite,
+}));
+vi.mock("../state/check-session.js", () => ({
+  pauseCheck: setup.pauseCheck,
+}));
+vi.mock("./site-setup.js", () => ({
+  stripCodeFromUrl: setup.stripCodeFromUrl,
 }));
 vi.mock("../services/api.js", () => ({
   getSiteSettings: setup.getSiteSettings,
@@ -56,6 +66,7 @@ vi.mock("../services/session-handoff.js", () => ({
   stripHandoffCredentials: setup.stripHandoffCredentials,
   rememberConsumedGrant: setup.rememberConsumedGrant,
   ensureHandoffManifest: setup.ensureHandoffManifest,
+  retireHandoff: setup.retireHandoff,
   uninstallHandoffManifest: vi.fn(),
 }));
 vi.mock("../services/backend-health.js", () => ({
@@ -129,6 +140,10 @@ beforeEach(() => {
   setup.isStandalone.mockReset().mockReturnValue(false);
   setup.currentRoute.mockReset().mockReturnValue("/today");
   setup.clearSite.mockReset().mockResolvedValue(undefined);
+  setup.resetLocalAppState.mockReset().mockResolvedValue(undefined);
+  setup.pauseCheck.mockReset().mockResolvedValue(undefined);
+  setup.retireHandoff.mockReset().mockResolvedValue(undefined);
+  setup.stripCodeFromUrl.mockReset();
   setup.getSite.mockReset();
   setup.getSiteSettings.mockReset();
   setup.clearAuthState.mockReset();
@@ -220,7 +235,11 @@ describe("app startup authentication", () => {
     expect(root._renderApp).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(root._renderSetup).toHaveBeenCalledOnce());
 
+    // Only the rejected binding goes; queued work and drafts are kept.
+    expect(setup.pauseCheck).toHaveBeenCalledOnce();
+    expect(setup.retireHandoff).toHaveBeenCalledWith({ remote: false });
     expect(setup.clearSite).toHaveBeenCalledOnce();
+    expect(setup.resetLocalAppState).not.toHaveBeenCalled();
     expect(setup.clearAuthState).toHaveBeenCalledOnce();
     expect(root._site).toBeNull();
   });

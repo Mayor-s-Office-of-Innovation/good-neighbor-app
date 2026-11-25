@@ -1,5 +1,9 @@
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
+import {
+  assignmentPointerDelete,
+  assignmentPointerPut,
+} from "./assignment-pointers.js";
 
 /** Build scoped roster projection changes for a linked manager membership.
  * @param {string} tableName @param {string} siteId @param {string} programId
@@ -61,6 +65,7 @@ export async function managerAssignmentChanges(
             ConditionExpression: "attribute_not_exists(pk)",
           },
         },
+        assignmentPointerPut(tableName, { programId, userId, siteId, now }),
       ]
     : [
         {
@@ -71,6 +76,7 @@ export async function managerAssignmentChanges(
             ExpressionAttributeValues: { ":program": programId },
           },
         },
+        assignmentPointerDelete(tableName, { programId, userId, siteId }),
       ];
   if (user)
     changes.push({

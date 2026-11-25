@@ -11,9 +11,20 @@
     "blocked"       a captured-but-unsubmitted check must finish first
     "switched"      done; the page is being reloaded onto `destination`
     "failed"        the switch threw; a toast was shown
+
+  A binding saved under a different physical-device id than the current
+  session (the device was given a fresh id when it couldn't prove the old
+  one) can't be selected server-side, so it uses its own stored tokens or
+  goes back to setup instead of failing.
 */
-import { activateSiteBinding, hasAdminAccess, setSite } from "../db.js";
+import {
+  activateSiteBinding,
+  getSite,
+  hasAdminAccess,
+  setSite,
+} from "../db.js";
 import { selectDeviceBinding } from "./api.js";
+import { ApiError } from "./api-error.js";
 import {
   discardInMemorySession,
   getCurrentCheck,
@@ -57,9 +68,20 @@ export async function switchToBoundSite({
   }
   try {
     if (active) await pauseCheck();
+    const current = await getSite().catch(() => null);
+    const sameDevice =
+      Boolean(bound.physicalDeviceId) &&
+      bound.physicalDeviceId === current?.physicalDeviceId;
     let selected;
-    if (bound.bindingId && bound.physicalDeviceId) {
-      const session = await selectDeviceBinding(bound.bindingId);
+    if (bound.bindingId && bound.physicalDeviceId && sameDevice) {
+      let session;
+      try {
+        session = await selectDeviceBinding(bound.bindingId);
+      } catch (error) {
+        // The server no longer has this binding for this device: re-enroll.
+        if (isBindingNotFound(error)) return "needs-binding";
+        throw error;
+      }
       selected = await setSite(session.site.name, {
         siteId: session.site.siteId,
         deviceId: session.deviceId,
@@ -74,8 +96,11 @@ export async function switchToBoundSite({
         accessLevel: session.accessLevel,
         absoluteExpiresAt: session.absoluteExpiresAt,
       });
-    } else {
+    } else if (bound.token && bound.refreshToken) {
       selected = await activateSiteBinding(siteId);
+    } else {
+      // Token-less sibling metadata from an older device id: nothing to use.
+      return "needs-binding";
     }
     if (!selected) return "needs-binding";
     discardInMemorySession();
@@ -92,4 +117,14 @@ export async function switchToBoundSite({
     else showSiteSwitchErrorToast();
     return "failed";
   }
+}
+
+/** @param {unknown} error */
+function isBindingNotFound(error) {
+  return (
+    error instanceof ApiError &&
+    error.status === 404 &&
+    /** @type {{ error?: unknown } | undefined} */ (error.body)?.error ===
+      "binding_not_found"
+  );
 }

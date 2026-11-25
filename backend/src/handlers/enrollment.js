@@ -17,7 +17,15 @@ import {
   sendManagerSecurityNotification,
   sendProviderManagerSecurityNotification,
 } from "../integrations/email.js";
-import { mintAccessToken, mintRefreshToken } from "../lib/device-token.js";
+import {
+  canonicalAccessLevel,
+  mintAccessToken,
+  mintRefreshToken,
+  verifyDeviceToken,
+} from "../lib/device-token.js";
+import { bindingLifecycleValid } from "./devices.js";
+import { deviceSessionMatches } from "../lib/device-context-sessions.js";
+import { deviceLivenessProblem } from "../lib/device-liveness.js";
 import { MAX_PROVIDER_ENROLLMENT_SITES } from "./admin-provider-managers.js";
 
 const ACCESS_TTL_SECONDS = 15 * 60;
@@ -126,7 +134,7 @@ export const redeemEnrollmentGrant = async (event) => {
     clean(input.label).slice(0, 100) ||
     clean(grant.label).slice(0, 100) ||
     (accessLevel === "manager" ? "Site Manager device" : "Team device");
-  const physicalDeviceId = requestedPhysicalDeviceId || randomUUID();
+  let physicalDeviceId = requestedPhysicalDeviceId || randomUUID();
   const [siteResult, authorityResult, physicalResult] = await Promise.all([
     ddb.send(
       new GetCommand({
@@ -155,7 +163,7 @@ export const redeemEnrollmentGrant = async (event) => {
   ]);
   const site = siteResult.Item;
   const authority = authorityResult.Item;
-  const physical = physicalResult.Item;
+  let physical = physicalResult.Item;
   const providerIssued = grant.issuerAuthorityScope === "provider";
   const issuerBinding =
     providerIssued && accessLevel === "manager"
@@ -222,6 +230,23 @@ export const redeemEnrollmentGrant = async (event) => {
     physical?.status === "revoked"
   ) {
     return rejectEnrollment(event, "access_unavailable", 403, grant);
+  }
+  if (
+    physical &&
+    !(await hasPhysicalDeviceProof({
+      event,
+      input,
+      tableName,
+      physicalDeviceId,
+      nowIso,
+    }))
+  ) {
+    // Unproven reuse of an existing device id: enroll as a new device instead
+    // of refusing, so a phone whose old session died can still use a fresh
+    // invitation. The new id has no links to the old one's other Sites.
+    physicalDeviceId = randomUUID();
+    physical = undefined;
+    recordPhysicalDeviceReplaced(event);
   }
 
   const bindingId = randomUUID();
@@ -483,7 +508,7 @@ export const redeemEnrollmentGrant = async (event) => {
     }
     throw error;
   }
-  recordEnrollment(event, grant, physicalDeviceId);
+  recordEnrollment(event, grant);
   if (accessLevel === "manager") {
     await notifyManagerEnrollment({
       event,
@@ -569,7 +594,7 @@ async function redeemProviderEnrollment(context) {
     ]);
   const provider = providerResult.Item;
   const membership = membershipResult;
-  const physical = /** @type {any} */ (physicalResult).Item;
+  let physical = /** @type {any} */ (physicalResult).Item;
   const sites = (sitesResult.Items ?? [])
     .filter((site) => site.status !== "inactive")
     .sort((a, b) => String(a.siteId).localeCompare(String(b.siteId)));
@@ -586,11 +611,30 @@ async function redeemProviderEnrollment(context) {
   ) {
     return rejectEnrollment(event, "access_unavailable", 403, grant);
   }
+  // Unproven reuse of an existing device id enrolls a new device instead (see
+  // redeemEnrollmentGrant).
+  let replacePhysicalDevice = false;
+  if (
+    physical &&
+    !(await hasPhysicalDeviceProof({
+      event,
+      input,
+      tableName,
+      physicalDeviceId: requestedPhysicalDeviceId,
+      nowIso,
+    }))
+  ) {
+    replacePhysicalDevice = true;
+    physical = undefined;
+    recordPhysicalDeviceReplaced(event);
+  }
 
   const label =
     clean(input.label).slice(0, 100) ||
     `${String(provider.name).slice(0, 75)} Manager device`;
-  const physicalDeviceId = requestedPhysicalDeviceId || randomUUID();
+  const physicalDeviceId = replacePhysicalDevice
+    ? randomUUID()
+    : requestedPhysicalDeviceId || randomUUID();
   const absoluteExpiresAt = new Date(
     now.getTime() + ABSOLUTE_LIFETIME_MS,
   ).toISOString();
@@ -849,7 +893,7 @@ async function redeemProviderEnrollment(context) {
     throw error;
   }
 
-  recordEnrollment(event, grant, physicalDeviceId);
+  recordEnrollment(event, grant);
   await notifyProviderManagerEnrollment({
     event,
     tableName,
@@ -1141,8 +1185,119 @@ function rejectEnrollment(event, reason, status = 401, grant, error) {
   });
 }
 
-/** @param {import("aws-lambda").APIGatewayProxyEventV2} event @param {Record<string,any>} grant @param {string} physicalDeviceId */
-function recordEnrollment(event, grant, physicalDeviceId) {
+/**
+ * Whether the caller proves it is the physical device it names: it holds a
+ * live access or refresh token for a binding on that device. Checked against
+ * the binding's DEVICE# row, which carries the live session (refresh rotates
+ * only that row), with the authorizer's and refresh's own checks: liveness,
+ * session generation, the current refresh-token id, and the binding lifecycle
+ * (Site generation, provider status, manager membership). A stale, rotated or
+ * deactivated manager's token proves nothing.
+ * @param {{
+ *   event: import("aws-lambda").APIGatewayProxyEventV2,
+ *   input: Record<string, unknown>,
+ *   tableName: string,
+ *   physicalDeviceId: string,
+ *   nowIso: string,
+ * }} params
+ * @returns {Promise<boolean>}
+ */
+async function hasPhysicalDeviceProof({
+  event,
+  input,
+  tableName,
+  physicalDeviceId,
+  nowIso,
+}) {
+  const authHeader =
+    event.headers?.authorization ?? event.headers?.Authorization ?? "";
+  const bearer = /^Bearer\s+(.+)$/i.exec(authHeader)?.[1]?.trim() || "";
+  const proofRefreshToken = clean(input.proofRefreshToken);
+
+  /** @type {Array<{ token: string, expectedType: "access" | "refresh" }>} */
+  const candidates = [];
+  if (bearer) candidates.push({ token: bearer, expectedType: "access" });
+  if (proofRefreshToken) {
+    candidates.push({ token: proofRefreshToken, expectedType: "refresh" });
+  }
+
+  for (const candidate of candidates) {
+    let claims;
+    try {
+      claims = await verifyDeviceToken(candidate.token);
+    } catch {
+      continue;
+    }
+    if (claims.typ !== candidate.expectedType) continue;
+    const [deviceResult, siteResult] = await Promise.all([
+      ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `SITE#${claims.siteId}`, sk: `DEVICE#${claims.sub}` },
+          ConsistentRead: true,
+        }),
+      ),
+      ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `SITE#${claims.siteId}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      ),
+    ]);
+    const device = deviceResult.Item;
+    const site = siteResult.Item;
+    if (
+      !device ||
+      device.physicalDeviceId !== physicalDeviceId ||
+      deviceLivenessProblem(device, new Date(nowIso)) ||
+      !deviceSessionMatches(device, claims) ||
+      !site
+    ) {
+      continue;
+    }
+    // The same lifecycle answer refresh and binding selection use: Site status
+    // and generation, and for managers the provider's status and the provider
+    // or site membership. Deactivating a manager doesn't touch DEVICE#, so
+    // without this their old token would still prove the device.
+    if (
+      !(await bindingLifecycleValid(
+        /** @type {any} */ (device),
+        canonicalAccessLevel(device.accessLevel) === "manager"
+          ? "manager"
+          : "general",
+        site,
+        true,
+      ))
+    ) {
+      continue;
+    }
+    if (candidate.expectedType === "refresh") {
+      // The session the token belongs to: a named context session or the primary.
+      const state = claims.sid ? device.sessions?.[claims.sid] : device;
+      if (!claims.jti || state?.refreshJti !== claims.jti) continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * One line when a caller named an existing device id without proving it owns
+ * it, so the enrollment got a new id. No ids in the log.
+ * @param {import("aws-lambda").APIGatewayProxyEventV2} event
+ */
+function recordPhysicalDeviceReplaced(event) {
+  console.info(
+    JSON.stringify({
+      marker: "EnrollmentPhysicalDeviceReplaced",
+      client: describeClient(event.headers),
+    }),
+  );
+}
+
+/** @param {import("aws-lambda").APIGatewayProxyEventV2} event @param {Record<string,any>} grant */
+function recordEnrollment(event, grant) {
   console.info(
     JSON.stringify({
       marker: "EnrollmentRedeemed",
@@ -1150,7 +1305,6 @@ function recordEnrollment(event, grant, physicalDeviceId) {
       grantId: grant.grantId,
       scope: grant.scope ?? "site",
       deliveryMode: grant.deliveryMode ?? "link",
-      physicalDeviceId,
       client: describeClient(event.headers),
     }),
   );

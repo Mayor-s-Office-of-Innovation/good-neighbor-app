@@ -203,6 +203,30 @@ describe("setup code URLs", () => {
     },
   );
 
+  it("keeps a stripped code in memory for the Open-in-browser handoff", async () => {
+    const { pendingSetupCode, forgetSetupCode } = await import(
+      "../services/pending-setup-code.js"
+    );
+    forgetSetupCode();
+    vi.stubGlobal(
+      "location",
+      new URL("https://goodneighborsf.org/#code=ABC123"),
+    );
+    const replaceState = vi.fn();
+    vi.stubGlobal("history", { replaceState });
+    vi.stubGlobal("window", { addEventListener: vi.fn() });
+    const component = new SiteSetup();
+    component.getAttribute = () => null;
+    component.hasAttribute = () => false;
+    component._render = vi.fn();
+    component._validate = vi.fn();
+    component.connectedCallback();
+    // Off the address bar, still available to hand off to the real browser.
+    expect(replaceState).toHaveBeenCalledWith(null, "", "/");
+    expect(pendingSetupCode()).toBe("ABC123");
+    forgetSetupCode();
+  });
+
   it("does not rewrite a URL without a code", () => {
     vi.stubGlobal(
       "location",

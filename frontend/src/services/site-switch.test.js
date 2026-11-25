@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { ApiError } from "./api-error.js";
 import { switchToBoundSite } from "./site-switch.js";
 
 const mocks = vi.hoisted(() => ({
   activateSiteBinding: vi.fn(),
+  getSite: vi.fn(),
   setSite: vi.fn(),
   selectDeviceBinding: vi.fn(),
   getCurrentCheck: vi.fn(),
@@ -46,6 +48,11 @@ beforeEach(() => {
   mocks.selectDeviceBinding.mockResolvedValue(session);
   mocks.setSite.mockImplementation(async (_name, meta) => ({ ...meta }));
   mocks.activateSiteBinding.mockResolvedValue({ siteId: "site-2" });
+  // The current session is on the same physical device as `sibling`.
+  mocks.getSite.mockResolvedValue({
+    siteId: "site-1",
+    physicalDeviceId: "physical-1",
+  });
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -197,4 +204,56 @@ it("routes a selected legacy general-access session to Today from Reports", asyn
     destination: "/reports",
   });
   expect(assign).toHaveBeenCalledExactlyOnceWith("/today");
+});
+
+it("sends a token-less binding from an older device id to setup", async () => {
+  // The device was given a fresh id; the old id's sibling can't be selected.
+  mocks.getSite.mockResolvedValue({
+    siteId: "site-1",
+    physicalDeviceId: "physical-new",
+  });
+  expect(
+    await switchToBoundSite({
+      siteId: "site-2",
+      currentSiteId: "site-1",
+      boundSites: [sibling],
+    }),
+  ).toBe("needs-binding");
+  expect(mocks.selectDeviceBinding).not.toHaveBeenCalled();
+  expect(mocks.showSiteSwitchErrorToast).not.toHaveBeenCalled();
+});
+
+it("opens an older device id's binding with its own stored tokens", async () => {
+  mocks.getSite.mockResolvedValue({
+    siteId: "site-1",
+    physicalDeviceId: "physical-new",
+  });
+  expect(
+    await switchToBoundSite({
+      siteId: "site-2",
+      currentSiteId: "site-1",
+      boundSites: [
+        { ...sibling, token: "old-access", refreshToken: "old-refresh" },
+      ],
+    }),
+  ).toBe("switched");
+  expect(mocks.selectDeviceBinding).not.toHaveBeenCalled();
+  expect(mocks.activateSiteBinding).toHaveBeenCalledWith("site-2");
+});
+
+it("sends a binding the server no longer has to setup instead of failing", async () => {
+  mocks.selectDeviceBinding.mockRejectedValue(
+    new ApiError("not found", {
+      status: 404,
+      body: { error: "binding_not_found" },
+    }),
+  );
+  expect(
+    await switchToBoundSite({
+      siteId: "site-2",
+      currentSiteId: "site-1",
+      boundSites: [sibling],
+    }),
+  ).toBe("needs-binding");
+  expect(mocks.showSiteSwitchErrorToast).not.toHaveBeenCalled();
 });

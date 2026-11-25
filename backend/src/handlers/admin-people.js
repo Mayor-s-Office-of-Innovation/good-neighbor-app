@@ -13,6 +13,7 @@ import {
 } from "../lib/people.js";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
+import { assignedSiteIds } from "../lib/assignment-pointers.js";
 import { jsonResponse } from "../http.js";
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -117,6 +118,65 @@ export const updatePerson = (event) =>
       ];
       const denied = await authorizeSiteChanges(event, sites);
       if (denied) return denied;
+      const programSources = person.sources.filter(
+        (/** @type {{pk:string,sk:string}} */ source) =>
+          source.pk.startsWith("PROGRAM#") && source.sk.startsWith("USER#"),
+      );
+      if (programSources.length) {
+        const tableName = getDynamoTableName();
+        const authorizedSiteMetas = await Promise.all(
+          sites.map((siteId) =>
+            ddb.send(
+              new GetCommand({
+                TableName: tableName,
+                Key: { pk: `SITE#${siteId}`, sk: "#META" },
+                ConsistentRead: true,
+              }),
+            ),
+          ),
+        );
+        const authorizedLeadPrograms = new Set(
+          authorizedSiteMetas
+            .map((res) => String(res.Item?.leadProgramId || ""))
+            .filter(Boolean),
+        );
+        // A program staff record may only be edited from a Site that program
+        // leads, and only by a manager of every Site that shows this person:
+        // other Sites read the shared person record, not their own copy. The
+        // assignment pointers list those Sites (`sources` doesn't track later
+        // assignments); if they disagree with the record's own count, the
+        // index can't be trusted for this person and a supervisor edits.
+        const assignedSites = new Set();
+        for (const source of programSources) {
+          const programId = source.pk.slice(8);
+          if (!authorizedLeadPrograms.has(programId)) {
+            return jsonResponse(403, { error: "site_assignment_required" });
+          }
+          const userId = source.sk.slice(5);
+          const [userResult, pointedSites] = await Promise.all([
+            ddb.send(
+              new GetCommand({
+                TableName: tableName,
+                Key: { pk: source.pk, sk: source.sk },
+                ConsistentRead: true,
+              }),
+            ),
+            assignedSiteIds(tableName, programId, userId),
+          ]);
+          if (
+            pointedSites.length !==
+            Number(userResult.Item?.siteAssignmentCount ?? 0)
+          ) {
+            return jsonResponse(403, { error: "supervisor_required" });
+          }
+          for (const siteId of pointedSites) assignedSites.add(siteId);
+        }
+        const others = [...assignedSites].filter((id) => !sites.includes(id));
+        if (others.length) {
+          const otherDenied = await authorizeSiteChanges(event, others);
+          if (otherDenied) return otherDenied;
+        }
+      }
     }
     try {
       return jsonResponse(200, {

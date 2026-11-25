@@ -16,6 +16,7 @@ import {
   ADMIN_GROUPS,
   adminOnly,
   adminPrincipal,
+  authorizeSiteChanges,
   siteAdminOnly,
 } from "../lib/admin-auth.js";
 import { emailHash, normalizeEmail } from "./setup-codes.js";
@@ -101,6 +102,42 @@ export const createManagerMembership = (event) =>
     }
     if ((userId && !programId) || (programId && !userId)) {
       return jsonResponse(400, { error: "invalid_program_staff" });
+    }
+    const isSupervisor = adminPrincipal(event).role === ADMIN_GROUPS.supervisor;
+    if (!isSupervisor) {
+      const leadProgramId = String(siteResult.Item.leadProgramId || "");
+      if (programId && programId !== leadProgramId) {
+        return jsonResponse(403, { error: "site_assignment_required" });
+      }
+      if (person) {
+        if (
+          person.sources.some((/** @type {{pk:string,sk:string}} */ s) =>
+            s.sk.startsWith("PROVIDER_MANAGER#"),
+          )
+        ) {
+          return jsonResponse(403, { error: "supervisor_required" });
+        }
+        const foreignPrograms = person.sources.filter(
+          (/** @type {{pk:string,sk:string}} */ s) =>
+            s.pk.startsWith("PROGRAM#") && s.pk.slice(8) !== leadProgramId,
+        );
+        if (foreignPrograms.length) {
+          return jsonResponse(403, { error: "site_assignment_required" });
+        }
+        const existingSites = [
+          ...new Set(
+            person.sources
+              .filter((/** @type {{pk:string,sk:string}} */ s) =>
+                s.pk.startsWith("SITE#"),
+              )
+              .map((/** @type {{pk:string,sk:string}} */ s) => s.pk.slice(5)),
+          ),
+        ];
+        if (existingSites.length) {
+          const denied = await authorizeSiteChanges(event, existingSites);
+          if (denied) return denied;
+        }
+      }
     }
     const now = new Date().toISOString();
     const membershipId = randomUUID();

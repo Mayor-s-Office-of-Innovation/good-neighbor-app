@@ -82,18 +82,26 @@ export async function registerDevice(code, opts = {}) {
  * callers should remove it from the URL before awaiting this request.
  * @param {string} grantId
  * @param {string} token
- * @param {{ physicalDeviceId?: string, label?: string, code?: string }} [opts]
+ * @param {{ physicalDeviceId?: string, proofToken?: string, proofRefreshToken?: string, label?: string, code?: string }} [opts]
  * @returns {Promise<DeviceSession>}
  */
 export async function redeemEnrollmentGrant(grantId, token, opts = {}) {
   const res = await connectionFetch(`${BASE}/app/v1/enrollment/redeem`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(opts.physicalDeviceId && opts.proofToken
+        ? { authorization: `Bearer ${opts.proofToken}` }
+        : {}),
+    },
     body: JSON.stringify({
       ...(opts.code ? { code: opts.code } : { grantId, token }),
       ...(isStandalone() ? { sessionKind: "home_screen" } : {}),
       ...(opts.physicalDeviceId
         ? { physicalDeviceId: opts.physicalDeviceId }
+        : {}),
+      ...(opts.physicalDeviceId && opts.proofRefreshToken
+        ? { proofRefreshToken: opts.proofRefreshToken }
         : {}),
       ...(opts.label ? { label: opts.label } : {}),
     }),

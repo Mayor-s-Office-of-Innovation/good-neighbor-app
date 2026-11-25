@@ -733,11 +733,16 @@ describe("Site Program-contact assignments", () => {
     expect(response.statusCode).toBe(201);
     const transaction = send.mock.calls[3][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(3);
+    expect(transaction.input.TransactItems).toHaveLength(4);
     expect(transaction.input.TransactItems[0].Put.Item).toMatchObject({
       pk: "SITE#site-1",
       sk: "ASSIGNED_USER#user-1",
       programId: "program-1",
+    });
+    // The reverse pointer that lets person edits find every assigned Site.
+    expect(transaction.input.TransactItems[1].Put.Item).toMatchObject({
+      pk: "PROGRAM#program-1",
+      sk: "USER_SITE#user-1#site-1",
     });
   });
 
@@ -760,6 +765,12 @@ describe("Site Program-contact assignments", () => {
         item.Update?.UpdateExpression.includes(
           "REMOVE primaryContactUserId, primaryContact",
         ),
+      ),
+    ).toBe(true);
+    // The assignment's reverse pointer goes with it.
+    expect(
+      items.some((/** @type {any} */ item) =>
+        String(item.Delete?.Key?.sk ?? "").startsWith("USER_SITE#"),
       ),
     ).toBe(true);
   });

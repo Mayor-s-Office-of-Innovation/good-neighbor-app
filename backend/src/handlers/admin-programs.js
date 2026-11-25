@@ -1,3 +1,4 @@
+import { assignmentPointerDelete } from "../lib/assignment-pointers.js";
 import {
   getPerson,
   updatePersonRecord,
@@ -843,13 +844,20 @@ async function removeSiteManager(event, programId, userId, user) {
     /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
     const items = [];
     if (assignment) {
-      items.push({
-        Delete: {
-          TableName: tableName,
-          Key: { pk: `SITE#${siteId}`, sk: `ASSIGNED_USER#${userId}` },
-          ConditionExpression: "attribute_exists(pk)",
+      items.push(
+        {
+          Delete: {
+            TableName: tableName,
+            Key: { pk: `SITE#${siteId}`, sk: `ASSIGNED_USER#${userId}` },
+            ConditionExpression: "attribute_exists(pk)",
+          },
         },
-      });
+        assignmentPointerDelete(tableName, {
+          programId: String(assignment.programId || programId),
+          userId,
+          siteId,
+        }),
+      );
     }
     items.push(
       await sitePrimaryContactChange(tableName, siteId, now, {
