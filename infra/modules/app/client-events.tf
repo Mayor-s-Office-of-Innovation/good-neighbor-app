@@ -84,6 +84,12 @@ data "aws_iam_policy_document" "client_events_gateway" {
     effect    = "Allow"
     actions   = ["kms:GenerateDataKey", "kms:Decrypt"]
     resources = [aws_kms_key.app.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["sqs.${data.aws_region.current.name}.amazonaws.com"]
+    }
   }
 }
 

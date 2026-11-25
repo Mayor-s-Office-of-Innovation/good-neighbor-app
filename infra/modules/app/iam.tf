@@ -378,6 +378,12 @@ data "aws_iam_policy_document" "authorizer" {
       variable = "dynamodb:LeadingKeys"
       values   = ["PROVIDER#*"]
     }
+
+    condition {
+      test     = "Null"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["false"]
+    }
   }
 
   statement {

@@ -174,7 +174,11 @@ resource "aws_kms_key" "app" {
         Resource = "*"
         Condition = {
           ArnLike = {
-            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:*"
+            "kms:EncryptionContext:aws:logs:arn" = [
+              "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.name_prefix}-*",
+              "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/apigateway/${local.name_prefix}-*",
+              "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/ses/mail-manager/${local.name_prefix}",
+            ]
           }
         }
       },
@@ -1880,6 +1884,14 @@ resource "aws_wafv2_web_acl" "web" {
             }
             text_transformation {
               priority = 0
+              type     = "URL_DECODE"
+            }
+            text_transformation {
+              priority = 1
+              type     = "NORMALIZE_PATH"
+            }
+            text_transformation {
+              priority = 2
               type     = "LOWERCASE"
             }
           }
@@ -1929,6 +1941,14 @@ resource "aws_wafv2_web_acl" "web" {
             }
             text_transformation {
               priority = 0
+              type     = "URL_DECODE"
+            }
+            text_transformation {
+              priority = 1
+              type     = "NORMALIZE_PATH"
+            }
+            text_transformation {
+              priority = 2
               type     = "LOWERCASE"
             }
           }
@@ -1982,6 +2002,14 @@ resource "aws_wafv2_web_acl" "web" {
             }
             text_transformation {
               priority = 0
+              type     = "URL_DECODE"
+            }
+            text_transformation {
+              priority = 1
+              type     = "NORMALIZE_PATH"
+            }
+            text_transformation {
+              priority = 2
               type     = "LOWERCASE"
             }
           }
@@ -2033,6 +2061,14 @@ resource "aws_wafv2_web_acl" "web" {
                 }
                 text_transformation {
                   priority = 0
+                  type     = "URL_DECODE"
+                }
+                text_transformation {
+                  priority = 1
+                  type     = "NORMALIZE_PATH"
+                }
+                text_transformation {
+                  priority = 2
                   type     = "LOWERCASE"
                 }
               }
@@ -2046,6 +2082,14 @@ resource "aws_wafv2_web_acl" "web" {
                 }
                 text_transformation {
                   priority = 0
+                  type     = "URL_DECODE"
+                }
+                text_transformation {
+                  priority = 1
+                  type     = "NORMALIZE_PATH"
+                }
+                text_transformation {
+                  priority = 2
                   type     = "LOWERCASE"
                 }
               }
@@ -2059,6 +2103,14 @@ resource "aws_wafv2_web_acl" "web" {
                 }
                 text_transformation {
                   priority = 0
+                  type     = "URL_DECODE"
+                }
+                text_transformation {
+                  priority = 1
+                  type     = "NORMALIZE_PATH"
+                }
+                text_transformation {
+                  priority = 2
                   type     = "LOWERCASE"
                 }
               }
@@ -2113,6 +2165,14 @@ resource "aws_wafv2_web_acl" "web" {
             }
             text_transformation {
               priority = 0
+              type     = "URL_DECODE"
+            }
+            text_transformation {
+              priority = 1
+              type     = "NORMALIZE_PATH"
+            }
+            text_transformation {
+              priority = 2
               type     = "LOWERCASE"
             }
           }
@@ -2168,6 +2228,14 @@ resource "aws_wafv2_web_acl" "web" {
             }
             text_transformation {
               priority = 0
+              type     = "URL_DECODE"
+            }
+            text_transformation {
+              priority = 1
+              type     = "NORMALIZE_PATH"
+            }
+            text_transformation {
+              priority = 2
               type     = "LOWERCASE"
             }
           }

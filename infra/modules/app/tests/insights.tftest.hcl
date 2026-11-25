@@ -80,6 +80,15 @@ mock_provider "aws" {
 }
 mock_provider "archive" {}
 
+# 12-digit mock account ID (lambda_permission source_account is validated),
+# written as a number so no literal account identifier appears in the repo.
+override_data {
+  target = data.aws_caller_identity.current
+  values = {
+    account_id = 1e11
+  }
+}
+
 # The mock gives every queue and every bucket the same ARN, so a check that two
 # ARNs match would pass even if the wrong resource were wired in.
 override_resource {

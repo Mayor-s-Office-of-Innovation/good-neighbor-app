@@ -35,6 +35,32 @@ resource "aws_cloudfront_response_headers_policy" "sf311_media" {
   }
 }
 
+# Reject any path other than /v1/311-media at the edge so this public
+# attachment hostname never acts as a proxy for admin or device API routes.
+resource "aws_cloudfront_function" "sf311_media_path" {
+  name    = "${local.name_prefix}-sf311-media-path"
+  runtime = "cloudfront-js-2.0"
+  comment = "Allow only /v1/311-media on the dedicated 311 attachment distribution."
+  publish = true
+  code    = <<-EOT
+function handler(event) {
+  var request = event.request;
+  if (request.uri !== "/v1/311-media") {
+    return {
+      statusCode: 404,
+      statusDescription: "Not Found",
+      headers: {
+        "content-type": { value: "application/json; charset=utf-8" },
+        "cache-control": { value: "no-store" }
+      },
+      body: "{\"error\":\"not_found\"}"
+    };
+  }
+  return request;
+}
+EOT
+}
+
 resource "aws_cloudfront_distribution" "sf311_media" {
   #checkov:skip=CKV_AWS_305:API-only bearer media distribution; no index object exists and root requests intentionally return the API 404.
   #checkov:skip=CKV_AWS_86:Bearer tokens must not enter CloudFront standard access logs; API Gateway records route/status/request IDs without query strings.
@@ -67,6 +93,11 @@ resource "aws_cloudfront_distribution" "sf311_media" {
     cache_policy_id            = data.aws_cloudfront_cache_policy.disabled.id
     origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.sf311_media.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.sf311_media_path.arn
+    }
   }
 
   restrictions {

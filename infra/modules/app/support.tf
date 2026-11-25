@@ -95,6 +95,11 @@ data "aws_iam_policy_document" "support" {
   statement {
     actions   = ["kms:Decrypt"]
     resources = [aws_kms_key.app.arn]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["lambda.${data.aws_region.current.name}.amazonaws.com"]
+    }
   }
   statement {
     sid       = "ReadSupportOriginSecret"
