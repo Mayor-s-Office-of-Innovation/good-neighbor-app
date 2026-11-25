@@ -140,3 +140,30 @@ test("deploy.yml isolates @posthog/cli outside the AWS-credentialed job", () => 
   assert.match(download[1], /runner\.temp/);
   assert.match(deploySection, /infra\/scripts\/unpack-frontend-dist\.sh/);
 });
+
+test("deploy callers serialize whole runs on a group distinct from the job lock", () => {
+  for (const environment of ["dev", "prod"]) {
+    const text = readFileSync(
+      fileURLToPath(
+        new URL(
+          `../../.github/workflows/deploy-${environment}.yml`,
+          import.meta.url,
+        ),
+      ),
+      "utf8",
+    );
+    // Top-level (unindented) concurrency, so build-frontend is inside the lock.
+    const block = text.match(/^concurrency:\n((?: {2}.*\n)+)/m);
+    assert.ok(
+      block,
+      `deploy-${environment}.yml needs workflow-level concurrency`,
+    );
+    assert.match(block[1], new RegExp(`group: deploy-run-${environment}\\s`));
+    assert.match(block[1], /cancel-in-progress: false/);
+    // The same group at workflow and job level deadlocks and GitHub cancels.
+    assert.doesNotMatch(
+      block[1],
+      new RegExp(`group: deploy-${environment}\\s`),
+    );
+  }
+});
