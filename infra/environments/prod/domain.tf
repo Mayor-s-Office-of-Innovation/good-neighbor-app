@@ -10,19 +10,25 @@ data "aws_route53_zone" "frontend_root" {
 }
 
 resource "aws_route53_record" "goodneighbor_caa" {
-  zone_id = aws_route53_zone.goodneighbor.zone_id
-  name    = local.frontend_domain_name
-  type    = "CAA"
-  ttl     = 300
-  records = ["0 issue \"amazon.com\"", "0 issuewild \";\""]
+  # The same record already exists in the zone, created outside this
+  # Terraform; take it over instead of failing on create.
+  allow_overwrite = true
+  zone_id         = aws_route53_zone.goodneighbor.zone_id
+  name            = local.frontend_domain_name
+  type            = "CAA"
+  ttl             = 300
+  records         = ["0 issue \"amazon.com\"", "0 issuewild \";\""]
 }
 
 resource "aws_route53_record" "frontend_root_caa" {
-  zone_id = data.aws_route53_zone.frontend_root.zone_id
-  name    = local.legacy_frontend_domain_name
-  type    = "CAA"
-  ttl     = 300
-  records = ["0 issue \"amazon.com\"", "0 issuewild \";\""]
+  # The same record already exists in the zone, created outside this
+  # Terraform; take it over instead of failing on create.
+  allow_overwrite = true
+  zone_id         = data.aws_route53_zone.frontend_root.zone_id
+  name            = local.legacy_frontend_domain_name
+  type            = "CAA"
+  ttl             = 300
+  records         = ["0 issue \"amazon.com\"", "0 issuewild \";\""]
 }
 
 resource "aws_route53_record" "frontend_subdomain_delegation" {
