@@ -126,6 +126,95 @@ describe("admin roles", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("links a missing directory subject on first use when the username is the row's email", async () => {
+    const row = {
+      pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+      sk: "MANAGER#manager@example.org",
+      userId: "manager-1",
+      status: "active",
+    };
+    send
+      .mockResolvedValueOnce({ Item: row })
+      .mockResolvedValueOnce({
+        Attributes: { ...row, cognitoSubject: "sub-manager-1" },
+      })
+      .mockResolvedValueOnce({ Item: { status: "active" } });
+    const response = await siteAdminOnly(
+      event(
+        ADMIN_GROUPS.manager,
+        "manager@example.org",
+        "sub-manager-1",
+        true,
+        "Manager@example.org",
+      ),
+      "site-1",
+      async () => ({ statusCode: 200, body: "ok" }),
+    );
+    expect(response.statusCode).toBe(200);
+    const update = send.mock.calls[1][0].input;
+    expect(update.Key).toEqual({ pk: row.pk, sk: row.sk });
+    expect(update.ConditionExpression).toContain(
+      "attribute_not_exists(cognitoSubject)",
+    );
+    expect(update.ExpressionAttributeValues[":subject"]).toBe("sub-manager-1");
+  });
+
+  it("never links a directory row from the email claim alone", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+        sk: "MANAGER#victim@example.org",
+        userId: "victim-1",
+        status: "active",
+      },
+    });
+    const response = await siteAdminOnly(
+      event(
+        ADMIN_GROUPS.manager,
+        "victim@example.org",
+        "attacker-sub",
+        true,
+        "attacker@example.org",
+      ),
+      "site-1",
+      async () => ({ statusCode: 200, body: "ok" }),
+    );
+    expect(response.statusCode).toBe(403);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the stored subject when a concurrent request linked the row first", async () => {
+    const row = {
+      pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+      sk: "MANAGER#manager@example.org",
+      userId: "manager-1",
+      status: "active",
+    };
+    send
+      .mockResolvedValueOnce({ Item: row })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("conditional"), {
+          name: "ConditionalCheckFailedException",
+        }),
+      )
+      .mockResolvedValueOnce({
+        Item: { ...row, cognitoSubject: "other-sub" },
+      });
+    const response = await siteAdminOnly(
+      event(
+        ADMIN_GROUPS.manager,
+        "manager@example.org",
+        "sub-manager-1",
+        true,
+        "manager@example.org",
+      ),
+      "site-1",
+      async () => ({ statusCode: 200, body: "ok" }),
+    );
+    expect(response.statusCode).toBe(403);
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+
   it("rejects an inactive Compliance manager with an active Site assignment", async () => {
     send.mockResolvedValueOnce({
       Item: {
@@ -179,8 +268,15 @@ describe("admin roles", () => {
  * @param {string} [email]
  * @param {string} [sub]
  * @param {boolean} [emailVerified]
+ * @param {string} [username] the `cognito:username` claim, omitted when empty
  */
-function event(group, email = "", sub = "sub-default", emailVerified = true) {
+function event(
+  group,
+  email = "",
+  sub = "sub-default",
+  emailVerified = true,
+  username = "",
+) {
   return /** @type {any} */ ({
     requestContext: {
       authorizer: {
@@ -190,6 +286,7 @@ function event(group, email = "", sub = "sub-default", emailVerified = true) {
             email,
             sub,
             email_verified: emailVerified,
+            ...(username ? { "cognito:username": username } : {}),
           },
         },
       },

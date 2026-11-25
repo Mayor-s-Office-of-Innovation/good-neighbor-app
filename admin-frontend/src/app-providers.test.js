@@ -463,9 +463,11 @@ test("empty list replies after adopting or deactivating leave empty lists", asyn
   assert.ok(toastText().includes(t("admin.toast.providerDeactivated")));
 });
 
-test("a compliance manager can't add or create Programs from a provider", async () => {
+test("a compliance manager can't rename a provider or add or create its Programs", async () => {
   await openProviderPage("/providers/v1", { role: "compliance-manager" });
   assert.equal(title(), "Example Provider");
+  // Renaming is supervisor-only on the server, so the form isn't offered.
+  assert.ok(missing("#provider-details-form"));
   assert.ok(missing("#provider-program-form"));
   assert.ok(missing('a[href^="/programs/new"]'));
 });
