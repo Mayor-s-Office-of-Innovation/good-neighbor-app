@@ -101,8 +101,13 @@ describe("Site Manager memberships", () => {
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
     const transaction = send.mock.calls[3][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(8);
-    const membership = transaction.input.TransactItems[3].Put.Item;
+    expect(transaction.input.TransactItems).toHaveLength(9);
+    expect(
+      transaction.input.TransactItems.some((/** @type {any} */ item) =>
+        String(item.Put?.Item?.sk ?? "").startsWith("USER_SITE#"),
+      ),
+    ).toBe(true);
+    const membership = transaction.input.TransactItems[4].Put.Item;
     expect(membership).toMatchObject({
       siteId: "site-1",
       name: "Alex Rivera",
@@ -113,16 +118,16 @@ describe("Site Manager memberships", () => {
       programId: "program-1",
       userId: "user-1",
     });
-    expect(transaction.input.TransactItems[4].Put.Item.sk).toMatch(
+    expect(transaction.input.TransactItems[5].Put.Item.sk).toMatch(
       /^MANAGER_EMAIL#[a-f0-9]{64}$/,
     );
-    expect(transaction.input.TransactItems[5].Put.Item).toMatchObject({
+    expect(transaction.input.TransactItems[6].Put.Item).toMatchObject({
       type: "managerMembershipDirectory",
       membershipId: membership.membershipId,
       siteId: "site-1",
       status: "active",
     });
-    expect(transaction.input.TransactItems[6].Put.Item).toMatchObject({
+    expect(transaction.input.TransactItems[7].Put.Item).toMatchObject({
       eventType: "manager_membership_created",
       actor: "admin-1",
     });
@@ -171,8 +176,13 @@ describe("Site Manager memberships", () => {
     expect(send.mock.calls[2][0]).toBeInstanceOf(GetCommand);
     const transaction = send.mock.calls[5][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(8);
-    const membership = transaction.input.TransactItems[3].Put.Item;
+    expect(transaction.input.TransactItems).toHaveLength(9);
+    expect(
+      transaction.input.TransactItems.some((/** @type {any} */ item) =>
+        String(item.Put?.Item?.sk ?? "").startsWith("USER_SITE#"),
+      ),
+    ).toBe(true);
+    const membership = transaction.input.TransactItems[4].Put.Item;
     expect(membership).toMatchObject({
       siteId: "site-1",
       name: "Alex Rivera",
@@ -183,16 +193,16 @@ describe("Site Manager memberships", () => {
       programId: "program-1",
       userId: "user-1",
     });
-    expect(transaction.input.TransactItems[4].Put.Item.sk).toMatch(
+    expect(transaction.input.TransactItems[5].Put.Item.sk).toMatch(
       /^MANAGER_EMAIL#[a-f0-9]{64}$/,
     );
-    expect(transaction.input.TransactItems[5].Put.Item).toMatchObject({
+    expect(transaction.input.TransactItems[6].Put.Item).toMatchObject({
       type: "managerMembershipDirectory",
       membershipId: membership.membershipId,
       siteId: "site-1",
       status: "active",
     });
-    expect(transaction.input.TransactItems[6].Put.Item).toMatchObject({
+    expect(transaction.input.TransactItems[7].Put.Item).toMatchObject({
       eventType: "manager_membership_created",
       actor: "admin-1",
     });
@@ -287,7 +297,8 @@ describe("Site Manager memberships", () => {
     expect(JSON.parse(String(response.body)).revokedBindingCount).toBe(1);
     const items = send.mock.calls[4][0].input.TransactItems;
     expect(items[0].Delete.Key.sk).toBe("ASSIGNED_USER#user-2");
-    expect(items[1].Update.ExpressionAttributeValues[":next"]).toBe(1);
+    expect(items[1].Delete.Key.sk).toBe("USER_SITE#user-2#site-1");
+    expect(items[2].Update.ExpressionAttributeValues[":next"]).toBe(1);
     expect(JSON.stringify(items)).not.toContain("DEVICE_BINDING#one");
     expect(JSON.stringify(items)).toContain("primaryContact");
   });

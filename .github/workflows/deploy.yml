@@ -321,6 +321,31 @@ jobs:
           cat "$RUNNER_TEMP/people-migration-verification.json"
           jq -e '.people == 0 and (.conflicts | length) == 0' "$RUNNER_TEMP/people-migration-verification.json"
 
+      # Program-staff assignment pointers (backend/src/lib/assignment-pointers.js):
+      # backfill once, then repair any drift on every deploy. Person edits
+      # depend on them to find every Site a person is shown at. Counts only.
+      - name: Check assignment pointers
+        working-directory: ${{ github.workspace }}
+        env:
+          DYNAMO_TABLE: ${{ steps.tf.outputs.dynamo_table }}
+        run: node backend/scripts/migrate-assignment-pointers.mjs
+
+      - name: Apply assignment pointers
+        working-directory: ${{ github.workspace }}
+        env:
+          DYNAMO_TABLE: ${{ steps.tf.outputs.dynamo_table }}
+        run: node backend/scripts/migrate-assignment-pointers.mjs --apply
+
+      - name: Verify assignment pointers complete
+        working-directory: ${{ github.workspace }}
+        env:
+          DYNAMO_TABLE: ${{ steps.tf.outputs.dynamo_table }}
+        run: |
+          set -euo pipefail
+          node backend/scripts/migrate-assignment-pointers.mjs > "$RUNNER_TEMP/assignment-pointer-verification.json"
+          cat "$RUNNER_TEMP/assignment-pointer-verification.json"
+          jq -e '.missing == 0 and .orphaned == 0' "$RUNNER_TEMP/assignment-pointer-verification.json"
+
       # Shared by dev and prod; complete the one-time Site rollout before
       # publishing the frontend. Replays preserve later explicit rollbacks.
       - name: Enable duplicate UI for existing sites

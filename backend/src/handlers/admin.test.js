@@ -393,7 +393,7 @@ describe("provider and site management", () => {
 
     expect(res.statusCode).toBe(201);
     const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[3][0]);
-    expect(tx.input.TransactItems).toHaveLength(7);
+    expect(tx.input.TransactItems).toHaveLength(8);
     expect(tx.input.TransactItems?.[0]?.Put?.Item).toMatchObject({
       addressParts: { city: "San Francisco", state: "CA", zip: "94102" },
       publicContact: {
@@ -408,7 +408,11 @@ describe("provider and site management", () => {
       sk: "ASSIGNED_USER#user-one",
       programId: "program-one",
     });
-    expect(tx.input.TransactItems?.[5]?.Update).toMatchObject({
+    expect(tx.input.TransactItems?.[5]?.Put?.Item).toMatchObject({
+      pk: "PROGRAM#program-one",
+      sk: "USER_SITE#user-one#provider-one-main-site",
+    });
+    expect(tx.input.TransactItems?.[6]?.Update).toMatchObject({
       Key: { pk: "PROGRAM#program-one", sk: "USER#user-one" },
     });
   });

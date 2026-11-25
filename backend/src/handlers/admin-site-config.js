@@ -1,3 +1,7 @@
+import {
+  assignmentPointerDelete,
+  assignmentPointerPut,
+} from "../lib/assignment-pointers.js";
 import { perimeterAttribution } from "../lib/perimeter-attribution.js";
 import {
   readCompliancePeriods,
@@ -641,6 +645,12 @@ export const assignSiteUser = (event) =>
     /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
     const items = [
       put(assignment),
+      assignmentPointerPut(tableName, {
+        programId: site.leadProgramId,
+        userId,
+        siteId,
+        now,
+      }),
       {
         Update: {
           TableName: tableName,
@@ -780,6 +790,11 @@ export const unassignSiteUser = (event) =>
                 ConditionExpression: "attribute_exists(pk)",
               },
             },
+            assignmentPointerDelete(tableName, {
+              programId: assignment.programId,
+              userId,
+              siteId,
+            }),
             {
               Update: {
                 TableName: tableName,

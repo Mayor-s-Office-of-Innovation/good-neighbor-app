@@ -1,3 +1,4 @@
+import { assignmentPointerPut } from "../lib/assignment-pointers.js";
 import { perimeterAttribution } from "../lib/perimeter-attribution.js";
 import { readSiteParts, boundedReads } from "../lib/admin-site-reads.js";
 import { loadAdminDirectory } from "./admin-users.js";
@@ -553,6 +554,12 @@ export const createSite = (event) =>
               "attribute_not_exists(pk) AND attribute_not_exists(sk)",
           },
         },
+        assignmentPointerPut(tableName, {
+          programId: leadProgramId,
+          userId: primaryContactUserId,
+          siteId,
+          now,
+        }),
         {
           Update: {
             TableName: tableName,

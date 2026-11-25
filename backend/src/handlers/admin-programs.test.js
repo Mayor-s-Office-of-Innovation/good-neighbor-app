@@ -946,6 +946,7 @@ describe("program administration", () => {
     ).toBe("removing");
     const tx = send.mock.calls[8][0].input.TransactItems;
     expect(tx[0].Delete.Key.sk).toBe("ASSIGNED_USER#user-1");
+    expect(tx[1].Delete.Key.sk).toMatch(/^USER_SITE#user-1#/);
     expect(tx.some((/** @type {any} */ item) => item.Update)).toBe(true);
     expect(send.mock.calls[9][0]).toBeInstanceOf(DeleteCommand);
   });

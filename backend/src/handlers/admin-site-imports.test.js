@@ -516,6 +516,19 @@ describe("Site CSV import", () => {
           (item) => item.Put?.Item?.type === "siteComplianceManagerAssignment",
         ),
       ).toBe(true);
+      // Every program-staff assignment the import creates gets its pointer.
+      const created = items
+        .map((item) => item.Put?.Item)
+        .filter((item) => String(item?.sk ?? "").startsWith("ASSIGNED_USER#"));
+      expect(created.length).toBeGreaterThan(0);
+      for (const assignment of created ?? [])
+        expect(
+          items.some(
+            (item) =>
+              item.Put?.Item?.sk ===
+              `USER_SITE#${assignment?.userId}#${assignment?.siteId}`,
+          ),
+        ).toBe(true);
       const providerMembership = items.find(
         (item) => item.Put?.Item?.type === "providerManagerMembership",
       )?.Put?.Item;

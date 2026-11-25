@@ -13,6 +13,7 @@ import {
 } from "../lib/people.js";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
+import { assignedSiteIds } from "../lib/assignment-pointers.js";
 import { jsonResponse } from "../http.js";
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -140,14 +141,40 @@ export const updatePerson = (event) =>
             .filter(Boolean),
         );
         // A program staff record may only be edited from a Site that program
-        // leads. There is deliberately no "every assigned Site" check:
-        // `sources` doesn't list later assignments, so such a check refuses
-        // managers wrongly, and the edit only writes the rows in `sources`
-        // (other Sites keep their own copy of the contact).
+        // leads, and only by a manager of every Site that shows this person:
+        // other Sites read the shared person record, not their own copy. The
+        // assignment pointers list those Sites (`sources` doesn't track later
+        // assignments); if they disagree with the record's own count, the
+        // index can't be trusted for this person and a supervisor edits.
+        const assignedSites = new Set();
         for (const source of programSources) {
-          if (!authorizedLeadPrograms.has(source.pk.slice(8))) {
+          const programId = source.pk.slice(8);
+          if (!authorizedLeadPrograms.has(programId)) {
             return jsonResponse(403, { error: "site_assignment_required" });
           }
+          const userId = source.sk.slice(5);
+          const [userResult, pointedSites] = await Promise.all([
+            ddb.send(
+              new GetCommand({
+                TableName: tableName,
+                Key: { pk: source.pk, sk: source.sk },
+                ConsistentRead: true,
+              }),
+            ),
+            assignedSiteIds(tableName, programId, userId),
+          ]);
+          if (
+            pointedSites.length !==
+            Number(userResult.Item?.siteAssignmentCount ?? 0)
+          ) {
+            return jsonResponse(403, { error: "supervisor_required" });
+          }
+          for (const siteId of pointedSites) assignedSites.add(siteId);
+        }
+        const others = [...assignedSites].filter((id) => !sites.includes(id));
+        if (others.length) {
+          const otherDenied = await authorizeSiteChanges(event, others);
+          if (otherDenied) return otherDenied;
         }
       }
     }
