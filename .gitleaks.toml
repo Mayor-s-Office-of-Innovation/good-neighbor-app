@@ -9,4 +9,9 @@ regexes = [
   # Public design-file identifier in category-icons/sources.json, not an API token.
   # Match only this value, including historical commits; keep scanning all files.
   '''^muHTWTeWZtAiTmHE1UMxJd$''',
+  # Synthetic S3 object keys in unit tests (complaints.test.js, api.test.js)
+  # flagged by generic-api-key in Gitleaks v8.30+ because `s3Key` ends in `Key`.
+  '''^complaints/key$''',
+  '''^synthetic/webp$''',
+  '''^synthetic/replacement$''',
 ]
