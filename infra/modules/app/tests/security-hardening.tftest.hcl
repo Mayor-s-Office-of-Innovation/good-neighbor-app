@@ -94,7 +94,7 @@ mock_provider "archive" {}
 override_data {
   target = data.aws_caller_identity.current
   values = {
-    account_id = join("", ["0000", "0000", "0000"])
+    account_id = 1e11
   }
 }
 
@@ -385,10 +385,9 @@ run "storage_and_transport_hardening" {
 
   assert {
     condition = anytrue([
-      for s in jsondecode(aws_kms_key.app.policy).Statement : (
-        s.Sid == "AllowCloudWatchLogs"
-        && !contains(try(tolist(s.Condition.ArnLike["kms:EncryptionContext:aws:logs:arn"]), [s.Condition.ArnLike["kms:EncryptionContext:aws:logs:arn"]]), "arn:aws:logs:us-west-2:${data.aws_caller_identity.current.account_id}:log-group:*")
-      )
+      for s in jsondecode(aws_kms_key.app.policy).Statement :
+      !contains(try(tolist(s.Condition.ArnLike["kms:EncryptionContext:aws:logs:arn"]), [s.Condition.ArnLike["kms:EncryptionContext:aws:logs:arn"]]), "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:*")
+      if s.Sid == "AllowCloudWatchLogs"
     ])
     error_message = "aws_kms_key.app AllowCloudWatchLogs must scope to this application's log-group prefixes, not log-group:*."
   }
