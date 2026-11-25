@@ -223,6 +223,11 @@ async function issueGrant(tableName, site, membership, now) {
     entityType: "ENROLLMENT_GRANT",
     grantId,
     membershipId: membership.membershipId,
+    // Pin the grant to today's membership and site credentials, as admin-issued
+    // manager grants do, so a site-wide revocation or a membership change
+    // retires a recovery link that is still in the mail.
+    membershipGeneration: Number(membership.generation ?? 0),
+    siteCredentialGeneration: Number(site.siteCredentialGeneration ?? 0),
     siteId: site.siteId,
     siteName: site.name,
     accessLevel: "manager",

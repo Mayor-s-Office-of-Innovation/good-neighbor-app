@@ -1634,20 +1634,28 @@ function call(handler, evt) {
 }
 
 it("returns the current directory name to the dashboard site directory", async () => {
-  send.mockResolvedValueOnce({
-    Items: [
-      {
-        pk: "SITE#site-1",
-        sk: "#META",
-        oversight: {
-          cityProgramManagerId: "manager-1",
-          cityProgramManager: "Old Name",
+  send.mockImplementation(async (command) => {
+    if (command instanceof GetCommand && command.input.Key?.sk === "#META") {
+      return {
+        Item: {
+          pk: "SITE#site-1",
+          sk: "#META",
+          oversight: {
+            cityProgramManagerId: "manager-1",
+            cityProgramManager: "Old Name",
+          },
         },
-      },
-    ],
-  });
-  send.mockResolvedValueOnce({
-    Items: [{ userId: "manager-1", firstName: "New", lastName: "Name" }],
+      };
+    }
+    if (
+      command.input?.ExpressionAttributeValues?.[":pk"] ===
+      "ADMIN_DIRECTORY#PROGRAM_MANAGERS"
+    ) {
+      return {
+        Items: [{ userId: "manager-1", firstName: "New", lastName: "Name" }],
+      };
+    }
+    return { Items: [] };
   });
   const request = /** @type {any} */ ({
     pathParameters: { siteId: "site-1" },
@@ -1661,6 +1669,23 @@ it("returns the current directory name to the dashboard site directory", async (
   expect(JSON.parse(response.body).items[0].oversight.cityProgramManager).toBe(
     "New Name",
   );
+  // Default view must never issue an unfiltered SITE# partition scan.
+  expect(
+    send.mock.calls.some(
+      ([cmd]) =>
+        cmd.input?.KeyConditionExpression === "pk = :pk" &&
+        cmd.input?.ExpressionAttributeValues?.[":pk"] === "SITE#site-1",
+    ),
+  ).toBe(false);
+});
+
+it("rejects unknown ?view= values on GET /admin/v1/sites/{siteId}", async () => {
+  const request = event(undefined, "compliance-manager", { siteId: "s1" });
+  request.queryStringParameters = { view: "raw-dump" };
+  const response = await call(getAdminSite, request);
+  expect(response.statusCode).toBe(400);
+  expect(JSON.parse(String(response.body))).toEqual({ error: "invalid_view" });
+  expect(send).not.toHaveBeenCalled();
 });
 
 it("loads every roster prefix page without querying the entire site history", async () => {

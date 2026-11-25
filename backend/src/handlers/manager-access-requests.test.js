@@ -48,7 +48,12 @@ describe("public Manager access recovery", () => {
         Items: [{ siteId: "site-1", membershipId: "membership-1" }],
       })
       .mockResolvedValueOnce({
-        Item: { siteId: "site-1", name: "Site One", status: "active" },
+        Item: {
+          siteId: "site-1",
+          name: "Site One",
+          status: "active",
+          siteCredentialGeneration: 3,
+        },
       })
       .mockResolvedValueOnce({
         Item: {
@@ -57,6 +62,7 @@ describe("public Manager access recovery", () => {
           email: "alex@example.org",
           emailHash: await verifier("alex@example.org"),
           status: "active",
+          generation: 2,
         },
       })
       .mockResolvedValueOnce({ Items: [] })
@@ -75,6 +81,16 @@ describe("public Manager access recovery", () => {
     expect(links[0].enrollmentUrl).toContain("#enrollment_grant=");
     const transaction = mocks.send.mock.calls[6][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    // Pinned like admin-issued grants, so a revocation retires the link.
+    const grant = transaction.input.TransactItems.map(
+      (/** @type {any} */ item) => item.Put?.Item,
+    ).find((/** @type {any} */ item) =>
+      String(item?.sk ?? "").startsWith("MANAGER_GRANT#"),
+    );
+    expect(grant).toMatchObject({
+      membershipGeneration: 2,
+      siteCredentialGeneration: 3,
+    });
     expect(JSON.stringify(response)).not.toContain("enrollment_token");
   });
 

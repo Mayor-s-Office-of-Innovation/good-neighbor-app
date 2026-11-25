@@ -1,3 +1,5 @@
+import { GetCommand } from "@aws-sdk/lib-dynamodb";
+import { ddb } from "../db.js";
 import { queryAllItems } from "./query-all-items.js";
 
 /** Validate and checkpoint the Provider Manager authority behind an invitation.
@@ -48,15 +50,25 @@ export async function providerInvitationAuthority(
     Object.entries(snapshot).some(([key, value]) => grant[key] !== value)
   )
     return null;
-  const result = await queryAllItems({
-    TableName: tableName,
-    KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-    ExpressionAttributeValues: {
-      ":pk": `PROVIDER#${binding.providerId}`,
-      ":prefix": "PROVIDER_MANAGER#",
-    },
-    ConsistentRead: true,
-  });
+  const [providerResult, result] = await Promise.all([
+    ddb.send(
+      new GetCommand({
+        TableName: tableName,
+        Key: { pk: `PROVIDER#${binding.providerId}`, sk: "#META" },
+        ConsistentRead: true,
+      }),
+    ),
+    queryAllItems({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": `PROVIDER#${binding.providerId}`,
+        ":prefix": "PROVIDER_MANAGER#",
+      },
+      ConsistentRead: true,
+    }),
+  ]);
+  if (providerResult.Item?.status === "inactive") return null;
   const membership = (result.Items || []).find(
     (item) => item.membershipId === binding.providerMembershipId,
   );
@@ -114,6 +126,18 @@ export async function providerInvitationAuthority(
             ":authActive": "active",
             ":authGeneration": snapshot.issuerProviderMembershipGeneration,
           },
+        },
+      },
+      // A provider deactivated after the read above must still stop this
+      // redemption. Same rule as the read: only an explicit "inactive" refuses.
+      {
+        ConditionCheck: {
+          TableName: tableName,
+          Key: { pk: `PROVIDER#${binding.providerId}`, sk: "#META" },
+          ConditionExpression:
+            "attribute_not_exists(#authStatus) OR #authStatus <> :authInactive",
+          ExpressionAttributeNames: { "#authStatus": "status" },
+          ExpressionAttributeValues: { ":authInactive": "inactive" },
         },
       },
     ],

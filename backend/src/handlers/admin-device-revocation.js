@@ -1,3 +1,4 @@
+import { cancelPendingSiteGrants } from "../lib/pending-site-grants.js";
 import { getPerson } from "../lib/people.js";
 import { queryAllItems } from "../lib/query-all-items.js";
 import { assignmentsMatchingEmail } from "../lib/manager-identity.js";
@@ -604,6 +605,14 @@ export const revokeAllSiteDeviceBindings = (event) =>
       throw error;
     }
 
+    // Retire outstanding invitations too, so a link issued before this
+    // revocation can't create a new device afterwards.
+    const grantCancellation = cancelPendingSiteGrants(tableName, siteId, {
+      actor,
+      now,
+      cutoff: now,
+      operationId,
+    }).catch(() => ({ cancelledCount: 0, failedCount: 1 }));
     const results = await Promise.allSettled([
       ...bindings
         .filter((binding) => binding.status !== "revoked")
@@ -623,9 +632,11 @@ export const revokeAllSiteDeviceBindings = (event) =>
         revokeLegacy(tableName, siteId, device, now, actor),
       ),
     ]);
-    const failedCount = results.filter(
+    const grants = await grantCancellation;
+    const bindingFailedCount = results.filter(
       (result) => result.status === "rejected",
     ).length;
+    const failedCount = bindingFailedCount + grants.failedCount;
     const completedAt = new Date().toISOString();
     const status = failedCount ? "partial" : "complete";
     await ddb.send(
@@ -644,7 +655,7 @@ export const revokeAllSiteDeviceBindings = (event) =>
           ":status": status,
           ":completedAt": completedAt,
           ":failedCount": failedCount,
-          ":reconciledCount": results.length - failedCount,
+          ":reconciledCount": results.length - bindingFailedCount,
         },
       }),
     );
@@ -664,6 +675,7 @@ export const revokeAllSiteDeviceBindings = (event) =>
       status,
       affectedCount: requestedCount,
       failedCount,
+      cancelledGrantCount: grants.cancelledCount,
       siteCredentialGeneration: nextSiteGeneration,
     });
   });

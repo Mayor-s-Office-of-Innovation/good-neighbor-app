@@ -8,10 +8,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+// Pending-invitation cancellation has its own tests (pending-site-grants.test.js).
+const { cancelPendingSiteGrants } = vi.hoisted(() => ({
+  cancelPendingSiteGrants: vi.fn(),
+}));
+vi.mock("../lib/pending-site-grants.js", () => ({ cancelPendingSiteGrants }));
 
 const { handler } = await import("./reconcile-site-revocation.js");
 
 beforeEach(() => {
+  cancelPendingSiteGrants
+    .mockReset()
+    .mockResolvedValue({ cancelledCount: 0, failedCount: 0 });
   send.mockReset();
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
 });
@@ -49,6 +57,16 @@ describe("emergency Site revocation reconciliation", () => {
 
     await handler(event(), /** @type {any} */ ({}), () => {});
 
+    expect(cancelPendingSiteGrants).toHaveBeenCalledWith(
+      expect.any(String),
+      "site-1",
+      expect.objectContaining({
+        actor: "admin-1",
+        operationId: "operation-1",
+        // Only invitations issued before the revocation started.
+        cutoff: "2026-10-03T12:00:00.000Z",
+      }),
+    );
     expect(send.mock.calls[0][0]).toBeInstanceOf(QueryCommand);
     const bindingTransaction = send.mock.calls[2][0];
     expect(bindingTransaction).toBeInstanceOf(TransactWriteCommand);
@@ -132,6 +150,19 @@ describe("emergency Site revocation reconciliation", () => {
     ).rejects.toThrow("Failed to reconcile 1 device records");
 
     expect(send).toHaveBeenCalledTimes(3);
+  });
+
+  it("throws when pending invitations can't all be cancelled so SQS retries", async () => {
+    send
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] });
+    cancelPendingSiteGrants.mockResolvedValueOnce({
+      cancelledCount: 1,
+      failedCount: 1,
+    });
+    await expect(
+      handler(event(), /** @type {any} */ ({}), () => {}),
+    ).rejects.toThrow("Failed to cancel 1 pending invitations");
   });
 
   it("still finalizes after an idempotent Site-result conflict", async () => {

@@ -210,6 +210,7 @@ describe("complaint upload lifecycle", () => {
     headObject.mockResolvedValue({
       contentType: "image/jpeg",
       contentLength: 3,
+      metadata: { "declared-bytes": "3" },
     });
     getObjectBytes.mockResolvedValue({
       bytes: Buffer.from([0xff, 0xd8, 0xff]),
@@ -246,6 +247,7 @@ describe("complaint upload lifecycle", () => {
     headObject.mockResolvedValue({
       contentType: "application/pdf",
       contentLength: validBytes.length,
+      metadata: { "declared-bytes": String(validBytes.length) },
     });
     getObjectBytes.mockResolvedValueOnce({ bytes: validBytes });
     ddbSend.mockResolvedValueOnce({});
@@ -265,6 +267,7 @@ describe("complaint upload lifecycle", () => {
     headObject.mockResolvedValue({
       contentType: "application/pdf",
       contentLength: fake.length,
+      metadata: { "declared-bytes": String(fake.length) },
     });
     getObjectBytes.mockResolvedValueOnce({ bytes: fake });
     expect(
@@ -450,6 +453,7 @@ describe("complaint image thumbnails", () => {
     headObject.mockResolvedValue({
       contentType: "image/jpeg",
       contentLength: 3,
+      metadata: { "declared-bytes": "3" },
     });
     getObjectBytes.mockResolvedValue({ bytes });
   };
@@ -510,6 +514,61 @@ describe("complaint image thumbnails", () => {
     const put = ddbSend.mock.calls[0][0].input.TransactItems[1].Put.Item;
     expect(put).not.toHaveProperty("thumbS3Key");
   });
+
+  /**
+   * Answer the two reads the mismatch path makes.
+   * @param {{ complaintStatus: string, registered: boolean }} state
+   */
+  const mismatchReads = ({ complaintStatus, registered }) =>
+    ddbSend.mockImplementation(async (/** @type {any} */ command) =>
+      String(command.input.Key?.sk ?? "").includes(ARTIFACT_ID)
+        ? { Item: registered ? artifactRow() : undefined }
+        : { Item: { status: complaintStatus } },
+    );
+  const mismatchedUpload = () =>
+    headObject.mockResolvedValueOnce({
+      contentType: "image/jpeg",
+      contentLength: 1024,
+      metadata: { "declared-bytes": "1" },
+    });
+
+  it("rejects complaint artifacts whose uploaded size differs from presigned declared-bytes", async () => {
+    mismatchedUpload();
+    mismatchReads({ complaintStatus: "draft", registered: false });
+    const response = await registerComplaintArtifact(
+      event({ body: { ...imageBody, contentLength: 1024 } }),
+    );
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({ error: "media_mismatch" });
+    expect(setObjectTags).toHaveBeenCalledWith({
+      bucket: "complaints",
+      key: KEY,
+      tags: { state: "rejected" },
+    });
+  });
+
+  it.each([
+    [
+      "an already registered artifact",
+      { complaintStatus: "draft", registered: true },
+    ],
+    [
+      "a submitted complaint",
+      { complaintStatus: "submitted", registered: true },
+    ],
+  ])(
+    "never marks %s for deletion on a mismatched request",
+    async (_, state) => {
+      mismatchedUpload();
+      mismatchReads(state);
+      const response = await registerComplaintArtifact(
+        event({ body: { ...imageBody, contentLength: 1024 } }),
+      );
+      expect(response.statusCode).toBe(400);
+      expect(JSON.parse(response.body)).toEqual({ error: "media_mismatch" });
+      expect(setObjectTags).not.toHaveBeenCalled();
+    },
+  );
 
   it("retags the thumbnail with its original when the complaint is submitted", async () => {
     ddbSend

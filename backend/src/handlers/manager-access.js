@@ -265,6 +265,7 @@ const createStaffGrantAttempt = async (event) => {
           issuerAuthorityScope: "site",
           issuerMembershipId: issuer.membershipId,
           issuerMembershipGeneration: Number(issuer.membershipGeneration ?? 0),
+          siteCredentialGeneration: Number(site.siteCredentialGeneration ?? 0),
         }
       : {}),
     createdAt: nowIso,

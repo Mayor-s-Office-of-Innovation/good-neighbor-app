@@ -639,14 +639,23 @@ export const getAdminSite = (event) =>
       status: ["LETTER_EMAIL#", "LETTER_JOB#"],
       letters: ["COMPLIANCE_TERMS#", "LETTER_JOB#"],
     };
+    if (view && !Object.hasOwn(prefixes, view)) {
+      return jsonResponse(400, { error: "invalid_view" });
+    }
+    // Never fall back to an unfiltered SITE# partition dump (which would expose
+    // DEVICE#, DEVICE_BINDING#, *GRANT#, CHECK#, TASK#, COMPLAINT#, and CARE_WORK#).
+    const defaultPrefixes = [
+      "ASSIGNED_USER#",
+      "MANAGER_MEMBERSHIP#",
+      "COMPLIANCE_MANAGER#",
+      "COMPLIANCE_TERMS#",
+      "LETTER_JOB#",
+    ];
     const res = {
-      Items:
-        view && prefixes[view]
-          ? await readSiteParts(siteId, prefixes[view])
-          : await queryAll({
-              KeyConditionExpression: "pk = :pk",
-              ExpressionAttributeValues: { ":pk": `SITE#${siteId}` },
-            }),
+      Items: await readSiteParts(
+        siteId,
+        view ? prefixes[view] : defaultPrefixes,
+      ),
     };
     let nextCursor = "";
     if (view === "letters" && res.Items.length) {
@@ -1557,6 +1566,7 @@ export const issueAdminSetupCode = (event) =>
       issuedTo: email,
       issuedBy: "central-admin",
       accessLevel,
+      siteCredentialGeneration: Number(site.siteCredentialGeneration ?? 0),
     });
     return jsonResponse(201, {
       setupCode: {

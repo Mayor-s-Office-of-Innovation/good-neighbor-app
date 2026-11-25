@@ -6,6 +6,7 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
+import { cancelPendingSiteGrants } from "../lib/pending-site-grants.js";
 
 /**
  * Reconcile display and refresh records after an emergency operation has
@@ -47,6 +48,21 @@ async function reconcileSite(message) {
       revokeLegacyDevice(tableName, message.siteId, device, now, message.actor),
     ),
   ]);
+  // Retire the Site's outstanding invitations as part of the same revocation.
+  // Idempotent: a retried message finds them already cancelled.
+  // Only invitations issued before the revocation started: a late or retried
+  // message must not cancel ones issued since to restore access.
+  const grants = await cancelPendingSiteGrants(tableName, message.siteId, {
+    actor: message.actor,
+    now,
+    cutoff: message.startedAt,
+    operationId: message.operationId,
+  });
+  if (grants.failedCount) {
+    throw new Error(
+      `Failed to cancel ${grants.failedCount} pending invitations`,
+    );
+  }
   const failures = results.filter((result) => result.status === "rejected");
   if (failures.length) {
     throw new AggregateError(

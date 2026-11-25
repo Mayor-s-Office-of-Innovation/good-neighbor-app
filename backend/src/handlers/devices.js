@@ -472,12 +472,22 @@ export async function bindingLifecycleValid(
         Number(site.providerAccessGeneration ?? 0)
     )
       return false;
-    const membership = await findProviderManager(
-      tableName,
-      String(device.providerId),
-      String(device.providerMembershipId),
-      consistentRead,
-    );
+    const [providerResult, membership] = await Promise.all([
+      ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `PROVIDER#${device.providerId}`, sk: "#META" },
+          ConsistentRead: consistentRead,
+        }),
+      ),
+      findProviderManager(
+        tableName,
+        String(device.providerId),
+        String(device.providerMembershipId),
+        consistentRead,
+      ),
+    ]);
+    if (providerResult.Item?.status === "inactive") return false;
     return Boolean(
       membership?.status === "active" &&
         Number(membership.generation ?? 0) ===

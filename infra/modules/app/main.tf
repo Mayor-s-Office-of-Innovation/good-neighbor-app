@@ -1199,14 +1199,15 @@ resource "aws_cognito_user_pool" "users" {
 }
 
 resource "aws_cognito_user_pool_client" "admin" {
-  # Persist login for one week while keeping API credentials short-lived.
-  access_token_validity   = 1
-  id_token_validity       = 1
+  # Persist login for one week while keeping stateless JWTs short-lived (15 min)
+  # so role demotions and suspensions take effect quickly.
+  access_token_validity   = 15
+  id_token_validity       = 15
   refresh_token_validity  = 7
   enable_token_revocation = true
   token_validity_units {
-    access_token  = "hours"
-    id_token      = "hours"
+    access_token  = "minutes"
+    id_token      = "minutes"
     refresh_token = "days"
   }
 

@@ -41,6 +41,7 @@ const setupCodeSecretCache = new Map();
  * @property {string} siteId
  * @property {string} siteName
  * @property {"general"|"manager"|"admin"} [accessLevel]
+ * @property {number} [siteCredentialGeneration]
  * @property {string} [providerId]
  * @property {string} [providerName]
  * @property {string} [providerSiteId]
@@ -92,6 +93,13 @@ export async function validateSetupCode(rawCode, options = {}) {
     if (!isSetupCodeUsable(setup, now)) return null;
     const site = await getActiveSite(setup.siteId, tableName);
     if (!site) return null;
+    if (
+      setup.siteCredentialGeneration !== undefined &&
+      Number(setup.siteCredentialGeneration) !==
+        Number(site.siteCredentialGeneration ?? 0)
+    ) {
+      return null;
+    }
     if (!(await isCurrentSetupCode(setup, tableName))) return null;
     return {
       kind: "setupCode",
@@ -156,7 +164,7 @@ export function consumeSetupCodeTransactItem(valid, nowIso) {
 /**
  * Issue a setup code for a site/contact, invalidating any pending code for the
  * same pair before writing the replacement.
- * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, accessLevel?: "general"|"manager"|"admin", now?: Date, generateCode?: () => string }} input
+ * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, accessLevel?: "general"|"manager"|"admin", siteCredentialGeneration?: number, now?: Date, generateCode?: () => string }} input
  * @returns {Promise<{ code: string, item: SetupCodeItem }>}
  */
 export async function issueSetupCode(input) {
@@ -464,7 +472,7 @@ function writeCurrentSetupCode(input, item) {
 }
 
 /**
- * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, accessLevel?: "general"|"manager"|"admin", now: Date, nowIso: string, contactHash: string, code: string, codeVerifier: string }} input
+ * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, accessLevel?: "general"|"manager"|"admin", siteCredentialGeneration?: number, now: Date, nowIso: string, contactHash: string, code: string, codeVerifier: string }} input
  * @returns {SetupCodeItem}
  */
 function setupCodeItem(input) {
@@ -481,6 +489,9 @@ function setupCodeItem(input) {
     siteId: input.siteId,
     siteName: input.siteName,
     accessLevel: normalizeAccessLevel(input.accessLevel),
+    ...(input.siteCredentialGeneration !== undefined
+      ? { siteCredentialGeneration: Number(input.siteCredentialGeneration) }
+      : {}),
     providerId: input.providerId,
     providerName: input.providerName,
     providerSiteId: input.providerSiteId,
