@@ -3,9 +3,17 @@
 // retires outstanding links directly instead of relying only on the generation
 // check at redemption. That check skips grants issued before grants carried a
 // generation, so this is what retires those.
+//
+// Only grants issued at or before the revocation (`cutoff`) are cancelled, so a
+// late or retried run never cancels invitations issued afterwards to restore
+// access.
 
 import { randomUUID } from "node:crypto";
-import { TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DeleteCommand,
+  TransactWriteCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { retireEnrollmentLookup } from "../handlers/enrollment-retention.js";
 import { queryAllItems } from "./query-all-items.js";
@@ -16,7 +24,8 @@ const GRANT_PREFIXES = ["MANAGER_GRANT#", "STAFF_GRANT#"];
 /**
  * @param {string} tableName
  * @param {string} siteId
- * @param {{ actor: string, now: string, operationId?: string }} context
+ * @param {{ actor: string, now: string, cutoff: string, operationId?: string }} context
+ *   `cutoff`: the revocation's own timestamp (ISO); later grants are left alone
  * @returns {Promise<{ cancelledCount: number, failedCount: number }>}
  */
 export async function cancelPendingSiteGrants(tableName, siteId, context) {
@@ -35,7 +44,10 @@ export async function cancelPendingSiteGrants(tableName, siteId, context) {
   );
   const pending = pages
     .flatMap((page) => page.Items)
-    .filter((grant) => grant.status === "pending");
+    .filter(
+      (grant) =>
+        grant.status === "pending" && issuedAt(grant) <= context.cutoff,
+    );
   const outcomes = await Promise.all(
     pending.map((grant) => cancelGrant(tableName, siteId, grant, context)),
   );
@@ -97,23 +109,26 @@ async function cancelGrant(tableName, siteId, grant, { actor, now }) {
       ":reason": "site_revocation",
     },
   };
-  const pointer =
+  const pointerKey =
     String(grant.sk).startsWith("MANAGER_GRANT#") && grant.membershipId
-      ? [
-          {
-            Delete: {
-              TableName: tableName,
-              Key: {
-                pk: `SITE#${siteId}`,
-                sk: `${grant.issuedBy === "manager-email-recovery" ? "MANAGER_RECOVERY_GRANT_CURRENT" : "MANAGER_GRANT_CURRENT"}#${grant.membershipId}`,
-              },
-              ConditionExpression:
-                "attribute_not_exists(pk) OR grantId = :grantId",
-              ExpressionAttributeValues: { ":grantId": grant.grantId },
-            },
+      ? {
+          pk: `SITE#${siteId}`,
+          sk: `${grant.issuedBy === "manager-email-recovery" ? "MANAGER_RECOVERY_GRANT_CURRENT" : "MANAGER_GRANT_CURRENT"}#${grant.membershipId}`,
+        }
+      : null;
+  const pointer = pointerKey
+    ? [
+        {
+          Delete: {
+            TableName: tableName,
+            Key: pointerKey,
+            ConditionExpression:
+              "attribute_not_exists(pk) OR grantId = :grantId",
+            ExpressionAttributeValues: { ":grantId": grant.grantId },
           },
-        ]
-      : [];
+        },
+      ]
+    : [];
   try {
     await ddb.send(
       new TransactWriteCommand({
@@ -135,13 +150,40 @@ async function cancelGrant(tableName, siteId, grant, { actor, now }) {
   }
   try {
     await ddb.send(new UpdateCommand(status));
-    return "cancelled";
   } catch (error) {
     // Redeemed or cancelled meanwhile: nothing left to do.
     if (errorName(error) === "ConditionalCheckFailedException")
       return "skipped";
     return failed(error);
   }
+  // Clear the "current grant" pointer too, or issuing a replacement invitation
+  // would find this now-cancelled grant and refuse until the pointer expires.
+  // Only if it still points here; a newer grant's pointer is left alone.
+  if (pointerKey) {
+    try {
+      await ddb.send(
+        new DeleteCommand({
+          TableName: tableName,
+          Key: pointerKey,
+          ConditionExpression: "grantId = :grantId",
+          ExpressionAttributeValues: { ":grantId": grant.grantId },
+        }),
+      );
+    } catch (error) {
+      if (errorName(error) !== "ConditionalCheckFailedException") failed(error);
+    }
+  }
+  return "cancelled";
+}
+
+/**
+ * When the grant was issued (ISO). Grant sort keys embed it as
+ * `<PREFIX>#<issuedAt>#<grantId>` for rows without `createdAt`; a grant with
+ * neither is treated as old enough to cancel.
+ * @param {Record<string, any>} grant
+ */
+function issuedAt(grant) {
+  return String(grant.createdAt || String(grant.sk).split("#")[1] || "");
 }
 
 /** @param {unknown} error */

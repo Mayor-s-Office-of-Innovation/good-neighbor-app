@@ -610,6 +610,7 @@ export const revokeAllSiteDeviceBindings = (event) =>
     const grantCancellation = cancelPendingSiteGrants(tableName, siteId, {
       actor,
       now,
+      cutoff: now,
       operationId,
     }).catch(() => ({ cancelledCount: 0, failedCount: 1 }));
     const results = await Promise.allSettled([

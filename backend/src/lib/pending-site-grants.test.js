@@ -1,5 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import {
+  DeleteCommand,
   QueryCommand,
   TransactWriteCommand,
   UpdateCommand,
@@ -12,6 +13,7 @@ const { cancelPendingSiteGrants } = await import("./pending-site-grants.js");
 const context = {
   actor: "admin-1",
   now: "2026-11-25T12:00:00.000Z",
+  cutoff: "2026-11-25T12:00:00.000Z",
   operationId: "operation-1",
 };
 
@@ -56,7 +58,7 @@ it("cancels each pending manager, recovery and staff grant with its lookups", as
     manager: [
       {
         pk: "SITE#site-1",
-        sk: "MANAGER_GRANT#t#admin-grant",
+        sk: "MANAGER_GRANT#2026-11-24T00:00:00.000Z#admin-grant",
         grantId: "admin-grant",
         membershipId: "m-1",
         status: "pending",
@@ -65,19 +67,23 @@ it("cancels each pending manager, recovery and staff grant with its lookups", as
       },
       {
         pk: "SITE#site-1",
-        sk: "MANAGER_GRANT#t#recovery-grant",
+        sk: "MANAGER_GRANT#2026-11-24T00:00:00.000Z#recovery-grant",
         grantId: "recovery-grant",
         membershipId: "m-2",
         issuedBy: "manager-email-recovery",
         status: "pending",
         tokenHash: "token-b",
       },
-      { sk: "MANAGER_GRANT#t#used", grantId: "used", status: "redeemed" },
+      {
+        sk: "MANAGER_GRANT#2026-11-24T00:00:00.000Z#used",
+        grantId: "used",
+        status: "redeemed",
+      },
     ],
     staff: [
       {
         pk: "SITE#site-1",
-        sk: "STAFF_GRANT#t#staff-grant",
+        sk: "STAFF_GRANT#2026-11-24T00:00:00.000Z#staff-grant",
         grantId: "staff-grant",
         status: "pending",
         tokenHash: "token-c",
@@ -99,7 +105,7 @@ it("cancels each pending manager, recovery and staff grant with its lookups", as
         command.input.TransactItems,
       ]),
   );
-  const admin = byGrant["MANAGER_GRANT#t#admin-grant"];
+  const admin = byGrant["MANAGER_GRANT#2026-11-24T00:00:00.000Z#admin-grant"];
   expect(admin[0].Update.ExpressionAttributeValues).toMatchObject({
     ":cancelled": "cancelled",
     ":reason": "site_revocation",
@@ -114,12 +120,13 @@ it("cancels each pending manager, recovery and staff grant with its lookups", as
     "ENROLLMENT_TOKEN#code-a",
     "MANAGER_GRANT_CURRENT#m-1",
   ]);
-  expect(byGrant["MANAGER_GRANT#t#recovery-grant"].at(-1).Delete.Key.sk).toBe(
-    "MANAGER_RECOVERY_GRANT_CURRENT#m-2",
-  );
+  expect(
+    byGrant["MANAGER_GRANT#2026-11-24T00:00:00.000Z#recovery-grant"].at(-1)
+      .Delete.Key.sk,
+  ).toBe("MANAGER_RECOVERY_GRANT_CURRENT#m-2");
   // Staff grants have no per-membership pointer.
   expect(
-    byGrant["STAFF_GRANT#t#staff-grant"].some(
+    byGrant["STAFF_GRANT#2026-11-24T00:00:00.000Z#staff-grant"].some(
       (/** @type {any} */ item) => item.Delete,
     ),
   ).toBe(false);
@@ -137,7 +144,7 @@ it("still cancels the grant itself when its lookups are already gone", async () 
       staff: [
         {
           pk: "SITE#site-1",
-          sk: "STAFF_GRANT#t#g",
+          sk: "STAFF_GRANT#2026-11-24T00:00:00.000Z#g",
           grantId: "g",
           status: "pending",
           tokenHash: "gone",
@@ -157,7 +164,7 @@ it("still cancels the grant itself when its lookups are already gone", async () 
   const fallback = writes().find(isUpdate);
   expect(fallback.input.Key).toEqual({
     pk: "SITE#site-1",
-    sk: "STAFF_GRANT#t#g",
+    sk: "STAFF_GRANT#2026-11-24T00:00:00.000Z#g",
   });
   expect(fallback.input.ConditionExpression).toBe("#status = :pending");
 });
@@ -168,7 +175,7 @@ it("doesn't count a grant redeemed meanwhile as a failure", async () => {
       staff: [
         {
           pk: "SITE#site-1",
-          sk: "STAFF_GRANT#t#g",
+          sk: "STAFF_GRANT#2026-11-24T00:00:00.000Z#g",
           grantId: "g",
           status: "pending",
         },
@@ -198,7 +205,7 @@ it("reports a grant it couldn't cancel, and logs it without ids", async () => {
       staff: [
         {
           pk: "SITE#site-1",
-          sk: "STAFF_GRANT#t#g",
+          sk: "STAFF_GRANT#2026-11-24T00:00:00.000Z#g",
           grantId: "g",
           status: "pending",
         },
@@ -221,4 +228,60 @@ it("reports a grant it couldn't cancel, and logs it without ids", async () => {
   expect(logged).toContain("PendingGrantCancelFailed");
   expect(logged).not.toContain("STAFF_GRANT");
   errorLog.mockRestore();
+});
+
+it("leaves invitations issued after the revocation alone", async () => {
+  table({
+    manager: [
+      {
+        pk: "SITE#site-1",
+        sk: "MANAGER_GRANT#2026-11-25T12:05:00.000Z#restore",
+        grantId: "restore",
+        membershipId: "m-1",
+        status: "pending",
+        createdAt: "2026-11-25T12:05:00.000Z",
+      },
+    ],
+  });
+  expect(await cancelPendingSiteGrants("table", "site-1", context)).toEqual({
+    cancelledCount: 0,
+    failedCount: 0,
+  });
+  expect(writes()).toEqual([]);
+});
+
+it("clears the current-grant pointer when falling back to a status-only cancel", async () => {
+  table(
+    {
+      manager: [
+        {
+          pk: "SITE#site-1",
+          sk: "MANAGER_GRANT#2026-11-24T00:00:00.000Z#g",
+          grantId: "g",
+          membershipId: "m-1",
+          status: "pending",
+          tokenHash: "gone",
+        },
+      ],
+    },
+    (command) => {
+      if (isTransaction(command) && command.input.TransactItems[0].Update)
+        throw awsError("TransactionCanceledException");
+      return {};
+    },
+  );
+
+  expect(await cancelPendingSiteGrants("table", "site-1", context)).toEqual({
+    cancelledCount: 1,
+    failedCount: 0,
+  });
+  const pointerDelete = writes().find(
+    (command) => command instanceof DeleteCommand,
+  );
+  if (!pointerDelete) throw new Error("expected the pointer to be cleared");
+  expect(pointerDelete.input).toMatchObject({
+    Key: { pk: "SITE#site-1", sk: "MANAGER_GRANT_CURRENT#m-1" },
+    ConditionExpression: "grantId = :grantId",
+    ExpressionAttributeValues: { ":grantId": "g" },
+  });
 });

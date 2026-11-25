@@ -139,7 +139,10 @@ describe("City Site-wide revocation", () => {
     expect(cancelPendingSiteGrants).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(String),
-      expect.objectContaining({ operationId: expect.any(String) }),
+      expect.objectContaining({
+        operationId: expect.any(String),
+        cutoff: expect.any(String),
+      }),
     );
   });
 });

@@ -60,7 +60,12 @@ describe("emergency Site revocation reconciliation", () => {
     expect(cancelPendingSiteGrants).toHaveBeenCalledWith(
       expect.any(String),
       "site-1",
-      expect.objectContaining({ actor: "admin-1", operationId: "operation-1" }),
+      expect.objectContaining({
+        actor: "admin-1",
+        operationId: "operation-1",
+        // Only invitations issued before the revocation started.
+        cutoff: "2026-10-03T12:00:00.000Z",
+      }),
     );
     expect(send.mock.calls[0][0]).toBeInstanceOf(QueryCommand);
     const bindingTransaction = send.mock.calls[2][0];
