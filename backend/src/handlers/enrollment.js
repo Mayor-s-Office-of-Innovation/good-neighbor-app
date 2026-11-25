@@ -18,10 +18,12 @@ import {
   sendProviderManagerSecurityNotification,
 } from "../integrations/email.js";
 import {
+  canonicalAccessLevel,
   mintAccessToken,
   mintRefreshToken,
   verifyDeviceToken,
 } from "../lib/device-token.js";
+import { bindingLifecycleValid } from "./devices.js";
 import { deviceSessionMatches } from "../lib/device-context-sessions.js";
 import { deviceLivenessProblem } from "../lib/device-liveness.js";
 import { MAX_PROVIDER_ENROLLMENT_SITES } from "./admin-provider-managers.js";
@@ -1188,8 +1190,9 @@ function rejectEnrollment(event, reason, status = 401, grant, error) {
  * live access or refresh token for a binding on that device. Checked against
  * the binding's DEVICE# row, which carries the live session (refresh rotates
  * only that row), with the authorizer's and refresh's own checks: liveness,
- * session generation, the current refresh-token id, and the site's credential
- * generation. A stale or rotated token proves nothing.
+ * session generation, the current refresh-token id, and the binding lifecycle
+ * (Site generation, provider status, manager membership). A stale, rotated or
+ * deactivated manager's token proves nothing.
  * @param {{
  *   event: import("aws-lambda").APIGatewayProxyEventV2,
  *   input: Record<string, unknown>,
@@ -1249,10 +1252,23 @@ async function hasPhysicalDeviceProof({
       device.physicalDeviceId !== physicalDeviceId ||
       deviceLivenessProblem(device, new Date(nowIso)) ||
       !deviceSessionMatches(device, claims) ||
-      !site ||
-      site.status === "inactive" ||
-      Number(device.siteCredentialGeneration ?? 0) !==
-        Number(site.siteCredentialGeneration ?? 0)
+      !site
+    ) {
+      continue;
+    }
+    // The same lifecycle answer refresh and binding selection use: Site status
+    // and generation, and for managers the provider's status and the provider
+    // or site membership. Deactivating a manager doesn't touch DEVICE#, so
+    // without this their old token would still prove the device.
+    if (
+      !(await bindingLifecycleValid(
+        /** @type {any} */ (device),
+        canonicalAccessLevel(device.accessLevel) === "manager"
+          ? "manager"
+          : "general",
+        site,
+        true,
+      ))
     ) {
       continue;
     }

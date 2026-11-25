@@ -958,6 +958,76 @@ it("treats a refresh token that was rotated away as no proof", async () => {
   ]);
 });
 
+it.each([
+  ["a deactivated provider manager", "inactive", 3, false],
+  ["a provider manager whose membership moved on", "active", 4, false],
+  ["an active provider manager", "active", 3, true],
+])(
+  "checks the binding lifecycle for %s's proof token",
+  async (_, membershipStatus, membershipGeneration, keepsIdentity) => {
+    const proof = await mintAccessToken({
+      siteId: "site-0",
+      deviceId: "pm-binding",
+      tokenGeneration: 2,
+      accessLevel: "manager",
+    });
+    await existingDeviceGrant("lifecycle-token", [
+      // Proof reads: the live DEVICE# row and its Site.
+      {
+        Item: {
+          pk: "SITE#site-0",
+          sk: "DEVICE#pm-binding",
+          siteId: "site-0",
+          physicalDeviceId: "victim_device_1",
+          status: "active",
+          tokenGeneration: 2,
+          accessLevel: "manager",
+          authorityScope: "provider",
+          providerId: "provider-1",
+          providerMembershipId: "pm-1",
+          providerMembershipGeneration: 3,
+        },
+      },
+      {
+        Item: {
+          pk: "SITE#site-0",
+          sk: "#META",
+          status: "active",
+          providerId: "provider-1",
+        },
+      },
+      // bindingLifecycleValid: the provider, then its manager memberships.
+      { Item: { pk: "PROVIDER#provider-1", sk: "#META", status: "active" } },
+      {
+        Items: [
+          {
+            pk: "PROVIDER#provider-1",
+            sk: "PROVIDER_MANAGER#m",
+            membershipId: "pm-1",
+            status: membershipStatus,
+            generation: membershipGeneration,
+          },
+        ],
+      },
+    ]);
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const response = await call(
+      event(
+        {
+          grantId: "mgr-grant-hijack",
+          token: "lifecycle-token",
+          physicalDeviceId: "victim_device_1",
+        },
+        { authorization: `Bearer ${proof.token}` },
+      ),
+    );
+    expect(response.statusCode).toBe(201);
+    const { physicalDeviceId } = JSON.parse(String(response.body));
+    // A removed manager's token proves nothing: the device gets a fresh id.
+    expect(physicalDeviceId === "victim_device_1").toBe(keepsIdentity);
+  },
+);
+
 it("accepts the current refresh token as proof and keeps the device identity", async () => {
   const current = await mintRefreshToken({
     siteId: "site-0",
