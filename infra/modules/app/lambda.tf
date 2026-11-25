@@ -201,6 +201,9 @@ resource "aws_lambda_function" "api" {
       BEDROCK_MODEL_ID                   = var.bedrock_model_id
       ANALYZER_BASE_URL                  = var.analyzer_base_url
       ANALYZER_API_KEY_SECRET_ARN        = aws_secretsmanager_secret.analyzer_api_key.arn
+      # Not secret. A rotated origin token gets a new version id, which changes
+      # this function's configuration so fresh instances read the new token.
+      SHORT_CODE_ORIGIN_TOKEN_VERSION = aws_secretsmanager_secret_version.support_origin.version_id
       # Device token minting (Option 4 device auth — docs/adr/0010): the api
       # Lambda mints session tokens for the registration/refresh routes.
       DEVICE_TOKEN_SECRET_SECRET_ARN  = aws_secretsmanager_secret.device_token_key.arn

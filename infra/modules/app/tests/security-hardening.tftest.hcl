@@ -260,6 +260,14 @@ run "storage_and_transport_hardening" {
   }
 
   assert {
+    condition = (
+      contains(keys(aws_lambda_function.support.environment[0].variables), "SUPPORT_ORIGIN_TOKEN_VERSION")
+      && contains(keys(aws_lambda_function.api.environment[0].variables), "SHORT_CODE_ORIGIN_TOKEN_VERSION")
+    )
+    error_message = "Both origin-token consumers must carry the secret version id so a rotation restarts them instead of leaving the old token cached."
+  }
+
+  assert {
     condition = alltrue([
       for doc in [data.aws_iam_policy_document.support, data.aws_iam_policy_document.api] : (
         anytrue([

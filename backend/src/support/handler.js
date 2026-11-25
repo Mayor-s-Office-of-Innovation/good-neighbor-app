@@ -74,6 +74,9 @@ export function createSupportHandler({
       return jsonResponse(503, { error: "support_unavailable" });
     // Local harness supplies its own secret header; deployed Lambdas fetch the
     // token from Secrets Manager at cold start. There is no runtime bypass.
+    // The read counts against the same 15 s budget as inference (see below),
+    // so a slow cold-start read can't push the request past the Lambda timeout.
+    const requestStarted = Date.now();
     let expectedOrigin;
     try {
       expectedOrigin = await resolveOriginToken(env);
@@ -129,10 +132,13 @@ export function createSupportHandler({
     try {
       // Race also bounds credential resolution, which does not accept a signal.
       const deadline = new Promise((_, reject) => {
-        timer = setTimeout(() => {
-          controller.abort();
-          reject(new Error("support_timeout"));
-        }, 15000);
+        timer = setTimeout(
+          () => {
+            controller.abort();
+            reject(new Error("support_timeout"));
+          },
+          Math.max(0, 15000 - (Date.now() - requestStarted)),
+        );
       });
       const pending = invoke({
         region,

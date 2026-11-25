@@ -135,6 +135,8 @@ resource "aws_lambda_function" "support" {
       SUPPORT_ENABLED                 = tostring(var.enable_support_chat)
       SUPPORT_MODEL_ID                = var.support_model_id
       SUPPORT_ORIGIN_TOKEN_SECRET_ARN = aws_secretsmanager_secret.support_origin.arn
+      # Not secret: see SHORT_CODE_ORIGIN_TOKEN_VERSION in lambda.tf.
+      SUPPORT_ORIGIN_TOKEN_VERSION = aws_secretsmanager_secret_version.support_origin.version_id
     }
   }
   depends_on = [aws_cloudwatch_log_group.support, aws_iam_role_policy.support]

@@ -55,15 +55,20 @@ to the funding department. Other unresolved conflicts use the unknown fallback.
 ## Runtime and privacy
 
 `POST /v1/support` uses the existing device authorizer and a dedicated Lambda.
-The support role has no DynamoDB, S3, account, email, queue or secret-read access.
-It can invoke one regional foundation model, inspect Bedrock invocation logging,
-decrypt its encrypted environment and emit logs. There are no model tools.
+The support role has no DynamoDB, S3, account, email or queue access, and can
+read exactly one secret: the origin token (plus decrypt with that secret's own
+KMS key). It can invoke one regional foundation model, inspect Bedrock
+invocation logging, decrypt its encrypted environment and emit logs. There are
+no model tools.
 
-CloudFront injects a generated origin token held in Secrets Manager and the
-encrypted Lambda environment. Direct API calls without it are rejected before
-inference. The token, device authorization and request context never enter the
-prompt. It is persisted once; coordinate secret-version, distribution and Lambda
-updates when rotating it so callers do not lose access during propagation.
+CloudFront injects a generated origin token held in Secrets Manager. The Lambda
+environment holds only the secret's ARN and version id, never the token. On its
+first request, each Lambda instance reads the token (3-second timeout, counted
+against the 15-second support deadline) and keeps it for the instance's life.
+Direct API calls without the header are rejected before inference. The token,
+device authorization and request context never enter the prompt. The api
+Lambda reads the same secret to trust CloudFront's viewer-IP header for
+enrollment-code rate limits.
 
 Before every inference, the service reads regional Bedrock invocation logging
 configuration. If text logging is enabled, ambiguous, or unreadable, it fails
@@ -124,7 +129,11 @@ so it uses its isolated execution role.
 ## Monitoring
 
 `SupportResponse` records outcome, latency and token counts. `SupportUnavailable`
-counts failures without exposing their messages. CloudWatch aggregates input and
+counts failures without exposing their messages. `OriginTokenUnavailable` (in the
+support and api Lambda logs) means a Lambda instance couldn't read the origin
+secret; that instance retries after a minute. Meanwhile support answers 503, and
+enrollment-code limits fall back to API Gateway's source IP, which is a
+CloudFront edge address, so unrelated users can share a limit. CloudWatch aggregates input and
 output tokens and alarms on repeated unavailability or Lambda throttles. Inspect
 model permissions, regional logging configuration and quotas when unavailable;
 do not enable transcript logging to troubleshoot. Review shared-IP false positives
@@ -132,27 +141,35 @@ before changing the rate limit. Email support remains the handoff for every fail
 
 ## Origin token rotation
 
-The origin token is copied into CloudFront's origin header and the support
-Lambda's environment by Terraform. Rotating only the Secrets Manager value
-would leave both consumers using the old token, so automatic standalone secret
-rotation is not configured (`CKV2_AWS_57` exception). Rotation is coordinated by
-an operator through the CI Terraform deployment workflow:
+Terraform copies the origin token into CloudFront's origin header. The support
+and api Lambdas read it from Secrets Manager and keep it for each instance's
+life. Terraform also puts the secret's version id in both Lambdas' environment
+(`SUPPORT_ORIGIN_TOKEN_VERSION`, `SHORT_CODE_ORIGIN_TOKEN_VERSION`), so a new
+version changes their configuration and Lambda replaces every running instance.
+Rotating only the Secrets Manager value, outside Terraform, would leave
+CloudFront and the running Lambdas on the old token, so automatic standalone
+secret rotation is not configured (`CKV2_AWS_57` exception). Rotate through the
+CI Terraform deployment workflow:
 
 1. Disable support answers with `enable_support_chat = false` and deploy.
 2. Request replacement of `module.app.aws_secretsmanager_secret_version.support_origin`
-   in the CI plan/apply run. This generates a new token and updates both consumers;
-   `ignore_changes` otherwise intentionally keeps the existing token stable.
-   Do not print or copy token values into logs, commands, or source files.
-3. Wait for the CloudFront distribution to finish deploying and confirm the
-   Lambda configuration update has completed before re-enabling support.
+   in the CI plan/apply run. This generates a new token, updates CloudFront's
+   header, and changes both Lambdas' version variable; `ignore_changes`
+   otherwise intentionally keeps the existing token stable. Do not print or copy
+   token values into logs, commands, or source files.
+3. CloudFront takes several minutes to deploy the new header, while the Lambdas
+   switch within seconds. Until CloudFront finishes, requests carry the old
+   header: support answers 403 (it is disabled anyway), and enrollment-code
+   limits briefly use edge addresses. Rotate at a quiet time. Wait for the
+   distribution to show Deployed before step 4.
 4. Re-enable support through CI. Verify an authorized frontend request succeeds
    and a direct request without the origin header is rejected. If propagation
    fails, leave support disabled and complete the coordinated update.
 
 Rotate immediately on suspected exposure, and include this secret in the regular
 credential review. The dedicated encryption key has automatic KMS key rotation
-and an explicit account-administration policy; runtime support has no access to
-read the origin secret from Secrets Manager.
+and an explicit account-administration policy. Of the app's Lambda roles, only
+support and api can read the secret.
 
 ## Signing dependency and local credentials
 
