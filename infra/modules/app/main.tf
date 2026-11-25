@@ -199,7 +199,6 @@ resource "aws_kms_key" "app" {
         Condition = {
           StringEquals = {
             "aws:SourceAccount" = "${data.aws_caller_identity.current.account_id}"
-            "kms:ViaService"    = "sns.${data.aws_region.current.name}.amazonaws.com"
           }
         }
       }
