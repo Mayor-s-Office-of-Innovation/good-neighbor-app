@@ -139,37 +139,13 @@ export const updatePerson = (event) =>
             .map((res) => String(res.Item?.leadProgramId || ""))
             .filter(Boolean),
         );
+        // A program staff record may only be edited from a Site that program
+        // leads. There is deliberately no "every assigned Site" check:
+        // `sources` doesn't list later assignments, so such a check refuses
+        // managers wrongly, and the edit only writes the rows in `sources`
+        // (other Sites keep their own copy of the contact).
         for (const source of programSources) {
-          const programId = source.pk.slice(8);
-          const userId = source.sk.slice(5);
-          if (!authorizedLeadPrograms.has(programId)) {
-            return jsonResponse(403, { error: "site_assignment_required" });
-          }
-          const [userRes, ...assignedChecks] = await Promise.all([
-            ddb.send(
-              new GetCommand({
-                TableName: tableName,
-                Key: { pk: source.pk, sk: source.sk },
-                ConsistentRead: true,
-              }),
-            ),
-            ...sites.map((siteId) =>
-              ddb.send(
-                new GetCommand({
-                  TableName: tableName,
-                  Key: { pk: `SITE#${siteId}`, sk: `ASSIGNED_USER#${userId}` },
-                  ConsistentRead: true,
-                }),
-              ),
-            ),
-          ]);
-          const assignedInAuthorizedSites = assignedChecks.filter(
-            (res) => res.Item && res.Item.status !== "inactive",
-          ).length;
-          if (
-            Number(userRes.Item?.siteAssignmentCount ?? 0) >
-            assignedInAuthorizedSites
-          ) {
+          if (!authorizedLeadPrograms.has(source.pk.slice(8))) {
             return jsonResponse(403, { error: "site_assignment_required" });
           }
         }
