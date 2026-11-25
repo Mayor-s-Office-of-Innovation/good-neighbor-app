@@ -18,7 +18,7 @@ import { refreshSessionTranslationsOnLocaleChange } from "../services/session-tr
 import {
   bindingFromSession,
   hasAdminAccess,
-  clearSiteSession,
+  clearSite,
   getSite,
   resetLocalAppState,
   saveDiscoveredBindings,
@@ -36,7 +36,7 @@ import {
   stripHandoffCredentials,
   uninstallHandoffManifest,
 } from "../services/session-handoff.js";
-import { discardInMemorySession } from "../state/check-session.js";
+import { pauseCheck } from "../state/check-session.js";
 import { stripCodeFromUrl } from "./site-setup.js";
 import {
   startHealthMonitoring,
@@ -801,9 +801,13 @@ export class AppRoot extends HTMLElement {
         }
         const stored = await getSite().catch(() => null);
         if (!stored || stored.token !== bound?.token) return true;
-        discardInMemorySession();
+        // Drop only the rejected binding. Queued care logs and checks, drafts,
+        // photos and other Sites' bindings stay: a 401/403 here can be a
+        // revoked session, but also a WAF block, and unsent field work must
+        // survive both. The full wipe is reserved for an explicit sign-out.
+        await pauseCheck().catch(() => {});
         await retireHandoff({ remote: false }).catch(() => {});
-        await clearSiteSession();
+        await clearSite();
         this._site = null;
         clearAuthState();
         uninstallHandoffManifest();

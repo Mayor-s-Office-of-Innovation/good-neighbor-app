@@ -3,7 +3,7 @@ vi.mock("./code-attempt-limit.js", () => ({
   checkCodeAttemptLimit: vi.fn(async () => null),
 }));
 import { enrollmentCodeVerifier } from "./enrollment-codes.js";
-import { mintAccessToken } from "../lib/device-token.js";
+import { mintAccessToken, mintRefreshToken } from "../lib/device-token.js";
 import {
   GetCommand,
   QueryCommand,
@@ -248,14 +248,18 @@ describe("Manager enrollment redemption", () => {
             lastSuspendedBindingId: "suspended-binding-1",
           },
         })
+        // Proof of possession reads the live DEVICE# row and its Site.
         .mockResolvedValueOnce({
           Item: {
             pk: "SITE#site-0",
-            sk: "DEVICE_BINDING#existing-binding-1",
+            sk: "DEVICE#existing-binding-1",
             physicalDeviceId: "physical_device_1",
             status: "active",
             tokenGeneration: 1,
           },
+        })
+        .mockResolvedValueOnce({
+          Item: { pk: "SITE#site-0", sk: "#META", status: "active" },
         })
         .mockResolvedValueOnce({})
         .mockResolvedValueOnce({});
@@ -303,7 +307,11 @@ describe("Manager enrollment redemption", () => {
         Date.now() + 364 * 24 * 60 * 60 * 1000,
       );
       expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
-      const transaction = send.mock.calls[6][0];
+      expect(send.mock.calls[5][0].input.Key).toEqual({
+        pk: "SITE#site-0",
+        sk: "DEVICE#existing-binding-1",
+      });
+      const transaction = send.mock.calls[7][0];
       expect(transaction).toBeInstanceOf(TransactWriteCommand);
       expect(transaction.input.TransactItems).toHaveLength(9);
       expect(transaction.input.TransactItems[2].Delete.Key).toEqual({
@@ -347,9 +355,9 @@ describe("Manager enrollment redemption", () => {
         enrolledAt: expect.any(String),
         revocationContact: "support@example.org",
       });
-      expect(send.mock.calls[7][0]).toBeInstanceOf(UpdateCommand);
+      expect(send.mock.calls[8][0]).toBeInstanceOf(UpdateCommand);
       expect(
-        send.mock.calls[7][0].input.ExpressionAttributeValues,
+        send.mock.calls[8][0].input.ExpressionAttributeValues,
       ).toMatchObject({
         ":status": "accepted",
         ":provider": "ses",
@@ -748,9 +756,14 @@ it("rejects a pre-revocation grant after siteCredentialGeneration advances", asy
   });
 });
 
-it("rejects attaching to an existing physicalDeviceId without proof of possession", async () => {
-  const token = "hijack-attempt-token";
+/**
+ * Mock the reads for a manager grant that names an existing physical device.
+ * @param {string} token
+ * @param {Array<Record<string, any>>} [proofReads] extra reads the proof makes
+ */
+async function existingDeviceGrant(token, proofReads = []) {
   const tokenHash = await sha256(token);
+  send.mockResolvedValue({});
   send
     .mockResolvedValueOnce({
       Item: {
@@ -792,17 +805,191 @@ it("rejects attaching to an existing physicalDeviceId without proof of possessio
         status: "active",
       },
     });
+  for (const read of proofReads) send.mockResolvedValueOnce(read);
+}
 
+/** The physical devices the enrollment transaction wrote to. */
+function physicalWrites() {
+  const transaction = send.mock.calls
+    .map(([command]) => command)
+    .find((command) => command instanceof TransactWriteCommand);
+  if (!transaction) throw new Error("expected an enrollment transaction");
+  const items = transaction.input.TransactItems ?? [];
+  const keyOf = (/** @type {any} */ item) =>
+    item.Put?.Item?.pk ?? item.Update?.Key?.pk ?? "";
+  // The identity row and the binding pointer: which devices were written to.
+  return [
+    ...new Set(
+      items.map(keyOf).filter((pk) => pk.startsWith("PHYSICAL_DEVICE#")),
+    ),
+  ];
+}
+
+it("enrolls a new device when an existing physicalDeviceId comes without proof", async () => {
+  await existingDeviceGrant("hijack-attempt-token");
+  const infoLog = vi.spyOn(console, "info").mockImplementation(() => {});
   const response = await call(
     event({
       grantId: "mgr-grant-hijack",
+      token: "hijack-attempt-token",
+      physicalDeviceId: "victim_device_1",
+    }),
+  );
+  expect(response.statusCode).toBe(201);
+  const body = JSON.parse(String(response.body));
+  // A fresh identity, so the caller can't list or select the victim's bindings.
+  expect(body.physicalDeviceId).toMatch(/^[0-9a-f-]{36}$/);
+  expect(body.physicalDeviceId).not.toBe("victim_device_1");
+  expect(physicalWrites()).toEqual([
+    `PHYSICAL_DEVICE#${body.physicalDeviceId}`,
+  ]);
+  const logged = JSON.stringify(infoLog.mock.calls);
+  expect(logged).toContain("EnrollmentPhysicalDeviceReplaced");
+  expect(logged).not.toContain("victim_device_1");
+});
+
+it("enrolls a provider manager on a new device when an existing id comes without proof", async () => {
+  const token = "provider-hijack-token";
+  const tokenHash = await sha256(token);
+  send.mockImplementation(async (/** @type {any} */ command) => {
+    const { Key, ExpressionAttributeValues: values } = command.input ?? {};
+    if (command instanceof TransactWriteCommand) return {};
+    if (Key?.pk === `ENROLLMENT_TOKEN#${tokenHash}`)
+      return {
+        Item: {
+          ...Key,
+          grantId: "provider-grant-9",
+          grantPk: "PROVIDER#provider-1",
+          grantSk: "PROVIDER_MANAGER_GRANT#time#provider-grant-9",
+        },
+      };
+    if (Key?.sk === "PROVIDER_MANAGER_GRANT#time#provider-grant-9")
+      return {
+        Item: {
+          ...Key,
+          scope: "provider",
+          grantId: "provider-grant-9",
+          providerId: "provider-1",
+          membershipId: "membership-1",
+          membershipGeneration: 3,
+          accessLevel: "manager",
+          status: "pending",
+          tokenHash,
+          deliveryMode: "link",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      };
+    if (Key?.pk === "PROVIDER#provider-1" && Key.sk === "#META")
+      return { Item: { ...Key, name: "Provider One", status: "active" } };
+    if (Key?.pk === "PHYSICAL_DEVICE#victim_device_1")
+      return {
+        Item: { ...Key, physicalDeviceId: "victim_device_1", status: "active" },
+      };
+    if (values?.[":prefix"] === "PROVIDER_MANAGER#")
+      return {
+        Items: [
+          {
+            pk: "PROVIDER#provider-1",
+            sk: "PROVIDER_MANAGER#manager-1",
+            membershipId: "membership-1",
+            status: "active",
+            generation: 3,
+            email: "alex@example.org",
+          },
+        ],
+      };
+    if (values?.[":prefix"] === "SITE#")
+      return {
+        Items: [{ siteId: "site-1", siteName: "Site One", status: "active" }],
+      };
+    return {};
+  });
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const response = await call(
+    event({
+      grantId: "provider-grant-9",
       token,
       physicalDeviceId: "victim_device_1",
     }),
   );
-  expect(response.statusCode).toBe(403);
-  expect(JSON.parse(String(response.body))).toEqual({
-    error: "enrollment_access_unavailable",
+  expect(response.statusCode).toBe(201);
+  const body = JSON.parse(String(response.body));
+  expect(body.physicalDeviceId).not.toBe("victim_device_1");
+  expect(physicalWrites()).toEqual([
+    `PHYSICAL_DEVICE#${body.physicalDeviceId}`,
+  ]);
+});
+
+it("treats a refresh token that was rotated away as no proof", async () => {
+  const stale = await mintRefreshToken({
+    siteId: "site-0",
+    deviceId: "victim-binding-1",
+    tokenGeneration: 3,
+    accessLevel: "manager",
   });
-  expect(send).toHaveBeenCalledTimes(5);
+  // The live row moved on: same generation, but a newer refresh-token id.
+  await existingDeviceGrant("rotated-refresh-token", [
+    {
+      Item: {
+        pk: "SITE#site-0",
+        sk: "DEVICE#victim-binding-1",
+        physicalDeviceId: "victim_device_1",
+        status: "active",
+        tokenGeneration: 3,
+        refreshJti: "a-newer-jti",
+      },
+    },
+    { Item: { pk: "SITE#site-0", sk: "#META", status: "active" } },
+  ]);
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const response = await call(
+    event({
+      grantId: "mgr-grant-hijack",
+      token: "rotated-refresh-token",
+      physicalDeviceId: "victim_device_1",
+      proofRefreshToken: stale.token,
+    }),
+  );
+  expect(response.statusCode).toBe(201);
+  const body = JSON.parse(String(response.body));
+  expect(body.physicalDeviceId).not.toBe("victim_device_1");
+  expect(physicalWrites()).toEqual([
+    `PHYSICAL_DEVICE#${body.physicalDeviceId}`,
+  ]);
+});
+
+it("accepts the current refresh token as proof and keeps the device identity", async () => {
+  const current = await mintRefreshToken({
+    siteId: "site-0",
+    deviceId: "victim-binding-1",
+    tokenGeneration: 3,
+    accessLevel: "manager",
+  });
+  await existingDeviceGrant("current-refresh-token", [
+    {
+      Item: {
+        pk: "SITE#site-0",
+        sk: "DEVICE#victim-binding-1",
+        physicalDeviceId: "victim_device_1",
+        status: "active",
+        tokenGeneration: 3,
+        refreshJti: current.jti,
+      },
+    },
+    { Item: { pk: "SITE#site-0", sk: "#META", status: "active" } },
+  ]);
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const response = await call(
+    event({
+      grantId: "mgr-grant-hijack",
+      token: "current-refresh-token",
+      physicalDeviceId: "victim_device_1",
+      proofRefreshToken: current.token,
+    }),
+  );
+  expect(response.statusCode).toBe(201);
+  expect(JSON.parse(String(response.body)).physicalDeviceId).toBe(
+    "victim_device_1",
+  );
+  expect(physicalWrites()).toEqual(["PHYSICAL_DEVICE#victim_device_1"]);
 });

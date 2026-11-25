@@ -4,8 +4,9 @@ const setup = vi.hoisted(() => ({
   currentRoute: vi.fn(() => "/today"),
   backOrNavigate: vi.fn(),
   replaceRoute: vi.fn(),
-  clearSiteSession: vi.fn(),
-  discardInMemorySession: vi.fn(),
+  clearSite: vi.fn(),
+  resetLocalAppState: vi.fn(),
+  pauseCheck: vi.fn(async () => {}),
   retireHandoff: vi.fn(async () => {}),
   stripCodeFromUrl: vi.fn(),
   getSite: vi.fn(),
@@ -30,16 +31,16 @@ vi.mock("../db.js", () => ({
     refreshToken: session.refreshToken,
     tokenGeneration: session.tokenGeneration,
   }),
-  clearSiteSession: setup.clearSiteSession,
+  clearSite: setup.clearSite,
   getSite: setup.getSite,
   hasAdminAccess: vi.fn(),
-  resetLocalAppState: vi.fn(),
+  resetLocalAppState: setup.resetLocalAppState,
   saveDiscoveredBindings: setup.saveDiscoveredBindings,
   saveSiteSettings: setup.saveSiteSettings,
   setSite: setup.setSite,
 }));
 vi.mock("../state/check-session.js", () => ({
-  discardInMemorySession: setup.discardInMemorySession,
+  pauseCheck: setup.pauseCheck,
 }));
 vi.mock("./site-setup.js", () => ({
   stripCodeFromUrl: setup.stripCodeFromUrl,
@@ -138,8 +139,9 @@ beforeAll(async () => {
 beforeEach(() => {
   setup.isStandalone.mockReset().mockReturnValue(false);
   setup.currentRoute.mockReset().mockReturnValue("/today");
-  setup.clearSiteSession.mockReset().mockResolvedValue(undefined);
-  setup.discardInMemorySession.mockReset();
+  setup.clearSite.mockReset().mockResolvedValue(undefined);
+  setup.resetLocalAppState.mockReset().mockResolvedValue(undefined);
+  setup.pauseCheck.mockReset().mockResolvedValue(undefined);
   setup.retireHandoff.mockReset().mockResolvedValue(undefined);
   setup.stripCodeFromUrl.mockReset();
   setup.getSite.mockReset();
@@ -233,9 +235,11 @@ describe("app startup authentication", () => {
     expect(root._renderApp).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(root._renderSetup).toHaveBeenCalledOnce());
 
-    expect(setup.discardInMemorySession).toHaveBeenCalledOnce();
+    // Only the rejected binding goes; queued work and drafts are kept.
+    expect(setup.pauseCheck).toHaveBeenCalledOnce();
     expect(setup.retireHandoff).toHaveBeenCalledWith({ remote: false });
-    expect(setup.clearSiteSession).toHaveBeenCalledOnce();
+    expect(setup.clearSite).toHaveBeenCalledOnce();
+    expect(setup.resetLocalAppState).not.toHaveBeenCalled();
     expect(setup.clearAuthState).toHaveBeenCalledOnce();
     expect(root._site).toBeNull();
   });
@@ -254,7 +258,7 @@ describe("app startup authentication", () => {
     await root.connectedCallback();
     await flush();
 
-    expect(setup.clearSiteSession).not.toHaveBeenCalled();
+    expect(setup.clearSite).not.toHaveBeenCalled();
     expect(root._renderSetup).not.toHaveBeenCalled();
     expect(root._site).toEqual({ siteId: "site-1", token: "t1" });
   });
@@ -276,7 +280,7 @@ describe("app startup authentication", () => {
     );
     await flush();
 
-    expect(setup.clearSiteSession).not.toHaveBeenCalled();
+    expect(setup.clearSite).not.toHaveBeenCalled();
     expect(root._renderSetup).not.toHaveBeenCalled();
   });
 
@@ -470,7 +474,7 @@ describe("Home Screen session handoff at startup", () => {
     await root.connectedCallback();
 
     // No <site-setup> is mounted during a handoff, so the rejection is final.
-    expect(setup.clearSiteSession).toHaveBeenCalledOnce();
+    expect(setup.clearSite).toHaveBeenCalledOnce();
     expect(root._renderSetup).toHaveBeenCalledWith();
     expect(root._renderApp).not.toHaveBeenCalled();
   });
@@ -901,7 +905,7 @@ describe("later device enrollments", () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await root._refreshDeviceBindings();
     expect(root._site).toBe(bound);
-    expect(setup.clearSiteSession).not.toHaveBeenCalled();
+    expect(setup.clearSite).not.toHaveBeenCalled();
     expect(setup.saveDiscoveredBindings).not.toHaveBeenCalled();
     log.mockRestore();
   });
