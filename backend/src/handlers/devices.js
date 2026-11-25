@@ -97,6 +97,14 @@ export const registerDevice = async (event) => {
   // Malformed inputs cannot reach a credential lookup and spend no short-code budget.
   if (normalizeSiteCode(code).length !== 6)
     return jsonResponse(401, { error: "invalid_site_code" });
+  if (
+    raw.deviceId !== undefined &&
+    raw.deviceId !== null &&
+    raw.deviceId !== "" &&
+    !validDeviceId(raw.deviceId)
+  ) {
+    return jsonResponse(400, { error: "invalid_device_id" });
+  }
   const limited = await checkCodeAttemptLimit(undefined, "register", event);
   if (limited) return limited;
 
@@ -111,7 +119,11 @@ export const registerDevice = async (event) => {
   // Known device re-registering (idempotent path) — else a fresh opaque id.
   // The item is keyed DEVICE#<providedId>, so item.deviceId === providedId by
   // construction; getDevice only confirms an existing row for that exact key.
+  // Never overwrite a revoked, suspended, or enrollment-bound device row.
   const existing = await getDevice(validCode.siteId, raw.deviceId);
+  if (existing && !canReregisterDevice(existing)) {
+    return jsonResponse(409, { error: "device_registration_unavailable" });
+  }
   const deviceId = existing ? existing.deviceId : newDeviceId(raw.deviceId);
   const generation = (existing?.tokenGeneration ?? 0) + 1;
   const accessLevel = canonicalAccessLevel(validCode.accessLevel);
@@ -161,11 +173,13 @@ export const registerDevice = async (event) => {
               TableName: dynamoTable,
               Item,
               ConditionExpression: existing
-                ? "tokenGeneration = :previousGeneration"
+                ? "tokenGeneration = :previousGeneration AND (attribute_not_exists(#status) OR #status = :active) AND attribute_not_exists(physicalDeviceId) AND attribute_not_exists(membershipId) AND attribute_not_exists(bindingId) AND attribute_not_exists(enrollmentGrantId)"
                 : "attribute_not_exists(pk)",
               ...(existing && {
+                ExpressionAttributeNames: { "#status": "status" },
                 ExpressionAttributeValues: {
                   ":previousGeneration": existing.tokenGeneration,
+                  ":active": "active",
                 },
               }),
             },
@@ -634,10 +648,35 @@ function isSetupCodeConditionFailure(err, consumeIndex) {
 }
 
 /**
- * Accept a caller-supplied id (re-registration) or mint a fresh opaque id.
+ * @param {unknown} value
+ * @returns {value is string}
+ */
+function validDeviceId(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{3,100}$/.test(value);
+}
+
+/**
+ * @param {DeviceItem & Record<string, unknown>} existing
+ * @returns {boolean}
+ */
+function canReregisterDevice(existing) {
+  if (existing.status && existing.status !== "active") return false;
+  if (
+    existing.physicalDeviceId ||
+    existing.membershipId ||
+    existing.bindingId ||
+    existing.enrollmentGrantId
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Accept a validated caller-supplied id (re-registration) or mint a fresh opaque id.
  * @param {unknown} provided
  * @returns {string}
  */
 function newDeviceId(provided) {
-  return typeof provided === "string" && provided ? provided : randomUUID();
+  return validDeviceId(provided) ? provided : randomUUID();
 }

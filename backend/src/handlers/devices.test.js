@@ -295,11 +295,62 @@ describe("registerDevice", () => {
     expect(item.tokenGeneration).toBe(5);
     expect(item.sessionStartGeneration).toBe(5);
     expect(send.mock.calls[4][0].input.TransactItems[0].Put).toMatchObject({
-      ConditionExpression: "tokenGeneration = :previousGeneration",
-      ExpressionAttributeValues: { ":previousGeneration": 4 },
+      ConditionExpression: expect.stringContaining(
+        "tokenGeneration = :previousGeneration",
+      ),
+      ExpressionAttributeNames: { "#status": "status" },
+      ExpressionAttributeValues: {
+        ":previousGeneration": 4,
+        ":active": "active",
+      },
     });
     expect(JSON.parse(res.body).tokenGeneration).toBe(5);
   });
+
+  it.each(["../escape", "bad#id", "ab", "a b c", "a".repeat(101)])(
+    "400s on a malformed caller-supplied deviceId (%s) before lookup",
+    async (badId) => {
+      const res = await callRegister({ code: "123456", deviceId: badId });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({ error: "invalid_device_id" });
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["revoked", { status: "revoked" }],
+    ["suspended", { status: "suspended" }],
+    ["physical-device-bound", { status: "active", physicalDeviceId: "pd-1" }],
+    ["membership-bound", { status: "active", membershipId: "m-1" }],
+  ])(
+    "409s and refuses to overwrite a %s device row on re-registration",
+    async (_label, extra) => {
+      send
+        .mockResolvedValueOnce({}) // dynamic setup-code lookup
+        .mockResolvedValueOnce({ Item: SITE_CODE_ITEM }) // legacy site-code lookup
+        .mockResolvedValueOnce({ Item: { status: "active" } }) // site status lookup
+        .mockResolvedValueOnce({
+          Item: {
+            deviceId: "dev-locked",
+            siteId: "site-1",
+            label: "Front desk",
+            registeredAt: "2026-01-01T00:00:00.000Z",
+            tokenGeneration: 4,
+            ...extra,
+          },
+        });
+
+      const res = await callRegister({
+        code: "123456",
+        deviceId: "dev-locked",
+      });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body)).toEqual({
+        error: "device_registration_unavailable",
+      });
+      expect(send).toHaveBeenCalledTimes(4);
+    },
+  );
 
   it("401s when dynamic setup-code consumption fails its condition", async () => {
     send

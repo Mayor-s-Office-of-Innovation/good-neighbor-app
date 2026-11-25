@@ -1046,4 +1046,18 @@ describe("export and report jobs", () => {
     );
     expect(json(res).job.state).toBe("cancelled");
   });
+
+  it.each(["../other/abc", "not-a-job-id", "A".repeat(32), "a".repeat(31)])(
+    "rejects malformed jobId (%s) before touching the job store",
+    async (badJobId) => {
+      const { h, jobStore } = setup();
+      const readSpy = vi.spyOn(jobStore, "read");
+      for (const route of [h.getJob, h.cancelJob]) {
+        const res = await route(event({ path: { jobId: badJobId } }));
+        expect(res.statusCode).toBe(404);
+        expect(json(res)).toEqual({ error: "job_not_found" });
+      }
+      expect(readSpy).not.toHaveBeenCalled();
+    },
+  );
 });

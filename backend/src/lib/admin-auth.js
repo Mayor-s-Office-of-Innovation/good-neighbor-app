@@ -1,4 +1,4 @@
-import { GetCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse, readJsonBody } from "../http.js";
@@ -63,6 +63,10 @@ export function adminPrincipal(event) {
     email: String(claims.email ?? "")
       .trim()
       .toLocaleLowerCase("en-US"),
+    emailVerified:
+      claims.email_verified === undefined
+        ? undefined
+        : claims.email_verified === true || claims.email_verified === "true",
     firstName: String(claims.given_name ?? "").trim(),
     lastName: String(claims.family_name ?? "").trim(),
     phone: String(claims.phone_number ?? "").trim(),
@@ -163,6 +167,8 @@ export async function authorizeSiteChanges(event, siteIds) {
   if (principal.role === ADMIN_GROUPS.supervisor) return null;
   if (!siteIds.length || siteIds.some((id) => !id))
     return jsonResponse(403, { error: "site_assignment_required" });
+  if (!principal.subject || principal.emailVerified === false)
+    return jsonResponse(403, { error: "site_assignment_required" });
   const email = (principal.email || principal.username)
     .trim()
     .toLocaleLowerCase("en-US");
@@ -177,7 +183,16 @@ export async function authorizeSiteChanges(event, siteIds) {
       ConsistentRead: true,
     }),
   );
-  if (!directory.Item?.userId || directory.Item.status !== "active") {
+  let item = directory.Item;
+  if (item?.userId && item.status === "active" && !item.cognitoSubject) {
+    item = await linkDirectorySubject(item, principal, email);
+  }
+  if (
+    !item?.userId ||
+    item.status !== "active" ||
+    !item.cognitoSubject ||
+    item.cognitoSubject !== principal.subject
+  ) {
     return jsonResponse(403, { error: "site_assignment_required" });
   }
   for (const siteId of new Set(siteIds)) {
@@ -186,7 +201,7 @@ export async function authorizeSiteChanges(event, siteIds) {
         TableName: getDynamoTableName(),
         Key: {
           pk: `SITE#${siteId}`,
-          sk: `COMPLIANCE_MANAGER#${directory.Item.userId}`,
+          sk: `COMPLIANCE_MANAGER#${item.userId}`,
         },
         ConsistentRead: true,
       }),
@@ -196,6 +211,68 @@ export async function authorizeSiteChanges(event, siteIds) {
     }
   }
   return null;
+}
+
+/**
+ * Directory rows made by site imports or `createCityProgramManager` carry no
+ * `cognitoSubject`; only an invitation sets it. Link it on first use instead of
+ * locking those managers out. Usernames in this pool are the email an admin
+ * invited, can't be changed, and can't be self-created, so a username equal to
+ * the row's email proves the caller owns the row; the email claim alone can't
+ * (finding H2). The write only fills an empty field, so a link is never
+ * overwritten.
+ * @param {Record<string, any>} item active directory row without a subject
+ * @param {ReturnType<typeof adminPrincipal>} principal
+ * @param {string} email the normalized email the row was found by
+ * @returns {Promise<Record<string, any>>} the row, linked when the proof holds
+ */
+async function linkDirectorySubject(item, principal, email) {
+  const username = principal.username.trim().toLocaleLowerCase("en-US");
+  if (!username || username !== email) {
+    // No identifiers in the log: an operator re-sends the invitation to link.
+    console.info(
+      JSON.stringify({
+        marker: "AdminSubjectLinkSkipped",
+        reason: "username_mismatch",
+      }),
+    );
+    return item;
+  }
+  try {
+    const result = await ddb.send(
+      new UpdateCommand({
+        TableName: getDynamoTableName(),
+        Key: { pk: item.pk, sk: item.sk },
+        UpdateExpression: "SET cognitoSubject = :subject, updatedAt = :now",
+        ConditionExpression:
+          "attribute_exists(pk) AND attribute_not_exists(cognitoSubject) AND #status = :active",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":subject": principal.subject,
+          ":now": new Date().toISOString(),
+          ":active": "active",
+        },
+        ReturnValues: "ALL_NEW",
+      }),
+    );
+    console.info(JSON.stringify({ marker: "AdminSubjectLinked" }));
+    return result.Attributes ?? item;
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      error.name !== "ConditionalCheckFailedException"
+    )
+      throw error;
+    // A concurrent request linked it (or the row changed): use what's stored.
+    const current = await ddb.send(
+      new GetCommand({
+        TableName: getDynamoTableName(),
+        Key: { pk: item.pk, sk: item.sk },
+        ConsistentRead: true,
+      }),
+    );
+    return current.Item ?? item;
+  }
 }
 
 /**

@@ -62,6 +62,7 @@ function bodyBytes(body, base64) {
 /** @typedef {import("../reporting/api/snapshot.js").Snapshot} Snapshot */
 
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,128}$/;
+const JOB_ID = /^[a-f0-9]{32}$/;
 // How long a request waits on a snapshot refresh before it answers from the old
 // one, well inside the gateway's 29 s.
 const LAMBDA_REFRESH_WAIT_MS = 3000;
@@ -309,6 +310,13 @@ export function createReportingHandlers({
   };
 
   /** @param {Event} event */
+  const jobIdParam = (event) => {
+    const value = pathParam(event, "jobId");
+    if (!JOB_ID.test(value)) throw requestError("job_not_found", 404);
+    return value;
+  };
+
+  /** @param {Event} event */
   const idempotencyKey = (event) => {
     const value = event.headers?.["idempotency-key"] ?? "";
     if (!IDEMPOTENCY_KEY.test(value))
@@ -494,7 +502,7 @@ export function createReportingHandlers({
     getJob: (event) =>
       guarded(event, async ({ ownerKey }) => ({
         body: {
-          job: await needJobs().get(ownerKey, pathParam(event, "jobId")),
+          job: await needJobs().get(ownerKey, jobIdParam(event)),
         },
       })),
 
@@ -502,7 +510,7 @@ export function createReportingHandlers({
     cancelJob: (event) =>
       guarded(event, async ({ ownerKey }) => ({
         body: {
-          job: await needJobs().cancel(ownerKey, pathParam(event, "jobId")),
+          job: await needJobs().cancel(ownerKey, jobIdParam(event)),
         },
       })),
 

@@ -177,7 +177,7 @@ export class AdminProviderPage extends HTMLElement {
     // Without createEntities the user can't save these changes, so don't offer them.
     if (!this.session.capabilities.createEntities)
       this.querySelectorAll(
-        'a[href="/sites/new"], a[href^="/programs/new"], [data-deactivate-provider], #provider-program-form',
+        'a[href="/sites/new"], a[href^="/programs/new"], [data-deactivate-provider], #provider-program-form, #provider-details-form',
       ).forEach((element) => element.remove());
     bindEnrollmentCodeExpiry(this, this.state);
     syncEnrollmentRequests(this);
