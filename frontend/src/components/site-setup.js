@@ -6,6 +6,10 @@
 */
 import "./site-setup.css";
 import {
+  forgetSetupCode,
+  rememberSetupCode,
+} from "../services/pending-setup-code.js";
+import {
   bindingFromSession,
   getSite,
   saveDiscoveredBindings,
@@ -41,8 +45,13 @@ export class SiteSetup extends HTMLElement {
     this._targetSiteId = this.getAttribute("data-target-site-id") || "";
     this._targetSiteName = this.getAttribute("data-target-site-name") || "";
     this._canCancel = this.hasAttribute("data-can-cancel");
-    this._code = formatSiteCode(readCodeFromUrl());
-    if (this._code) stripCodeFromUrl();
+    const urlCode = readCodeFromUrl();
+    this._code = formatSiteCode(urlCode);
+    if (this._code) {
+      // Off the address bar now, but kept for "Open in browser" until validated.
+      rememberSetupCode(urlCode);
+      stripCodeFromUrl();
+    }
     const enrollment = readEnrollmentFromUrl();
     this._enrollment = enrollment;
     this._checking = false;
@@ -428,6 +437,7 @@ export class SiteSetup extends HTMLElement {
     }
 
     if (result.enrollment) {
+      forgetSetupCode();
       stripCodeFromUrl();
       await this._redeemEnrollment({ code: result.code });
       return;
@@ -445,6 +455,7 @@ export class SiteSetup extends HTMLElement {
       this._render();
       return;
     }
+    forgetSetupCode();
     stripCodeFromUrl();
     // Register the device and mint its session (Option 4 device auth —
     // docs/adr/0010): the token rides the site record; after this point the
