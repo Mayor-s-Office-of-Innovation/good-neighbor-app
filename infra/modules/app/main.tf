@@ -220,6 +220,7 @@ resource "aws_s3_bucket" "admin_frontend" {
 
 resource "aws_s3_bucket" "access_logs" {
   #checkov:skip=CKV_AWS_18:Access-log buckets are not access-logged to avoid recursive logging.
+  #checkov:skip=CKV_AWS_145:S3 server-access-log destinations require SSE-S3 rather than SSE-KMS.
   bucket_prefix = "${local.bucket_name_prefix}-access-logs-"
   force_destroy = false
 }
@@ -245,10 +246,61 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "access_logs" {
 
   rule {
     apply_server_side_encryption_by_default {
-      kms_master_key_id = aws_kms_key.app.arn
-      sse_algorithm     = "aws:kms"
+      sse_algorithm = "AES256"
     }
   }
+}
+
+resource "aws_s3_bucket_policy" "access_logs" {
+  bucket = aws_s3_bucket.access_logs.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AllowS3LogDelivery"
+        Effect    = "Allow"
+        Principal = { Service = "logging.s3.amazonaws.com" }
+        Action    = "s3:PutObject"
+        Resource = [
+          "${aws_s3_bucket.access_logs.arn}/frontend/*",
+          "${aws_s3_bucket.access_logs.arn}/admin-frontend/*",
+          "${aws_s3_bucket.access_logs.arn}/compliance-letters/*",
+          "${aws_s3_bucket.access_logs.arn}/analytics-lake/*",
+        ]
+        Condition = {
+          ArnLike = {
+            "aws:SourceArn" = [
+              aws_s3_bucket.frontend.arn,
+              aws_s3_bucket.admin_frontend.arn,
+              aws_s3_bucket.compliance_letters.arn,
+              aws_s3_bucket.analytics_lake.arn,
+            ]
+          }
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
+      },
+      {
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.access_logs.arn,
+          "${aws_s3_bucket.access_logs.arn}/*",
+        ]
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      }
+    ]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.access_logs]
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "access_logs" {
@@ -304,6 +356,8 @@ resource "aws_s3_bucket_logging" "frontend" {
 
   target_bucket = aws_s3_bucket.access_logs.id
   target_prefix = "frontend/"
+
+  depends_on = [aws_s3_bucket_policy.access_logs]
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "frontend" {
@@ -359,6 +413,8 @@ resource "aws_s3_bucket_logging" "admin_frontend" {
 
   target_bucket = aws_s3_bucket.access_logs.id
   target_prefix = "admin-frontend/"
+
+  depends_on = [aws_s3_bucket_policy.access_logs]
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "admin_frontend" {
@@ -839,6 +895,8 @@ resource "aws_s3_bucket_logging" "compliance_letters" {
 
   target_bucket = aws_s3_bucket.access_logs.id
   target_prefix = "compliance-letters/"
+
+  depends_on = [aws_s3_bucket_policy.access_logs]
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "compliance_letters" {
@@ -887,10 +945,11 @@ resource "aws_dynamodb_table" "app" {
   # Single-table store (data-model doc). pk/sk carry every entity; sparse GSIs
   # index only the item types that set their keys, so each listing is a clean
   # query with no filtering.
-  name         = "${local.name_prefix}-app"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "pk"
-  range_key    = "sk"
+  name                        = "${local.name_prefix}-app"
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "pk"
+  range_key                   = "sk"
+  deletion_protection_enabled = true
 
   attribute {
     name = "pk"
@@ -1129,18 +1188,6 @@ resource "aws_cognito_user_pool" "users" {
 
   depends_on = [aws_lambda_permission.cognito_email_sender]
   tags       = var.tags
-}
-
-resource "aws_cognito_user_pool_client" "web" {
-  name         = "${local.name_prefix}-web"
-  user_pool_id = aws_cognito_user_pool.users.id
-
-  explicit_auth_flows = [
-    "ALLOW_REFRESH_TOKEN_AUTH",
-    "ALLOW_USER_SRP_AUTH"
-  ]
-
-  prevent_user_existence_errors = "ENABLED"
 }
 
 resource "aws_cognito_user_pool_client" "admin" {
@@ -2123,6 +2170,28 @@ resource "aws_wafv2_web_acl" "web" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "${local.name_prefix}-client-events-rate"
+      sampled_requests_enabled   = false
+    }
+  }
+
+  rule {
+    name     = "AWSManagedRulesAmazonIpReputationList"
+    priority = 12
+
+    override_action {
+      none {}
+    }
+
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesAmazonIpReputationList"
+        vendor_name = "AWS"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-ip-reputation"
       sampled_requests_enabled   = false
     }
   }

@@ -52,11 +52,40 @@ resource "aws_s3_bucket_versioning" "analytics_lake" {
   }
 }
 
+resource "aws_s3_bucket_policy" "analytics_lake" {
+  bucket = aws_s3_bucket.analytics_lake.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.analytics_lake.arn,
+          "${aws_s3_bucket.analytics_lake.arn}/*",
+        ]
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      }
+    ]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.analytics_lake]
+}
+
 resource "aws_s3_bucket_logging" "analytics_lake" {
   bucket = aws_s3_bucket.analytics_lake.id
 
   target_bucket = aws_s3_bucket.access_logs.id
   target_prefix = "analytics-lake/"
+
+  depends_on = [aws_s3_bucket_policy.access_logs]
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "analytics_lake" {

@@ -363,21 +363,17 @@ resource "aws_cloudfront_distribution" "admin" {
   tags = var.tags
 }
 
-# Kept from when CloudFront standard logging (removed 2026-10-22, it recorded
-# viewer IPs) delivered here via an ACL grant. The remaining S3 server-access
-# logging also accepts the log-delivery ACL path, so this stays as-is rather
-# than flipping to BucketOwnerEnforced, which would also require a
-# logging.s3.amazonaws.com bucket policy (see infra/bootstrap/prod-state).
+# S3 server-access log delivery uses the logging.s3.amazonaws.com bucket policy
+# in main.tf (matching infra/bootstrap/prod-state), so ACLs stay disabled.
 resource "aws_s3_bucket_ownership_controls" "access_logs" {
-  #checkov:skip=CKV2_AWS_65:ACLs stay enabled so S3 server-access log delivery to this bucket keeps its ACL-based path; no viewer-facing objects live here.
   bucket = aws_s3_bucket.access_logs.id
 
   rule {
-    object_ownership = "BucketOwnerPreferred"
+    object_ownership = "BucketOwnerEnforced"
   }
 }
 
-# Only this CloudFront distribution may read the frontend bucket.
+# Only this CloudFront distribution may read the frontend bucket; require TLS.
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
 
@@ -395,9 +391,26 @@ resource "aws_s3_bucket_policy" "frontend" {
             "AWS:SourceArn" = aws_cloudfront_distribution.frontend.arn
           }
         }
+      },
+      {
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.frontend.arn,
+          "${aws_s3_bucket.frontend.arn}/*",
+        ]
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
       }
     ]
   })
+
+  depends_on = [aws_s3_bucket_public_access_block.frontend]
 }
 
 resource "aws_s3_bucket_policy" "admin_frontend" {
@@ -417,7 +430,24 @@ resource "aws_s3_bucket_policy" "admin_frontend" {
             "AWS:SourceArn" = aws_cloudfront_distribution.admin.arn
           }
         }
+      },
+      {
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.admin_frontend.arn,
+          "${aws_s3_bucket.admin_frontend.arn}/*",
+        ]
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
       }
     ]
   })
+
+  depends_on = [aws_s3_bucket_public_access_block.admin_frontend]
 }
