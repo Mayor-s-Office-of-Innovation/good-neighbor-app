@@ -199,6 +199,9 @@ export const redeemEnrollmentGrant = async (event) => {
   if (
     !site ||
     site.status === "inactive" ||
+    (grant.siteCredentialGeneration !== undefined &&
+      Number(grant.siteCredentialGeneration) !==
+        Number(site.siteCredentialGeneration ?? 0)) ||
     !authority ||
     authority.status !== "active" ||
     (accessLevel === "manager" &&
@@ -206,6 +209,10 @@ export const redeemEnrollmentGrant = async (event) => {
       Number(authority.generation ?? 0) !==
         Number(grant.membershipGeneration)) ||
     (accessLevel === "general" && authority.accessLevel !== "manager") ||
+    (accessLevel === "general" &&
+      !providerIssued &&
+      Number(authority.siteCredentialGeneration ?? 0) !==
+        Number(site.siteCredentialGeneration ?? 0)) ||
     (accessLevel === "general" &&
       !providerIssued &&
       (!issuerMembership ||

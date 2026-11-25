@@ -123,15 +123,26 @@ export const handler = async (event) => {
     ) {
       return DENY({ reason: "revoked" });
     }
-    const membershipResult = await ddb.send(
-      new GetCommand({
-        TableName: process.env.DYNAMO_TABLE,
-        Key: {
-          pk: `PROVIDER#${device.providerId}`,
-          sk: `PROVIDER_MANAGER#${device.providerMembershipId}`,
-        },
-      }),
-    );
+    const [providerResult, membershipResult] = await Promise.all([
+      ddb.send(
+        new GetCommand({
+          TableName: process.env.DYNAMO_TABLE,
+          Key: { pk: `PROVIDER#${device.providerId}`, sk: "#META" },
+        }),
+      ),
+      ddb.send(
+        new GetCommand({
+          TableName: process.env.DYNAMO_TABLE,
+          Key: {
+            pk: `PROVIDER#${device.providerId}`,
+            sk: `PROVIDER_MANAGER#${device.providerMembershipId}`,
+          },
+        }),
+      ),
+    ]);
+    if (providerResult.Item?.status === "inactive") {
+      return DENY({ reason: "revoked" });
+    }
     let membership = membershipResult.Item;
     // Imported memberships may have a managerId-based sort key that predates
     // provider enrollment. Resolve that bounded Provider partition safely.

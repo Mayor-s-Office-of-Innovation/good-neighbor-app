@@ -7,11 +7,12 @@ import {
   AdminEnableUserCommand,
   AdminGetUserCommand,
   AdminRemoveUserFromGroupCommand,
+  AdminResetUserPasswordCommand,
+  AdminUpdateUserAttributesCommand,
+  AdminUserGlobalSignOutCommand,
   CognitoIdentityProviderClient,
   AdminListGroupsForUserCommand,
   ListUsersInGroupCommand,
-  AdminResetUserPasswordCommand,
-  AdminUpdateUserAttributesCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { randomUUID } from "node:crypto";
 import {
@@ -537,8 +538,13 @@ export const updateAdminUserRole = (event) =>
     return withSupervisorMutationLock(async () => {
       const target = await getUser(pool, username);
       const principal = adminPrincipal(event);
-      if (sameUser(principal, target) && role !== ADMIN_GROUPS.supervisor)
-        return jsonResponse(409, { error: "cannot_demote_self" });
+      if (sameUser(principal, target))
+        return jsonResponse(409, {
+          error:
+            role !== ADMIN_GROUPS.supervisor
+              ? "cannot_demote_self"
+              : "cannot_change_own_role",
+        });
       if (
         role !== ADMIN_GROUPS.supervisor &&
         (await isLastEnabledSupervisor(pool, target))
@@ -570,6 +576,14 @@ export const updateAdminUserRole = (event) =>
             cleanupFailures.push(group);
           }
         }
+      }
+      if (role !== ADMIN_GROUPS.supervisor) {
+        await cognito.send(
+          new AdminUserGlobalSignOutCommand({
+            UserPoolId: pool,
+            Username: username,
+          }),
+        );
       }
       return jsonResponse(200, {
         user: publicUser(target, role),
@@ -648,12 +662,22 @@ async function setEnabled(event, enabled) {
   const changeEnabled = async () => {
     const target = await getUser(pool, username);
     const principal = adminPrincipal(event);
-    if (!enabled && sameUser(principal, target))
-      return jsonResponse(409, { error: "cannot_suspend_self" });
+    if (sameUser(principal, target))
+      return jsonResponse(409, {
+        error: enabled ? "cannot_reinstate_self" : "cannot_suspend_self",
+      });
     if (!enabled && (await isLastEnabledSupervisor(pool, target)))
       return jsonResponse(409, { error: "last_active_supervisor" });
     const Command = enabled ? AdminEnableUserCommand : AdminDisableUserCommand;
     await cognito.send(new Command({ UserPoolId: pool, Username: username }));
+    if (!enabled) {
+      await cognito.send(
+        new AdminUserGlobalSignOutCommand({
+          UserPoolId: pool,
+          Username: username,
+        }),
+      );
+    }
     return jsonResponse(200, {
       user: publicUser({ ...target, Enabled: enabled }, ""),
     });

@@ -172,6 +172,8 @@ export const createManagerGrant = (event) =>
       entityType: "ENROLLMENT_GRANT",
       grantId,
       membershipId,
+      membershipGeneration: Number(membership.generation ?? 0),
+      siteCredentialGeneration: Number(site.siteCredentialGeneration ?? 0),
       siteId,
       accessLevel: "manager",
       tokenHash,

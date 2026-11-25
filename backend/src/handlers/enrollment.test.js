@@ -570,6 +570,7 @@ describe("Manager enrollment redemption", () => {
             sk: "DEVICE_BINDING#manager-1",
             status: "active",
             accessLevel: "manager",
+            siteCredentialGeneration: 4,
           },
         })
         .mockResolvedValueOnce({})
@@ -668,4 +669,56 @@ it("does not look up codes when the rate-limit store fails", async () => {
   vi.mocked(checkCodeAttemptLimit).mockRejectedValueOnce(error);
   await expect(call(event({ code: "a1b-2c3" }))).rejects.toBe(error);
   expect(send).not.toHaveBeenCalled();
+});
+
+it("rejects a pre-revocation grant after siteCredentialGeneration advances", async () => {
+  const token = "stale-site-gen-token";
+  const tokenHash = await sha256(token);
+  send
+    .mockResolvedValueOnce({
+      Item: {
+        grantId: "mgr-grant-stale",
+        grantPk: "SITE#site-1",
+        grantSk: "MANAGER_GRANT#2026-01-01#mgr-grant-stale",
+      },
+    })
+    .mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "MANAGER_GRANT#2026-01-01#mgr-grant-stale",
+        grantId: "mgr-grant-stale",
+        siteId: "site-1",
+        accessLevel: "manager",
+        membershipId: "membership-1",
+        membershipGeneration: 1,
+        siteCredentialGeneration: 2,
+        status: "pending",
+        tokenHash,
+        deliveryMode: "link",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      },
+    })
+    .mockResolvedValueOnce({
+      Item: {
+        siteId: "site-1",
+        name: "Site One",
+        status: "active",
+        siteCredentialGeneration: 3,
+      },
+    })
+    .mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "MANAGER_MEMBERSHIP#membership-1",
+        status: "active",
+        generation: 1,
+      },
+    })
+    .mockResolvedValueOnce({});
+
+  const response = await call(event({ grantId: "mgr-grant-stale", token }));
+  expect(response.statusCode).toBe(403);
+  expect(JSON.parse(String(response.body))).toEqual({
+    error: "enrollment_access_unavailable",
+  });
 });

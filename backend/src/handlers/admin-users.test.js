@@ -8,6 +8,7 @@ import {
   AdminRemoveUserFromGroupCommand,
   AdminResetUserPasswordCommand,
   AdminUpdateUserAttributesCommand,
+  AdminUserGlobalSignOutCommand,
   ListUsersInGroupCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import {
@@ -44,6 +45,7 @@ const {
   updateMyProfile,
   inviteAdminUser,
   lookupAdminInvitation,
+  reinstateAdminUser,
   reinviteAdminUser,
   resetAdminUserPassword,
   suspendAdminUser,
@@ -617,6 +619,37 @@ describe("Compliance administrator lifecycle", () => {
         ([command]) => command instanceof AdminDisableUserCommand,
       ),
     ).toHaveLength(1);
+    expect(
+      cognitoSend.mock.calls.filter(
+        ([command]) => command instanceof AdminUserGlobalSignOutCommand,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("blocks self-reinstate and self-promotion to supervisor", async () => {
+    cognitoSend.mockResolvedValue(user("caller@example.org", "caller-sub"));
+    const selfReinstate = await call(
+      reinstateAdminUser,
+      event(undefined, { username: "caller@example.org" }),
+    );
+    expect(selfReinstate.statusCode).toBe(409);
+    expect(JSON.parse(String(selfReinstate.body))).toEqual({
+      error: "cannot_reinstate_self",
+    });
+
+    ddbSend.mockResolvedValueOnce({});
+    ddbSend.mockResolvedValueOnce({});
+    const selfPromote = await call(
+      updateAdminUserRole,
+      event(
+        { role: "compliance-supervisor" },
+        { username: "caller@example.org" },
+      ),
+    );
+    expect(selfPromote.statusCode).toBe(409);
+    expect(JSON.parse(String(selfPromote.body))).toEqual({
+      error: "cannot_change_own_role",
+    });
   });
 
   it("resends a pending invitation for an administrator", async () => {

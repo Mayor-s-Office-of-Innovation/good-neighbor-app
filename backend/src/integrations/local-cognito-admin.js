@@ -119,6 +119,10 @@ export class LocalCognitoAdminClient {
         );
         return {};
       }
+      case "AdminUserGlobalSignOutCommand": {
+        requireUser(String(input.Username));
+        return {};
+      }
       default:
         throw new Error(
           `Unsupported local Cognito command: ${command.constructor.name}`,

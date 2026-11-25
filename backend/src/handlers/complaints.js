@@ -308,9 +308,16 @@ export async function registerComplaintArtifact(event) {
   if (
     head.contentType !== body.contentType ||
     head.contentLength !== body.contentLength ||
-    head.contentLength > maxBytesFor(body.contentType)
-  )
+    head.contentLength > maxBytesFor(body.contentType) ||
+    head.metadata?.["declared-bytes"] !== String(body.contentLength)
+  ) {
+    await setObjectTags({
+      bucket: getComplaintBucket(),
+      key: expected,
+      tags: { state: "rejected" },
+    }).catch(() => {});
     return jsonResponse(400, { error: "media_mismatch" });
+  }
   const object = await getObjectBytes({
     bucket: getComplaintBucket(),
     key: expected,

@@ -263,6 +263,16 @@ run "storage_and_transport_hardening" {
 
   assert {
     condition = (
+      aws_cognito_user_pool_client.admin.access_token_validity <= 15
+      && one(aws_cognito_user_pool_client.admin.token_validity_units).access_token == "minutes"
+      && aws_cognito_user_pool_client.admin.id_token_validity <= 15
+      && one(aws_cognito_user_pool_client.admin.token_validity_units).id_token == "minutes"
+    )
+    error_message = "Admin access and ID tokens must stay short-lived (<= 15 minutes) so suspensions and demotions bite quickly."
+  }
+
+  assert {
+    condition = (
       !contains(keys(aws_lambda_function.support.environment[0].variables), "SUPPORT_ORIGIN_TOKEN")
       && contains(keys(aws_lambda_function.support.environment[0].variables), "SUPPORT_ORIGIN_TOKEN_SECRET_ARN")
       && !contains(keys(aws_lambda_function.api.environment[0].variables), "SHORT_CODE_ORIGIN_TOKEN")

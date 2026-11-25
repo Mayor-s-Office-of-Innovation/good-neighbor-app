@@ -420,3 +420,33 @@ it("retains direct site access after provider changes", async () => {
     .mockResolvedValueOnce({ Item: { status: "active", generation: 1 } });
   expect((await invoke(event(`Bearer ${token}`))).isAuthorized).toBe(true);
 });
+
+it("denies provider-scoped manager tokens after the Provider is deactivated", async () => {
+  const { token } = await mintAccessToken({
+    siteId: "s",
+    deviceId: "d",
+    tokenGeneration: 1,
+    accessLevel: "manager",
+  });
+  send
+    .mockResolvedValueOnce({
+      Item: {
+        status: "active",
+        tokenGeneration: 1,
+        accessLevel: "manager",
+        authorityScope: "provider",
+        providerId: "p",
+        providerAccessGeneration: 1,
+        providerMembershipId: "pm-1",
+        providerMembershipGeneration: 1,
+      },
+    })
+    .mockResolvedValueOnce({
+      Item: { status: "active", providerId: "p", providerAccessGeneration: 1 },
+    })
+    .mockResolvedValueOnce({ Item: { status: "inactive" } })
+    .mockResolvedValueOnce({ Item: { status: "active", generation: 1 } });
+  const result = await invoke(event(`Bearer ${token}`));
+  expect(result.isAuthorized).toBe(false);
+  expect(result.context.reason).toBe("revoked");
+});

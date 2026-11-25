@@ -360,17 +360,29 @@ export async function resolveBinding(
       ) {
         return null;
       }
-      const memberships = await ddb.send(
-        new QueryCommand({
-          TableName: tableName,
-          ...(consistentRead ? { ConsistentRead: true } : {}),
-          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-          ExpressionAttributeValues: {
-            ":pk": `PROVIDER#${binding.providerId}`,
-            ":prefix": "PROVIDER_MANAGER#",
-          },
-        }),
-      );
+      const [providerResult, memberships] = await Promise.all([
+        ddb.send(
+          new GetCommand({
+            TableName: tableName,
+            Key: { pk: `PROVIDER#${binding.providerId}`, sk: "#META" },
+            ...(consistentRead ? { ConsistentRead: true } : {}),
+          }),
+        ),
+        ddb.send(
+          new QueryCommand({
+            TableName: tableName,
+            ...(consistentRead ? { ConsistentRead: true } : {}),
+            KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+            ExpressionAttributeValues: {
+              ":pk": `PROVIDER#${binding.providerId}`,
+              ":prefix": "PROVIDER_MANAGER#",
+            },
+          }),
+        ),
+      ]);
+      if (providerResult.Item?.status === "inactive") {
+        return null;
+      }
       const membership = (memberships.Items ?? []).find(
         (item) =>
           String(item.membershipId) === String(binding.providerMembershipId),

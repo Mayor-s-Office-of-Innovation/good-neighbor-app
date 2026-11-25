@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { getObjectBytes, putObject } from "../s3.js";
+import { sniffImageType } from "./downscale.js";
 
 const require = createRequire(import.meta.url);
 
@@ -14,6 +15,8 @@ async function codec() {
 export async function heicDisplayImage(bytes) {
   if (!bytes.length || bytes.length > 10 * 1024 * 1024)
     throw new InvalidTaskPhoto("Invalid image size");
+  if (sniffImageType(bytes) !== "image/heic")
+    throw new InvalidTaskPhoto("Invalid HEIC image");
   const lib = await codec();
   const { default: sharp } = await import("sharp");
   const decoder = new lib.HeifDecoder();
@@ -46,9 +49,13 @@ export async function heicDisplayImage(bytes) {
       );
     });
     // libheif applies HEIF orientation transforms during decode.
-    return await sharp(Buffer.from(rgba), {
-      raw: { width, height, channels: 4 },
-    })
+    // Zero-copy Buffer view avoids doubling a large RGBA frame in the API Lambda.
+    return await sharp(
+      Buffer.from(rgba.buffer, rgba.byteOffset, rgba.byteLength),
+      {
+        raw: { width, height, channels: 4 },
+      },
+    )
       .flatten({ background: "white" })
       .resize({
         width: 2048,
