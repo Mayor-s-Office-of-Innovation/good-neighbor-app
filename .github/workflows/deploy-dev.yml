@@ -11,6 +11,14 @@ permissions:
   contents: read
   id-token: write
 
+# One whole run at a time, in push order, so a newer commit's build can't apply
+# before an older run reaches terraform-apply and roll it back. The group name
+# differs from terraform-apply's job-level `deploy-dev` lock: GitHub cancels a
+# run whose workflow and job wait on the same group.
+concurrency:
+  group: deploy-run-dev
+  cancel-in-progress: false
+
 jobs:
   deploy:
     uses: ./.github/workflows/deploy.yml

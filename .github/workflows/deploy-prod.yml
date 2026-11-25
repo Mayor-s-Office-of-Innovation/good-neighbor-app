@@ -18,6 +18,13 @@ permissions:
   contents: read
   id-token: write
 
+# One whole run at a time, in release order, so an older release can't apply
+# after a newer one. Distinct from terraform-apply's job-level `deploy-prod`
+# lock: GitHub cancels a run whose workflow and job wait on the same group.
+concurrency:
+  group: deploy-run-prod
+  cancel-in-progress: false
+
 jobs:
   deploy:
     uses: ./.github/workflows/deploy.yml
