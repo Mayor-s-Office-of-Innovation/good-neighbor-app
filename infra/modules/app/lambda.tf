@@ -188,19 +188,22 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = merge({
-      SHORT_CODE_ORIGIN_TOKEN     = aws_secretsmanager_secret_version.support_origin.secret_string
-      DUPLICATE_DETECTION_ENABLED = tostring(var.enable_duplicate_detection)
-      DYNAMO_TABLE                = aws_dynamodb_table.app.name
-      COGNITO_USER_POOL_ID        = aws_cognito_user_pool.users.id
-      SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
-      ANALYSIS_QUEUE_URL          = aws_sqs_queue.analysis.url
-      S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
-      S3_COMPLAINT_BUCKET         = aws_s3_bucket.complaints.bucket
-      S3_COMPLIANCE_LETTER_BUCKET = aws_s3_bucket.compliance_letters.bucket
-      DEMO_SITE_ID                = "demo-site"
-      BEDROCK_MODEL_ID            = var.bedrock_model_id
-      ANALYZER_BASE_URL           = var.analyzer_base_url
-      ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
+      SHORT_CODE_ORIGIN_TOKEN_SECRET_ARN = aws_secretsmanager_secret.support_origin.arn
+      DUPLICATE_DETECTION_ENABLED        = tostring(var.enable_duplicate_detection)
+      DYNAMO_TABLE                       = aws_dynamodb_table.app.name
+      COGNITO_USER_POOL_ID               = aws_cognito_user_pool.users.id
+      SQS_QUEUE_URL                      = aws_sqs_queue.submissions.url
+      ANALYSIS_QUEUE_URL                 = aws_sqs_queue.analysis.url
+      S3_UPLOAD_BUCKET                   = aws_s3_bucket.uploads.bucket
+      S3_COMPLAINT_BUCKET                = aws_s3_bucket.complaints.bucket
+      S3_COMPLIANCE_LETTER_BUCKET        = aws_s3_bucket.compliance_letters.bucket
+      DEMO_SITE_ID                       = "demo-site"
+      BEDROCK_MODEL_ID                   = var.bedrock_model_id
+      ANALYZER_BASE_URL                  = var.analyzer_base_url
+      ANALYZER_API_KEY_SECRET_ARN        = aws_secretsmanager_secret.analyzer_api_key.arn
+      # Not secret. A rotated origin token gets a new version id, which changes
+      # this function's configuration so fresh instances read the new token.
+      SHORT_CODE_ORIGIN_TOKEN_VERSION = aws_secretsmanager_secret_version.support_origin.version_id
       # Device token minting (Option 4 device auth — docs/adr/0010): the api
       # Lambda mints session tokens for the registration/refresh routes.
       DEVICE_TOKEN_SECRET_SECRET_ARN  = aws_secretsmanager_secret.device_token_key.arn

@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { jsonResponse, readJsonBody } from "../http.js";
+import { getOriginToken } from "../lib/origin-token.js";
 import { converse } from "./bedrock.js";
 import { KNOWLEDGE_VERSION, sourceById } from "./knowledge.js";
 import { LOCALES, SYSTEM_PROMPT } from "./prompt.js";
@@ -50,24 +51,44 @@ function originMatches(actual, expected) {
 }
 
 /** Dependency injection keeps tests offline and never gives the model runtime tools.
- * @param {{invoke?:typeof converse, env?:NodeJS.ProcessEnv, log?:(entry:object)=>void}} [options]
+ * @param {{
+ *   invoke?: typeof converse,
+ *   env?: NodeJS.ProcessEnv,
+ *   log?: (entry: object) => void,
+ *   resolveOriginToken?: (env: NodeJS.ProcessEnv) => Promise<string>,
+ * }} [options]
  */
 export function createSupportHandler({
   invoke = converse,
   env = process.env,
   log = (entry) => console.info(JSON.stringify(entry)),
+  resolveOriginToken = (sourceEnv) =>
+    getOriginToken(sourceEnv, {
+      envKey: "SUPPORT_ORIGIN_TOKEN",
+      secretArnKey: "SUPPORT_ORIGIN_TOKEN_SECRET_ARN",
+    }),
 } = {}) {
   /** @param {import("aws-lambda").APIGatewayProxyEventV2} event */
   return async (event) => {
     if (env.SUPPORT_ENABLED !== "true")
       return jsonResponse(503, { error: "support_unavailable" });
-    // Local harness supplies its own secret header; there is no runtime bypass.
-    if (
-      !originMatches(
-        event.headers?.["x-support-origin"],
-        env.SUPPORT_ORIGIN_TOKEN,
-      )
-    )
+    // Local harness supplies its own secret header; deployed Lambdas fetch the
+    // token from Secrets Manager at cold start. There is no runtime bypass.
+    // The read counts against the same 15 s budget as inference (see below),
+    // so a slow cold-start read can't push the request past the Lambda timeout.
+    const requestStarted = Date.now();
+    let expectedOrigin;
+    try {
+      expectedOrigin = await resolveOriginToken(env);
+    } catch {
+      log({
+        marker: "SupportUnavailable",
+        durationMs: 0,
+        knowledgeVersion: KNOWLEDGE_VERSION,
+      });
+      return jsonResponse(503, { error: "support_unavailable" });
+    }
+    if (!originMatches(event.headers?.["x-support-origin"], expectedOrigin))
       return jsonResponse(403, { error: "support_forbidden" });
     if (event.requestContext?.http?.method !== "POST")
       return jsonResponse(405, { error: "method_not_allowed" });
@@ -111,10 +132,13 @@ export function createSupportHandler({
     try {
       // Race also bounds credential resolution, which does not accept a signal.
       const deadline = new Promise((_, reject) => {
-        timer = setTimeout(() => {
-          controller.abort();
-          reject(new Error("support_timeout"));
-        }, 15000);
+        timer = setTimeout(
+          () => {
+            controller.abort();
+            reject(new Error("support_timeout"));
+          },
+          Math.max(0, 15000 - (Date.now() - requestStarted)),
+        );
       });
       const pending = invoke({
         region,

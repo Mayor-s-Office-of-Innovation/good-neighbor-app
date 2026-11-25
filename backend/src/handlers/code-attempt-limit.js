@@ -4,6 +4,7 @@ import { TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getDynamoTableName } from "../config.js";
 import { jsonResponse } from "../http.js";
+import { getOriginToken } from "../lib/origin-token.js";
 
 // One budget across lookup, enrollment and device registration, including direct-origin
 // requests. Never trust forwarded IP headers or key this by a guessed code.
@@ -24,7 +25,17 @@ export async function checkCodeAttemptLimit(
   event,
 ) {
   const seconds = Math.floor(now / 1000);
-  const sourceIp = codeAttemptSource(event);
+  let configuredOrigin = "";
+  try {
+    configuredOrigin = await getOriginToken(process.env, {
+      envKey: "SHORT_CODE_ORIGIN_TOKEN",
+      secretArnKey: "SHORT_CODE_ORIGIN_TOKEN_SECRET_ARN",
+    });
+  } catch {
+    // Fail closed to API Gateway's transport IP rather than trusting edge headers.
+    configuredOrigin = "";
+  }
+  const sourceIp = codeAttemptSource(event, configuredOrigin);
   const sourceKey = createHash("sha256").update(sourceIp).digest("hex");
   const windows = [
     ...WINDOWS.map((window) => ({ ...window, pk: "SHORT_CODE_ATTEMPTS" })),
@@ -110,10 +121,14 @@ export async function checkCodeAttemptLimit(
  * Only the authenticated CloudFront origin may supply the viewer identity.
  * Direct-origin callers use Gateway's transport source; forwarded headers are ignored.
  * @param {import("aws-lambda").APIGatewayProxyEventV2} [event]
+ * @param {string} [configuredToken]
  * @returns {string} Canonical source address, or a shared fail-closed fallback.
  */
-export function codeAttemptSource(event) {
-  const configured = process.env.SHORT_CODE_ORIGIN_TOKEN;
+export function codeAttemptSource(
+  event,
+  configuredToken = process.env.SHORT_CODE_ORIGIN_TOKEN,
+) {
+  const configured = configuredToken;
   const supplied = event?.headers?.["x-support-origin"];
   const viewer = event?.headers?.["x-code-viewer-ip"];
   const trusted =

@@ -120,6 +120,33 @@ describe("support boundary", () => {
         })(event())
       ).statusCode,
     ).toBe(403);
+    const secretLookup = vi.fn().mockResolvedValue("edge-only-test");
+    expect(
+      (
+        await createSupportHandler({
+          env: {
+            ...env,
+            SUPPORT_ORIGIN_TOKEN: "",
+            SUPPORT_ORIGIN_TOKEN_SECRET_ARN: "arn:aws:secretsmanager:test",
+          },
+          invoke: vi.fn().mockResolvedValue(model()),
+          resolveOriginToken: secretLookup,
+        })(event())
+      ).statusCode,
+    ).toBe(200);
+    expect(secretLookup).toHaveBeenCalledOnce();
+    expect(
+      (
+        await createSupportHandler({
+          env: { ...env, SUPPORT_ORIGIN_TOKEN: "" },
+          invoke,
+          log: vi.fn(),
+          resolveOriginToken: vi
+            .fn()
+            .mockRejectedValue(new Error("secrets unavailable")),
+        })(event())
+      ).statusCode,
+    ).toBe(503);
     expect(invoke).not.toHaveBeenCalled();
   });
 
@@ -199,6 +226,27 @@ describe("support boundary", () => {
       event(),
     );
     await vi.advanceTimersByTimeAsync(15000);
+    expect((await pending).statusCode).toBe(503);
+    expect(invoke.mock.calls[0][0].signal.aborted).toBe(true);
+  });
+
+  it("counts a slow token read against the same 15 second budget", async () => {
+    vi.useFakeTimers();
+    const invoke = vi.fn().mockImplementation(() => new Promise(() => {}));
+    const pending = createSupportHandler({
+      env: { ...env, SUPPORT_ORIGIN_TOKEN: "" },
+      invoke,
+      log: vi.fn(),
+      resolveOriginToken: () =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve(env.SUPPORT_ORIGIN_TOKEN), 2000),
+        ),
+    })(event());
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(invoke).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(12_999);
+    expect(invoke.mock.calls[0][0].signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
     expect((await pending).statusCode).toBe(503);
     expect(invoke.mock.calls[0][0].signal.aborted).toBe(true);
   });

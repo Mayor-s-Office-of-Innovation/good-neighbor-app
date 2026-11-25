@@ -1,11 +1,25 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, smSend } = vi.hoisted(() => ({ send: vi.fn(), smSend: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+vi.mock("@aws-sdk/client-secrets-manager", () => ({
+  SecretsManagerClient: class {
+    send = smSend;
+  },
+  GetSecretValueCommand: class {
+    /** @param {Record<string, unknown>} input */
+    constructor(input) {
+      this.input = input;
+    }
+  },
+}));
+const { resetOriginTokenCache } = await import("../lib/origin-token.js");
 const { checkCodeAttemptLimit, codeAttemptSource } = await import(
   "./code-attempt-limit.js"
 );
 beforeEach(() => {
   send.mockReset();
+  smSend.mockReset();
+  resetOriginTokenCache();
   vi.spyOn(console, "info").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.stubEnv("DYNAMO_TABLE", "test");
@@ -231,4 +245,33 @@ it("ignores spoofed headers and trusts only authenticated edge viewer identity",
   expect(codeAttemptSource(event("2001:db8:0:0:0:0:0:1"))).toBe(
     codeAttemptSource(event("2001:db8::1")),
   );
+});
+
+it("resolves SHORT_CODE_ORIGIN_TOKEN_SECRET_ARN from Secrets Manager and fails closed on error", async () => {
+  vi.stubEnv(
+    "SHORT_CODE_ORIGIN_TOKEN_SECRET_ARN",
+    "arn:aws:secretsmanager:us-west-2:aws:secret:origin",
+  );
+  smSend.mockResolvedValueOnce({ SecretString: "deployed-origin-secret" });
+  send.mockResolvedValue({});
+
+  const trustedEvent = {
+    ...event("192.0.2.10"),
+    headers: {
+      "x-code-viewer-ip": "192.0.2.99",
+      "x-support-origin": "deployed-origin-secret",
+    },
+  };
+  await checkCodeAttemptLimit(Date.UTC(2026, 9, 22), "lookup", trustedEvent);
+  const trustedSourcePk =
+    send.mock.calls[0][0].input.TransactItems[2].Update.Key.pk;
+
+  send.mockClear();
+  resetOriginTokenCache();
+  smSend.mockRejectedValueOnce(new Error("secrets unavailable"));
+  await checkCodeAttemptLimit(Date.UTC(2026, 9, 22), "lookup", trustedEvent);
+  const fallbackSourcePk =
+    send.mock.calls[0][0].input.TransactItems[2].Update.Key.pk;
+
+  expect(trustedSourcePk).not.toBe(fallbackSourcePk);
 });
