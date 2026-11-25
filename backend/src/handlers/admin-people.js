@@ -117,6 +117,63 @@ export const updatePerson = (event) =>
       ];
       const denied = await authorizeSiteChanges(event, sites);
       if (denied) return denied;
+      const programSources = person.sources.filter(
+        (/** @type {{pk:string,sk:string}} */ source) =>
+          source.pk.startsWith("PROGRAM#") && source.sk.startsWith("USER#"),
+      );
+      if (programSources.length) {
+        const tableName = getDynamoTableName();
+        const authorizedSiteMetas = await Promise.all(
+          sites.map((siteId) =>
+            ddb.send(
+              new GetCommand({
+                TableName: tableName,
+                Key: { pk: `SITE#${siteId}`, sk: "#META" },
+                ConsistentRead: true,
+              }),
+            ),
+          ),
+        );
+        const authorizedLeadPrograms = new Set(
+          authorizedSiteMetas
+            .map((res) => String(res.Item?.leadProgramId || ""))
+            .filter(Boolean),
+        );
+        for (const source of programSources) {
+          const programId = source.pk.slice(8);
+          const userId = source.sk.slice(5);
+          if (!authorizedLeadPrograms.has(programId)) {
+            return jsonResponse(403, { error: "site_assignment_required" });
+          }
+          const [userRes, ...assignedChecks] = await Promise.all([
+            ddb.send(
+              new GetCommand({
+                TableName: tableName,
+                Key: { pk: source.pk, sk: source.sk },
+                ConsistentRead: true,
+              }),
+            ),
+            ...sites.map((siteId) =>
+              ddb.send(
+                new GetCommand({
+                  TableName: tableName,
+                  Key: { pk: `SITE#${siteId}`, sk: `ASSIGNED_USER#${userId}` },
+                  ConsistentRead: true,
+                }),
+              ),
+            ),
+          ]);
+          const assignedInAuthorizedSites = assignedChecks.filter(
+            (res) => res.Item && res.Item.status !== "inactive",
+          ).length;
+          if (
+            Number(userRes.Item?.siteAssignmentCount ?? 0) >
+            assignedInAuthorizedSites
+          ) {
+            return jsonResponse(403, { error: "site_assignment_required" });
+          }
+        }
+      }
     }
     try {
       return jsonResponse(200, {

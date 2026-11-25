@@ -318,6 +318,11 @@ export const getPhysicalDeviceRevocationPreview = (event) =>
     );
     if (!preview)
       return jsonResponse(404, { error: "physical_device_not_found" });
+    const denied = await authorizeSiteChanges(
+      event,
+      preview.bindings.map(({ binding }) => String(binding.siteId || "")),
+    );
+    if (denied) return denied;
     return jsonResponse(200, {
       physicalDevice: {
         physicalDeviceId: preview.physicalDeviceId,

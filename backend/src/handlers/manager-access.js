@@ -719,7 +719,6 @@ function publicGrant(item, now = new Date().toISOString()) {
 function publicBinding(item) {
   return {
     bindingId: item.bindingId,
-    physicalDeviceId: item.physicalDeviceId,
     label: item.label,
     accessLevel: item.accessLevel,
     authorityScope: item.authorityScope,

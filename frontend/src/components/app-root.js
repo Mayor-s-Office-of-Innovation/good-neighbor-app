@@ -18,7 +18,7 @@ import { refreshSessionTranslationsOnLocaleChange } from "../services/session-tr
 import {
   bindingFromSession,
   hasAdminAccess,
-  clearSite,
+  clearSiteSession,
   getSite,
   resetLocalAppState,
   saveDiscoveredBindings,
@@ -32,9 +32,12 @@ import {
   ensureHandoffManifest,
   readHandoffCredentials,
   rememberConsumedGrant,
+  retireHandoff,
   stripHandoffCredentials,
   uninstallHandoffManifest,
 } from "../services/session-handoff.js";
+import { discardInMemorySession } from "../state/check-session.js";
+import { stripCodeFromUrl } from "./site-setup.js";
 import {
   startHealthMonitoring,
   stopHealthMonitoring,
@@ -233,6 +236,8 @@ export class AppRoot extends HTMLElement {
     // grant this install has not recorded as consumed (storage was cleared):
     // a stale grant never replaces a live session.
     if (handoff) void trackEvent("handoff_stale_ignored", {});
+    // Already bound: remove any stray ?code=/#code= from the address bar/history.
+    stripCodeFromUrl();
     void this._refreshDeviceBindings();
     await this._restoreInterruptedCapture();
     this._renderApp();
@@ -796,7 +801,9 @@ export class AppRoot extends HTMLElement {
         }
         const stored = await getSite().catch(() => null);
         if (!stored || stored.token !== bound?.token) return true;
-        await clearSite();
+        discardInMemorySession();
+        await retireHandoff({ remote: false }).catch(() => {});
+        await clearSiteSession();
         this._site = null;
         clearAuthState();
         uninstallHandoffManifest();

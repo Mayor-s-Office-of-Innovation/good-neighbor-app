@@ -42,6 +42,7 @@ export class SiteSetup extends HTMLElement {
     this._targetSiteName = this.getAttribute("data-target-site-name") || "";
     this._canCancel = this.hasAttribute("data-can-cancel");
     this._code = formatSiteCode(readCodeFromUrl());
+    if (this._code) stripCodeFromUrl();
     const enrollment = readEnrollmentFromUrl();
     this._enrollment = enrollment;
     this._checking = false;
@@ -477,7 +478,6 @@ export class SiteSetup extends HTMLElement {
     let site;
     try {
       site = await setSite(providerSite.name, {
-        code: result.code,
         providerSiteId: providerSite.id,
         ...bindingFromSession(session),
         siteId: providerSite.siteId,
@@ -500,6 +500,12 @@ export class SiteSetup extends HTMLElement {
       const current = await getSite();
       const session = await redeemEnrollmentGrant(grantId, token, {
         physicalDeviceId: current?.physicalDeviceId,
+        ...(current?.physicalDeviceId && current?.token
+          ? { proofToken: current.token }
+          : {}),
+        ...(current?.physicalDeviceId && current?.refreshToken
+          ? { proofRefreshToken: current.refreshToken }
+          : {}),
         ...(code ? { code } : {}),
       });
       if (this._cancelled) return;

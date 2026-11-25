@@ -43,6 +43,7 @@ import {
   supervisorOnly,
   authorizeSiteChanges,
   adminPrincipal,
+  isComplianceSupervisor,
   ADMIN_GROUPS,
 } from "../lib/admin-auth.js";
 
@@ -1636,11 +1637,12 @@ export const listDevices = (event) =>
         providerEmails.set(key, Item?.email || "");
       }
     }
+    const includePhysicalDeviceId = isComplianceSupervisor(event);
     /** @param {Record<string, any>} item */
     const describeDevice = (item) => {
       const grant = grants.get(item.enrolledByGrantId);
       return {
-        ...publicDevice(item),
+        ...publicDevice(item, { includePhysicalDeviceId }),
         managerEmail:
           item.authorityScope === "provider"
             ? providerEmails.get(
@@ -2160,13 +2162,18 @@ function slug(provided, fallback) {
   return value || randomUUID();
 }
 
-/** @param {Record<string, any>} item */
-function publicDevice(item) {
+/**
+ * @param {Record<string, any>} item
+ * @param {{ includePhysicalDeviceId?: boolean }} [options]
+ */
+function publicDevice(item, { includePhysicalDeviceId = true } = {}) {
   const bindingId = String(item.bindingId ?? item.deviceId ?? "");
   return {
     bindingId,
     deviceId: bindingId,
-    physicalDeviceId: item.physicalDeviceId,
+    ...(includePhysicalDeviceId
+      ? { physicalDeviceId: item.physicalDeviceId }
+      : {}),
     siteId: item.siteId,
     label: item.label,
     accessLevel: item.accessLevel === "admin" ? "manager" : item.accessLevel,

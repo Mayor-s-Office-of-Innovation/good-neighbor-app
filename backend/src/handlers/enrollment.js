@@ -17,7 +17,11 @@ import {
   sendManagerSecurityNotification,
   sendProviderManagerSecurityNotification,
 } from "../integrations/email.js";
-import { mintAccessToken, mintRefreshToken } from "../lib/device-token.js";
+import {
+  mintAccessToken,
+  mintRefreshToken,
+  verifyDeviceToken,
+} from "../lib/device-token.js";
 import { MAX_PROVIDER_ENROLLMENT_SITES } from "./admin-provider-managers.js";
 
 const ACCESS_TTL_SECONDS = 15 * 60;
@@ -220,6 +224,18 @@ export const redeemEnrollmentGrant = async (event) => {
         Number(issuerMembership.generation ?? 0) !==
           Number(grant.issuerMembershipGeneration ?? -1))) ||
     physical?.status === "revoked"
+  ) {
+    return rejectEnrollment(event, "access_unavailable", 403, grant);
+  }
+  if (
+    physical &&
+    !(await hasPhysicalDeviceProof({
+      event,
+      input,
+      tableName,
+      physicalDeviceId,
+      nowIso,
+    }))
   ) {
     return rejectEnrollment(event, "access_unavailable", 403, grant);
   }
@@ -483,7 +499,7 @@ export const redeemEnrollmentGrant = async (event) => {
     }
     throw error;
   }
-  recordEnrollment(event, grant, physicalDeviceId);
+  recordEnrollment(event, grant);
   if (accessLevel === "manager") {
     await notifyManagerEnrollment({
       event,
@@ -583,6 +599,18 @@ async function redeemProviderEnrollment(context) {
     !sites.length ||
     sites.length > MAX_PROVIDER_ENROLLMENT_SITES ||
     physical?.status === "revoked"
+  ) {
+    return rejectEnrollment(event, "access_unavailable", 403, grant);
+  }
+  if (
+    physical &&
+    !(await hasPhysicalDeviceProof({
+      event,
+      input,
+      tableName,
+      physicalDeviceId: requestedPhysicalDeviceId,
+      nowIso,
+    }))
   ) {
     return rejectEnrollment(event, "access_unavailable", 403, grant);
   }
@@ -849,7 +877,7 @@ async function redeemProviderEnrollment(context) {
     throw error;
   }
 
-  recordEnrollment(event, grant, physicalDeviceId);
+  recordEnrollment(event, grant);
   await notifyProviderManagerEnrollment({
     event,
     tableName,
@@ -1141,8 +1169,74 @@ function rejectEnrollment(event, reason, status = 401, grant, error) {
   });
 }
 
-/** @param {import("aws-lambda").APIGatewayProxyEventV2} event @param {Record<string,any>} grant @param {string} physicalDeviceId */
-function recordEnrollment(event, grant, physicalDeviceId) {
+/**
+ * Verify that a caller asking to attach a new binding to an existing
+ * physicalDeviceId actually holds a live access or refresh token for an active
+ * binding on that same physical device.
+ * @param {{
+ *   event: import("aws-lambda").APIGatewayProxyEventV2,
+ *   input: Record<string, unknown>,
+ *   tableName: string,
+ *   physicalDeviceId: string,
+ *   nowIso: string,
+ * }} params
+ * @returns {Promise<boolean>}
+ */
+async function hasPhysicalDeviceProof({
+  event,
+  input,
+  tableName,
+  physicalDeviceId,
+  nowIso,
+}) {
+  const authHeader =
+    event.headers?.authorization ?? event.headers?.Authorization ?? "";
+  const bearer = /^Bearer\s+(.+)$/i.exec(authHeader)?.[1]?.trim() || "";
+  const proofRefreshToken = clean(input.proofRefreshToken);
+
+  /** @type {Array<{ token: string, expectedType: "access" | "refresh" }>} */
+  const candidates = [];
+  if (bearer) candidates.push({ token: bearer, expectedType: "access" });
+  if (proofRefreshToken) {
+    candidates.push({ token: proofRefreshToken, expectedType: "refresh" });
+  }
+
+  for (const candidate of candidates) {
+    let claims;
+    try {
+      claims = await verifyDeviceToken(candidate.token);
+    } catch {
+      continue;
+    }
+    if (claims.typ !== candidate.expectedType) continue;
+    const bindingResult = await ddb.send(
+      new GetCommand({
+        TableName: tableName,
+        Key: {
+          pk: `SITE#${claims.siteId}`,
+          sk: `DEVICE_BINDING#${claims.sub}`,
+        },
+        ConsistentRead: true,
+      }),
+    );
+    const binding = bindingResult.Item;
+    if (
+      binding &&
+      binding.status === "active" &&
+      binding.physicalDeviceId === physicalDeviceId &&
+      Number(binding.tokenGeneration ?? 0) === claims.ver &&
+      (!binding.absoluteExpiresAt || binding.absoluteExpiresAt > nowIso) &&
+      (candidate.expectedType !== "refresh" ||
+        binding.refreshJti === claims.jti)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** @param {import("aws-lambda").APIGatewayProxyEventV2} event @param {Record<string,any>} grant */
+function recordEnrollment(event, grant) {
   console.info(
     JSON.stringify({
       marker: "EnrollmentRedeemed",
@@ -1150,7 +1244,6 @@ function recordEnrollment(event, grant, physicalDeviceId) {
       grantId: grant.grantId,
       scope: grant.scope ?? "site",
       deliveryMode: grant.deliveryMode ?? "link",
-      physicalDeviceId,
       client: describeClient(event.headers),
     }),
   );

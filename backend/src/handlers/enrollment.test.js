@@ -3,6 +3,7 @@ vi.mock("./code-attempt-limit.js", () => ({
   checkCodeAttemptLimit: vi.fn(async () => null),
 }));
 import { enrollmentCodeVerifier } from "./enrollment-codes.js";
+import { mintAccessToken } from "../lib/device-token.js";
 import {
   GetCommand,
   QueryCommand,
@@ -247,9 +248,25 @@ describe("Manager enrollment redemption", () => {
             lastSuspendedBindingId: "suspended-binding-1",
           },
         })
+        .mockResolvedValueOnce({
+          Item: {
+            pk: "SITE#site-0",
+            sk: "DEVICE_BINDING#existing-binding-1",
+            physicalDeviceId: "physical_device_1",
+            status: "active",
+            tokenGeneration: 1,
+          },
+        })
         .mockResolvedValueOnce({})
         .mockResolvedValueOnce({});
 
+      const proof = await mintAccessToken({
+        siteId: "site-0",
+        deviceId: "existing-binding-1",
+        tokenGeneration: 1,
+        accessLevel: "manager",
+      });
+      const infoLog = vi.spyOn(console, "info").mockImplementation(() => {});
       const response = await call(
         event(
           {
@@ -259,12 +276,20 @@ describe("Manager enrollment redemption", () => {
             label: "Alex's tablet",
           },
           {
+            authorization: `Bearer ${proof.token}`,
             "user-agent":
               "Mozilla/5.0 (iPhone) Version/18.0 Mobile Safari/604.1",
           },
         ),
       );
       expect(response.statusCode).toBe(201);
+      expect(
+        JSON.stringify(
+          infoLog.mock.calls.filter(([line]) =>
+            String(line).includes("EnrollmentRedeemed"),
+          ),
+        ),
+      ).not.toContain("physical_device_1");
       const body = JSON.parse(String(response.body));
       expect(body).toMatchObject({
         physicalDeviceId: "physical_device_1",
@@ -278,7 +303,7 @@ describe("Manager enrollment redemption", () => {
         Date.now() + 364 * 24 * 60 * 60 * 1000,
       );
       expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
-      const transaction = send.mock.calls[5][0];
+      const transaction = send.mock.calls[6][0];
       expect(transaction).toBeInstanceOf(TransactWriteCommand);
       expect(transaction.input.TransactItems).toHaveLength(9);
       expect(transaction.input.TransactItems[2].Delete.Key).toEqual({
@@ -322,9 +347,9 @@ describe("Manager enrollment redemption", () => {
         enrolledAt: expect.any(String),
         revocationContact: "support@example.org",
       });
-      expect(send.mock.calls[6][0]).toBeInstanceOf(UpdateCommand);
+      expect(send.mock.calls[7][0]).toBeInstanceOf(UpdateCommand);
       expect(
-        send.mock.calls[6][0].input.ExpressionAttributeValues,
+        send.mock.calls[7][0].input.ExpressionAttributeValues,
       ).toMatchObject({
         ":status": "accepted",
         ":provider": "ses",
@@ -721,4 +746,63 @@ it("rejects a pre-revocation grant after siteCredentialGeneration advances", asy
   expect(JSON.parse(String(response.body))).toEqual({
     error: "enrollment_access_unavailable",
   });
+});
+
+it("rejects attaching to an existing physicalDeviceId without proof of possession", async () => {
+  const token = "hijack-attempt-token";
+  const tokenHash = await sha256(token);
+  send
+    .mockResolvedValueOnce({
+      Item: {
+        grantId: "mgr-grant-hijack",
+        grantPk: "SITE#site-1",
+        grantSk: "MANAGER_GRANT#2026-01-01#mgr-grant-hijack",
+      },
+    })
+    .mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "MANAGER_GRANT#2026-01-01#mgr-grant-hijack",
+        grantId: "mgr-grant-hijack",
+        siteId: "site-1",
+        accessLevel: "manager",
+        membershipId: "membership-1",
+        status: "pending",
+        tokenHash,
+        deliveryMode: "link",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      },
+    })
+    .mockResolvedValueOnce({
+      Item: { siteId: "site-1", name: "Site One", status: "active" },
+    })
+    .mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "MANAGER_MEMBERSHIP#membership-1",
+        status: "active",
+        generation: 1,
+      },
+    })
+    .mockResolvedValueOnce({
+      Item: {
+        pk: "PHYSICAL_DEVICE#victim_device_1",
+        sk: "#META",
+        physicalDeviceId: "victim_device_1",
+        status: "active",
+      },
+    });
+
+  const response = await call(
+    event({
+      grantId: "mgr-grant-hijack",
+      token,
+      physicalDeviceId: "victim_device_1",
+    }),
+  );
+  expect(response.statusCode).toBe(403);
+  expect(JSON.parse(String(response.body))).toEqual({
+    error: "enrollment_access_unavailable",
+  });
+  expect(send).toHaveBeenCalledTimes(5);
 });

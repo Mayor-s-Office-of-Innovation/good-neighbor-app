@@ -4,7 +4,10 @@ const setup = vi.hoisted(() => ({
   currentRoute: vi.fn(() => "/today"),
   backOrNavigate: vi.fn(),
   replaceRoute: vi.fn(),
-  clearSite: vi.fn(),
+  clearSiteSession: vi.fn(),
+  discardInMemorySession: vi.fn(),
+  retireHandoff: vi.fn(async () => {}),
+  stripCodeFromUrl: vi.fn(),
   getSite: vi.fn(),
   getSiteSettings: vi.fn(),
   clearAuthState: vi.fn(),
@@ -27,13 +30,19 @@ vi.mock("../db.js", () => ({
     refreshToken: session.refreshToken,
     tokenGeneration: session.tokenGeneration,
   }),
-  clearSite: setup.clearSite,
+  clearSiteSession: setup.clearSiteSession,
   getSite: setup.getSite,
   hasAdminAccess: vi.fn(),
   resetLocalAppState: vi.fn(),
   saveDiscoveredBindings: setup.saveDiscoveredBindings,
   saveSiteSettings: setup.saveSiteSettings,
   setSite: setup.setSite,
+}));
+vi.mock("../state/check-session.js", () => ({
+  discardInMemorySession: setup.discardInMemorySession,
+}));
+vi.mock("./site-setup.js", () => ({
+  stripCodeFromUrl: setup.stripCodeFromUrl,
 }));
 vi.mock("../services/api.js", () => ({
   getSiteSettings: setup.getSiteSettings,
@@ -56,6 +65,7 @@ vi.mock("../services/session-handoff.js", () => ({
   stripHandoffCredentials: setup.stripHandoffCredentials,
   rememberConsumedGrant: setup.rememberConsumedGrant,
   ensureHandoffManifest: setup.ensureHandoffManifest,
+  retireHandoff: setup.retireHandoff,
   uninstallHandoffManifest: vi.fn(),
 }));
 vi.mock("../services/backend-health.js", () => ({
@@ -128,7 +138,10 @@ beforeAll(async () => {
 beforeEach(() => {
   setup.isStandalone.mockReset().mockReturnValue(false);
   setup.currentRoute.mockReset().mockReturnValue("/today");
-  setup.clearSite.mockReset().mockResolvedValue(undefined);
+  setup.clearSiteSession.mockReset().mockResolvedValue(undefined);
+  setup.discardInMemorySession.mockReset();
+  setup.retireHandoff.mockReset().mockResolvedValue(undefined);
+  setup.stripCodeFromUrl.mockReset();
   setup.getSite.mockReset();
   setup.getSiteSettings.mockReset();
   setup.clearAuthState.mockReset();
@@ -220,7 +233,9 @@ describe("app startup authentication", () => {
     expect(root._renderApp).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(root._renderSetup).toHaveBeenCalledOnce());
 
-    expect(setup.clearSite).toHaveBeenCalledOnce();
+    expect(setup.discardInMemorySession).toHaveBeenCalledOnce();
+    expect(setup.retireHandoff).toHaveBeenCalledWith({ remote: false });
+    expect(setup.clearSiteSession).toHaveBeenCalledOnce();
     expect(setup.clearAuthState).toHaveBeenCalledOnce();
     expect(root._site).toBeNull();
   });
@@ -239,7 +254,7 @@ describe("app startup authentication", () => {
     await root.connectedCallback();
     await flush();
 
-    expect(setup.clearSite).not.toHaveBeenCalled();
+    expect(setup.clearSiteSession).not.toHaveBeenCalled();
     expect(root._renderSetup).not.toHaveBeenCalled();
     expect(root._site).toEqual({ siteId: "site-1", token: "t1" });
   });
@@ -261,7 +276,7 @@ describe("app startup authentication", () => {
     );
     await flush();
 
-    expect(setup.clearSite).not.toHaveBeenCalled();
+    expect(setup.clearSiteSession).not.toHaveBeenCalled();
     expect(root._renderSetup).not.toHaveBeenCalled();
   });
 
@@ -455,7 +470,7 @@ describe("Home Screen session handoff at startup", () => {
     await root.connectedCallback();
 
     // No <site-setup> is mounted during a handoff, so the rejection is final.
-    expect(setup.clearSite).toHaveBeenCalledOnce();
+    expect(setup.clearSiteSession).toHaveBeenCalledOnce();
     expect(root._renderSetup).toHaveBeenCalledWith();
     expect(root._renderApp).not.toHaveBeenCalled();
   });
@@ -886,7 +901,7 @@ describe("later device enrollments", () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await root._refreshDeviceBindings();
     expect(root._site).toBe(bound);
-    expect(setup.clearSite).not.toHaveBeenCalled();
+    expect(setup.clearSiteSession).not.toHaveBeenCalled();
     expect(setup.saveDiscoveredBindings).not.toHaveBeenCalled();
     log.mockRestore();
   });
