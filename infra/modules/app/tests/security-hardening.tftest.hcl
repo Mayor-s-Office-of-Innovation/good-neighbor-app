@@ -145,13 +145,13 @@ run "storage_and_transport_hardening" {
   assert {
     condition = anytrue([
       for s in jsondecode(aws_s3_bucket_policy.access_logs.policy).Statement : (
-        s.Sid == "AllowS3LogDelivery"
-        && s.Effect == "Allow"
+        s.Effect == "Allow"
         && s.Principal.Service == "logging.s3.amazonaws.com"
         && s.Action == "s3:PutObject"
         && length(s.Resource) == 4
         && s.Condition.StringEquals["aws:SourceAccount"] == "aws"
       )
+      if s.Sid == "AllowS3LogDelivery"
     ])
     error_message = "The access-logs bucket policy must allow logging.s3.amazonaws.com to deliver logs from all four logged buckets in this account."
   }
@@ -165,10 +165,10 @@ run "storage_and_transport_hardening" {
         aws_s3_bucket_policy.analytics_lake.policy,
         ] : anytrue([
           for s in jsondecode(policy).Statement : (
-            s.Sid == "DenyInsecureTransport"
-            && s.Effect == "Deny"
+            s.Effect == "Deny"
             && s.Condition.Bool["aws:SecureTransport"] == "false"
           )
+          if s.Sid == "DenyInsecureTransport"
       ])
     ])
     error_message = "Every hardened S3 bucket policy must deny requests when aws:SecureTransport is false."
@@ -183,11 +183,11 @@ run "storage_and_transport_hardening" {
     condition = alltrue([
       for p in values(aws_sqs_queue_policy.tls_only) : anytrue([
         for s in jsondecode(p.policy).Statement : (
-          s.Sid == "DenyInsecureTransport"
-          && s.Effect == "Deny"
+          s.Effect == "Deny"
           && s.Action == "sqs:*"
           && s.Condition.Bool["aws:SecureTransport"] == "false"
         )
+        if s.Sid == "DenyInsecureTransport"
       ])
     ])
     error_message = "Every SQS queue policy must deny non-TLS transport."
@@ -201,20 +201,20 @@ run "storage_and_transport_hardening" {
         ) : (
         anytrue([
           for s in jsondecode(policy).Statement : (
-            s.Sid == "DenyInsecureTransport"
-            && s.Effect == "Deny"
+            s.Effect == "Deny"
             && s.Action == "SNS:*"
             && s.Condition.Bool["aws:SecureTransport"] == "false"
           )
+          if s.Sid == "DenyInsecureTransport"
         ])
         && anytrue([
           for s in jsondecode(policy).Statement : (
-            s.Sid == "AllowCloudWatchAlarmsPublish"
-            && s.Effect == "Allow"
+            s.Effect == "Allow"
             && s.Principal.Service == "cloudwatch.amazonaws.com"
             && s.Action == "SNS:Publish"
             && s.Condition.StringEquals["aws:SourceAccount"] == "aws"
           )
+          if s.Sid == "AllowCloudWatchAlarmsPublish"
         ])
       )
     ])
@@ -224,11 +224,11 @@ run "storage_and_transport_hardening" {
   assert {
     condition = anytrue([
       for s in jsondecode(aws_sns_topic_policy.tls_only["alarms"].policy).Statement : (
-        s.Sid == "AllowCloudFormationPublish"
-        && s.Effect == "Allow"
+        s.Effect == "Allow"
         && s.Principal.Service == "cloudformation.amazonaws.com"
         && s.Action == "SNS:Publish"
       )
+      if s.Sid == "AllowCloudFormationPublish"
     ])
     error_message = "The primary alarms topic must preserve CloudFormation stack notification publishing."
   }
@@ -236,12 +236,12 @@ run "storage_and_transport_hardening" {
   assert {
     condition = anytrue([
       for rule in aws_wafv2_web_acl.web.rule : (
-        rule.name == "AWSManagedRulesAmazonIpReputationList"
-        && length(rule.override_action[0].none) == 1
+        length(rule.override_action[0].none) == 1
         && rule.statement[0].managed_rule_group_statement[0].name == "AWSManagedRulesAmazonIpReputationList"
         && rule.statement[0].managed_rule_group_statement[0].vendor_name == "AWS"
         && rule.visibility_config[0].sampled_requests_enabled == false
       )
+      if rule.name == "AWSManagedRulesAmazonIpReputationList"
     ])
     error_message = "WAF ACL must include AWSManagedRulesAmazonIpReputationList in blocking mode with request sampling disabled."
   }
