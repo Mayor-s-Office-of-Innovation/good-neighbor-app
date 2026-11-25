@@ -8,6 +8,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+// Pending-invitation cancellation has its own tests (pending-site-grants.test.js).
+const { cancelPendingSiteGrants } = vi.hoisted(() => ({
+  cancelPendingSiteGrants: vi.fn(),
+}));
+vi.mock("../lib/pending-site-grants.js", () => ({ cancelPendingSiteGrants }));
 
 const {
   getPhysicalDeviceRevocationPreview,
@@ -18,6 +23,9 @@ const {
 } = await import("./admin-device-revocation.js");
 
 beforeEach(() => {
+  cancelPendingSiteGrants
+    .mockReset()
+    .mockResolvedValue({ cancelledCount: 0, failedCount: 0 });
   send.mockReset();
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
 });
@@ -124,8 +132,15 @@ describe("City Site-wide revocation", () => {
       status: "complete",
       affectedCount: 1,
       failedCount: 0,
+      cancelledGrantCount: 0,
       siteCredentialGeneration: 5,
     });
+    // Outstanding invitations are retired in the same revocation.
+    expect(cancelPendingSiteGrants).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({ operationId: expect.any(String) }),
+    );
   });
 });
 

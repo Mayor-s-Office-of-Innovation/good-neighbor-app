@@ -247,6 +247,13 @@ it("adds a named site manager and person atomically alongside existing managers"
         check.ConditionExpression.includes("siteCredentialGeneration"),
     ),
   ).toBe(true);
+  // A provider deactivated after the authority read still stops the commit.
+  expect(checks).toContainEqual(
+    expect.objectContaining({
+      Key: { pk: "PROVIDER#provider-1", sk: "#META" },
+      ExpressionAttributeValues: { ":authInactive": "inactive" },
+    }),
+  );
 });
 
 it("preserves direct site managers' team invitations but denies manager invitations", async () => {
@@ -367,7 +374,8 @@ it("provider managers revoke site manager devices with transactional authority c
     tokenGeneration: 3,
   });
   const writes = transactions.at(-1) || [];
-  expect(writes.filter((w) => w.ConditionCheck)).toHaveLength(3);
+  // Binding, provider membership, provider status, and the Site's provider link.
+  expect(writes.filter((w) => w.ConditionCheck)).toHaveLength(4);
   expect(writes.filter((w) => w.Update)).toHaveLength(3);
   expect(writes.find((w) => w.Put)?.Put.Item.eventType).toBe(
     "manager_binding_revoked",

@@ -128,6 +128,18 @@ export async function providerInvitationAuthority(
           },
         },
       },
+      // A provider deactivated after the read above must still stop this
+      // redemption. Same rule as the read: only an explicit "inactive" refuses.
+      {
+        ConditionCheck: {
+          TableName: tableName,
+          Key: { pk: `PROVIDER#${binding.providerId}`, sk: "#META" },
+          ConditionExpression:
+            "attribute_not_exists(#authStatus) OR #authStatus <> :authInactive",
+          ExpressionAttributeNames: { "#authStatus": "status" },
+          ExpressionAttributeValues: { ":authInactive": "inactive" },
+        },
+      },
     ],
   };
 }
